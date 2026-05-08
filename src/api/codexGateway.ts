@@ -1307,7 +1307,10 @@ export type ResumedThread = {
 }
 
 export async function resumeThread(threadId: string): Promise<ResumedThread> {
-  const payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
+  const payload = await callRpc<ThreadResumeResponse>('thread/resume', {
+    threadId,
+    persistExtendedHistory: true,
+  })
   return {
     model: normalizeThreadModelFromPayload(payload),
     messages: normalizeThreadMessagesV2(payload),
@@ -1392,7 +1395,9 @@ export type ForkedThread = {
 
 export async function startThread(cwd?: string, model?: string): Promise<StartedThread> {
   try {
-    const params: Record<string, unknown> = {}
+    const params: Record<string, unknown> = {
+      persistExtendedHistory: true,
+    }
     if (typeof cwd === 'string' && cwd.trim().length > 0) {
       params.cwd = cwd.trim()
     }
@@ -1448,6 +1453,7 @@ export async function forkThread(
     }
     const params: Record<string, unknown> = {
       threadId: normalizedThreadId,
+      persistExtendedHistory: true,
     }
     if (typeof cwd === 'string' && cwd.trim().length > 0) {
       params.cwd = cwd.trim()

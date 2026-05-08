@@ -1,5 +1,5 @@
 <template>
-  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu">
+  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu" @click.capture="onConversationClick">
     <p v-if="isLoading" class="conversation-loading">Loading messages...</p>
 
     <p
@@ -280,11 +280,11 @@
                     <p class="plan-card-title">Plan</p>
                     <span v-if="message.messageType === 'plan.live'" class="plan-card-badge">Updating</span>
                   </div>
-                  <div
-                    v-if="readPlanExplanation(message)"
-                    class="plan-card-explanation plan-card-markdown"
-                    v-html="renderMarkdownBlocksAsHtml(readPlanExplanation(message))"
-                  />
+                <div
+                  v-if="readPlanExplanation(message)"
+                  class="plan-card-explanation plan-card-markdown"
+                  v-html="renderMarkdownContent(readPlanExplanation(message), { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                />
                   <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
                     <li
                       v-for="(step, stepIndex) in readPlanSteps(message)"
@@ -293,10 +293,17 @@
                       :data-status="step.status"
                     >
                       <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
-                      <div class="plan-step-text plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(step.step)" />
+                      <div
+                        class="plan-step-text plan-card-markdown"
+                        v-html="renderMarkdownContent(step.step, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                      />
                     </li>
                   </ol>
-                  <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                  <div
+                    v-else
+                    class="plan-card-markdown"
+                    v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                  />
                   <div v-if="showImplementPlanButton(message)" class="plan-card-actions">
                     <button
                       type="button"
@@ -309,252 +316,10 @@
                 </div>
                 <div
                   v-else
-                  class="message-text-flow"
-                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownImageFailureVersion]"
-                >
-                  <template v-for="(block, blockIndex) in getMessageBlocks(message)" :key="`block-${blockIndex}`">
-                    <p v-if="block.kind === 'paragraph'" class="message-text">
-                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`seg-${blockIndex}-${segmentIndex}`">
-                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                        <a
-                          v-else-if="segment.kind === 'file'"
-                          class="message-file-link"
-                          :href="toBrowseUrl(segment.path)"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.path"
-                        >
-                          {{ segment.displayPath }}
-                        </a>
-                        <a
-                          v-else-if="segment.kind === 'url'"
-                          class="message-file-link"
-                          :href="segment.href"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.href"
-                        >
-                          {{ segment.value }}
-                        </a>
-                        <code v-else class="message-inline-code">{{ segment.value }}</code>
-                      </template>
-                    </p>
-                    <component
-                      :is="headingTag(block.level)"
-                      v-else-if="block.kind === 'heading'"
-                      class="message-heading"
-                      :class="headingClass(block.level)"
-                    >
-                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`heading-seg-${blockIndex}-${segmentIndex}`">
-                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                        <a
-                          v-else-if="segment.kind === 'file'"
-                          class="message-file-link"
-                          :href="toBrowseUrl(segment.path)"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.path"
-                        >
-                          {{ segment.displayPath }}
-                        </a>
-                        <a
-                          v-else-if="segment.kind === 'url'"
-                          class="message-file-link"
-                          :href="segment.href"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.href"
-                        >
-                          {{ segment.value }}
-                        </a>
-                        <code v-else class="message-inline-code">{{ segment.value }}</code>
-                      </template>
-                    </component>
-                    <blockquote v-else-if="block.kind === 'blockquote'" class="message-blockquote">
-                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`quote-seg-${blockIndex}-${segmentIndex}`">
-                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                        <a
-                          v-else-if="segment.kind === 'file'"
-                          class="message-file-link"
-                          :href="toBrowseUrl(segment.path)"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.path"
-                        >
-                          {{ segment.displayPath }}
-                        </a>
-                        <a
-                          v-else-if="segment.kind === 'url'"
-                          class="message-file-link"
-                          :href="segment.href"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.href"
-                        >
-                          {{ segment.value }}
-                        </a>
-                        <code v-else class="message-inline-code">{{ segment.value }}</code>
-                      </template>
-                    </blockquote>
-                    <ul v-else-if="block.kind === 'unorderedList'" class="message-list message-list-unordered">
-                      <li v-for="(item, itemIndex) in block.items" :key="`ul-${blockIndex}-${itemIndex}`" class="message-list-item">
-                        <div class="message-list-item-content" v-html="renderListItemContentAsHtml(item)" />
-                      </li>
-                    </ul>
-                    <ul v-else-if="block.kind === 'taskList'" class="message-list message-task-list">
-                      <li v-for="(item, itemIndex) in block.items" :key="`task-${blockIndex}-${itemIndex}`" class="message-task-item">
-                        <span class="message-task-checkbox" :data-checked="item.checked">{{ item.checked ? '☑' : '☐' }}</span>
-                        <div class="message-list-item-text">
-                          <template v-for="(segment, segmentIndex) in getInlineSegments(item.text)" :key="`task-seg-${blockIndex}-${itemIndex}-${segmentIndex}`">
-                            <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                            <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                            <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                            <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                            <a
-                              v-else-if="segment.kind === 'file'"
-                              class="message-file-link"
-                              :href="toBrowseUrl(segment.path)"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              :title="segment.path"
-                            >
-                              {{ segment.displayPath }}
-                            </a>
-                            <a
-                              v-else-if="segment.kind === 'url'"
-                              class="message-file-link"
-                              :href="segment.href"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              :title="segment.href"
-                            >
-                              {{ segment.value }}
-                            </a>
-                            <code v-else class="message-inline-code">{{ segment.value }}</code>
-                          </template>
-                        </div>
-                      </li>
-                    </ul>
-                    <ol
-                      v-else-if="block.kind === 'orderedList'"
-                      class="message-list message-list-ordered"
-                      :start="block.start"
-                    >
-                      <li v-for="(item, itemIndex) in block.items" :key="`ol-${blockIndex}-${itemIndex}`" class="message-list-item">
-                        <div class="message-list-item-content" v-html="renderListItemContentAsHtml(item)" />
-                      </li>
-                    </ol>
-                    <div v-else-if="block.kind === 'table'" class="message-table-wrap">
-                      <table class="message-table">
-                        <thead>
-                          <tr>
-                            <th
-                              v-for="(cell, cellIndex) in block.headers"
-                              :key="`th-${blockIndex}-${cellIndex}`"
-                              class="message-table-head-cell"
-                              :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
-                            >
-                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`th-seg-${blockIndex}-${cellIndex}-${segmentIndex}`">
-                                <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                                <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                                <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                                <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                                <a
-                                  v-else-if="segment.kind === 'file'"
-                                  class="message-file-link"
-                                  :href="toBrowseUrl(segment.path)"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.path"
-                                >
-                                  {{ segment.displayPath }}
-                                </a>
-                                <a
-                                  v-else-if="segment.kind === 'url'"
-                                  class="message-file-link"
-                                  :href="segment.href"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.href"
-                                >
-                                  {{ segment.value }}
-                                </a>
-                                <code v-else class="message-inline-code">{{ segment.value }}</code>
-                              </template>
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody v-if="block.rows.length > 0">
-                          <tr v-for="(row, rowIndex) in block.rows" :key="`tr-${blockIndex}-${rowIndex}`" class="message-table-body-row">
-                            <td
-                              v-for="(cell, cellIndex) in row"
-                              :key="`td-${blockIndex}-${rowIndex}-${cellIndex}`"
-                              class="message-table-cell"
-                              :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
-                            >
-                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`td-seg-${blockIndex}-${rowIndex}-${cellIndex}-${segmentIndex}`">
-                                <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                                <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                                <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                                <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                                <a
-                                  v-else-if="segment.kind === 'file'"
-                                  class="message-file-link"
-                                  :href="toBrowseUrl(segment.path)"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.path"
-                                >
-                                  {{ segment.displayPath }}
-                                </a>
-                                <a
-                                  v-else-if="segment.kind === 'url'"
-                                  class="message-file-link"
-                                  :href="segment.href"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.href"
-                                >
-                                  {{ segment.value }}
-                                </a>
-                                <code v-else class="message-inline-code">{{ segment.value }}</code>
-                              </template>
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    <div v-else-if="block.kind === 'codeBlock'" class="message-code-block">
-                      <div v-if="block.language" class="message-code-language">{{ block.language }}</div>
-                      <pre class="message-code-pre"><code class="hljs" v-html="renderCachedHighlightedCodeAsHtml(block.language, block.value)"></code></pre>
-                    </div>
-                    <hr v-else-if="block.kind === 'thematicBreak'" class="message-divider" />
-                    <p v-else-if="isMarkdownImageFailed(message.id, blockIndex)" class="message-text">{{ block.markdown }}</p>
-                    <button
-                      v-else
-                      class="message-image-button"
-                      type="button"
-                      @click="openImageModal(block.url)"
-                    >
-                      <img
-                        class="message-image-preview message-markdown-image"
-                        :src="block.url"
-                        :alt="block.alt || 'Embedded message image'"
-                        loading="lazy"
-                        @error="onMarkdownImageError(message.id, blockIndex)"
-                      />
-                    </button>
-                  </template>
-                </div>
+                  class="message-text-flow message-markdown-body"
+                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion]"
+                  v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'message', highlightVersion: highlightCacheVersion }).html"
+                ></div>
               </article>
 
               <section v-if="readAnchoredFileChangeSummary(message)" class="file-change-summary-block file-change-summary-block-inline">
@@ -854,6 +619,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
 import { useMobile } from '../../composables/useMobile'
+import { clearMarkdownRendererCache, renderMarkdownContent } from './markdownRenderer'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
@@ -2659,6 +2425,22 @@ function onConversationContextMenu(event: MouseEvent): void {
   isFileLinkContextMenuVisible.value = true
 }
 
+function onConversationClick(event: MouseEvent): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+
+  const image = target.closest('img.message-markdown-image')
+  if (!(image instanceof HTMLImageElement)) return
+  if (image.closest('button.message-image-button')) return
+
+  const src = (image.getAttribute('src') ?? '').trim()
+  if (!src) return
+
+  event.preventDefault()
+  event.stopPropagation()
+  openImageModal(src)
+}
+
 function closeFileLinkContextMenu(): void {
   if (!isFileLinkContextMenuVisible.value) return
   isFileLinkContextMenuVisible.value = false
@@ -4024,11 +3806,39 @@ function bindPendingImageHandlers(): void {
 
   const images = container.querySelectorAll<HTMLImageElement>('img.message-image-preview')
   for (const image of images) {
-    if (image.complete || trackedPendingImages.has(image)) continue
+    if (image.complete) {
+      if (image.naturalWidth === 0 && image.naturalHeight === 0) {
+        replaceFailedPreviewImage(image)
+      }
+      continue
+    }
+    if (trackedPendingImages.has(image)) continue
     trackedPendingImages.add(image)
-    image.addEventListener('load', onPendingImageSettled, { once: true })
-    image.addEventListener('error', onPendingImageSettled, { once: true })
+    image.addEventListener('load', () => onPendingPreviewImageLoad(image), { once: true })
+    image.addEventListener('error', () => onPendingPreviewImageError(image), { once: true })
   }
+}
+
+function onPendingPreviewImageLoad(image: HTMLImageElement): void {
+  if (image.naturalWidth === 0 && image.naturalHeight === 0) {
+    replaceFailedPreviewImage(image)
+  }
+  onPendingImageSettled()
+}
+
+function onPendingPreviewImageError(image: HTMLImageElement): void {
+  replaceFailedPreviewImage(image)
+  onPendingImageSettled()
+}
+
+function replaceFailedPreviewImage(image: HTMLImageElement): void {
+  if (image.dataset.codexPreviewFallbackApplied === 'true') return
+  image.dataset.codexPreviewFallbackApplied = 'true'
+
+  const fallback = document.createElement('span')
+  fallback.className = 'message-image-fallback'
+  fallback.textContent = image.alt.trim() || 'Image failed to load'
+  image.replaceWith(fallback)
 }
 
 async function scheduleConversationScroll(): Promise<void> {
@@ -4052,6 +3862,7 @@ async function scheduleConversationScroll(): Promise<void> {
 }
 
 function clearRenderCaches(): void {
+  clearMarkdownRendererCache()
   messageBlockCache.clear()
   inlineSegmentCache.clear()
   markdownHtmlCache.clear()
@@ -4167,23 +3978,6 @@ function onConversationScroll(): void {
   if (hasMoreAbove.value && !isLoadingMore.value && container.scrollTop < LOAD_MORE_SCROLL_THRESHOLD_PX) {
     void loadMoreAbove()
   }
-}
-
-const failedMarkdownImages = ref(new Set<string>())
-
-function markdownImageKey(messageId: string, blockIndex: number): string {
-  return `${messageId}:${blockIndex}`
-}
-
-function isMarkdownImageFailed(messageId: string, blockIndex: number): boolean {
-  return failedMarkdownImages.value.has(markdownImageKey(messageId, blockIndex))
-}
-
-function onMarkdownImageError(messageId: string, blockIndex: number): void {
-  const next = new Set(failedMarkdownImages.value)
-  next.add(markdownImageKey(messageId, blockIndex))
-  failedMarkdownImages.value = next
-  markdownImageFailureVersion.value += 1
 }
 
 function openImageModal(imageUrl: string): void {
@@ -4779,6 +4573,11 @@ onBeforeUnmount(() => {
   @apply w-auto h-auto max-w-[min(560px,85vw)] max-h-[min(460px,62vh)] object-contain bg-white;
 }
 
+.message-image-fallback {
+  @apply inline-flex max-w-full items-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-500;
+  overflow-wrap: anywhere;
+}
+
 .message-inline-code {
   @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
 }
@@ -4797,6 +4596,16 @@ onBeforeUnmount(() => {
 
 .message-code-pre :deep(.hljs) {
   @apply block bg-transparent p-0 text-inherit;
+}
+
+.message-text-flow :deep(.katex-display),
+.plan-card-markdown :deep(.katex-display) {
+  @apply my-2 overflow-x-auto overflow-y-hidden;
+}
+
+.message-text-flow :deep(.katex),
+.plan-card-markdown :deep(.katex) {
+  @apply max-w-full;
 }
 
 .message-file-link {

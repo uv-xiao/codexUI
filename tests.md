@@ -2363,6 +2363,41 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - Remove `<project cwd>/redroid_mainactivity.png` if it was created only for this verification.
 
+### Feature: TestChat markdown GFM + KaTeX render check
+
+#### Prerequisites
+- App is running from this repository.
+- `TestChat` is available as a project and opened in the composer.
+- Verify once in light theme and once in dark theme.
+
+#### Steps
+1. Send a message with a unique marker plus mixed markdown:
+   `# GFM + KaTeX render check`
+   `> Blockquote should render as markdown.`
+   `- [x] rendered task item`
+   `- [ ] pending task item`
+   `| Feature | Result |`
+   `| --- | --- |`
+   `| GFM table | ok |`
+   `File link: [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)`
+   `Inline math $E=mc^2$ and display math:`
+   `$$`
+   `\\int_0^1 x^2\\,dx = \\frac{1}{3}`
+   `$$`
+   `\`\`\`ts`
+   `const answer: number = 42`
+   `\`\`\``
+2. Locate the rendered row by the unique marker.
+3. Confirm the row contains a parsed file link, table, task markers, KaTeX, and highlighted code.
+4. Verify the file link has `href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/hosting_manager.py"`, `title="/home/ubuntu/Documents/New Project (2)/hosting_manager.py"`, and visible text `hosting_manager.py`.
+5. Save screenshots to `output/playwright/testchat-markdown-gfm-katex-cjs.png` and `output/playwright/testchat-markdown-gfm-katex-cjs-dark.png`.
+
+#### Expected Results
+- Markdown renders as GitHub-flavored content inside `TestChat`.
+- The file link keeps the full path and encodes spaces in the browse URL.
+- Task list items render as checkbox-style task markers.
+- KaTeX and code highlighting render in both light and dark theme.
+
 ---
 
 ### Fix: Codex.app "New Worktree" Button Missing After Account Switch (CDP Injection)

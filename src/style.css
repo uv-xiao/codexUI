@@ -681,6 +681,10 @@
   @apply bg-transparent text-inherit;
 }
 
+:root.dark .message-image-fallback {
+  @apply border-zinc-600 bg-zinc-800/70 text-zinc-400;
+}
+
 :root.dark .message-table {
   @apply border-zinc-700 bg-zinc-900/90 text-zinc-100;
 }

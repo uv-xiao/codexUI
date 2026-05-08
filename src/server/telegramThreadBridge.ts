@@ -635,7 +635,10 @@ export class TelegramThreadBridge {
   }
 
   private async createThreadForChat(chatId: number): Promise<string> {
-    const response = asRecord(await this.appServer.rpc('thread/start', { cwd: this.defaultCwd }))
+    const response = asRecord(await this.appServer.rpc('thread/start', {
+      cwd: this.defaultCwd,
+      persistExtendedHistory: true,
+    }))
     const thread = asRecord(response?.thread)
     const threadId = typeof thread?.id === 'string' ? thread.id : ''
     if (!threadId) {

@@ -68,6 +68,15 @@ const answer = 42
     expect(html).toContain('hosting_manager.py')
   })
 
+  it('renders local markdown images through the local image route', () => {
+    const html = render('![diagram](/home/ubuntu/Documents/New Project (2)/diagram.png)')
+
+    expect(html).toContain('message-markdown-image')
+    expect(html).toContain('message-image-preview')
+    expect(html).toContain('src="/codex-local-image?path=%2Fhome%2Fubuntu%2FDocuments%2FNew%20Project%20(2)%2Fdiagram.png"')
+    expect(html).toContain('alt="diagram"')
+  })
+
   it('does not rewrite file-like text inside code blocks', () => {
     const html = render('```txt\n[hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)\n```')
 

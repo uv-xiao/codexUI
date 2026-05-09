@@ -289,6 +289,8 @@ export type ThreadQueueState = Record<string, StoredQueuedMessage[]>
 
 export type ComposerFileSuggestion = {
   path: string
+  kind: 'file' | 'directory'
+  isSymlink: boolean
 }
 
 const DEFAULT_COLLABORATION_MODE_OPTIONS: CollaborationModeOption[] = [
@@ -2797,7 +2799,7 @@ export async function searchComposerFiles(cwd: string, query: string, limit = 20
   })
   const payload = (await response.json()) as unknown
   if (!response.ok) {
-    const message = getErrorMessageFromPayload(payload, 'Failed to search files')
+    const message = getErrorMessageFromPayload(payload, 'Failed to search paths')
     throw new Error(message)
   }
   const record =
@@ -2812,7 +2814,12 @@ export async function searchComposerFiles(cwd: string, query: string, limit = 20
     const rawPath = row.path
     const value = typeof rawPath === 'string' ? rawPath.trim() : ''
     if (!value) continue
-    suggestions.push({ path: value })
+    const kind = row.kind === 'directory' ? 'directory' : 'file'
+    suggestions.push({
+      path: value,
+      kind,
+      isSymlink: row.isSymlink === true,
+    })
   }
   return suggestions
 }

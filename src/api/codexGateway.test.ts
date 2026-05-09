@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forkThread, listDirectoryComposioConnectors, resumeThread, startThread, startThreadTurn } from './codexGateway'
+import { forkThread, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, startThread, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -150,5 +150,32 @@ describe('listDirectoryComposioConnectors', () => {
     await listDirectoryComposioConnectors('instagram', '50', 25)
 
     expect(requests).toEqual(['/codex-api/composio/connectors?query=instagram&cursor=50&limit=25'])
+  })
+})
+
+describe('searchComposerFiles', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves directory and symlink metadata from the server', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: [
+        { path: 'src', kind: 'directory', isSymlink: false },
+        { path: 'link.txt', kind: 'file', isSymlink: true },
+      ],
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })))
+
+    const results = await searchComposerFiles('/tmp/project', 'src', 10)
+
+    expect(results).toEqual([
+      { path: 'src', kind: 'directory', isSymlink: false },
+      { path: 'link.txt', kind: 'file', isSymlink: true },
+    ])
   })
 })

@@ -541,7 +541,7 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Steps
 1. In light theme, send a message containing: `Added [`TrustedBrowserLauncher.kt`](/home/ubuntu/andClaw-srcmatch/app/src/main/java/com/coderred/andclaw/ui/util/TrustedBrowserLauncher.kt)`.
 2. Confirm the rendered message shows one clickable file link with visible text `TrustedBrowserLauncher.kt`.
-3. Click the link and confirm it opens local browse for `/home/ubuntu/andClaw-srcmatch/app/src/main/java/com/coderred/andclaw/ui/util/TrustedBrowserLauncher.kt`.
+3. Click the link and confirm it opens the local editor for `/home/ubuntu/andClaw-srcmatch/app/src/main/java/com/coderred/andclaw/ui/util/TrustedBrowserLauncher.kt`.
 4. Right-click the same link and choose `Copy link`, then paste it into a text field and inspect it.
 5. Switch to dark theme and repeat steps 1-4.
 
@@ -2334,12 +2334,12 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 1. Send this exact message:
    `[hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)`
 2. In the rendered message, confirm it appears as one clickable file link.
-3. Click the link and confirm it opens local browse for the full file path.
+3. Click the link and confirm it opens the local editor for the full file path.
 4. Right-click and use `Copy link`, then verify pasted URL still points to the same full path.
 
 #### Expected Results
 - Markdown link is parsed as one link token (not split at `)` inside the path).
-- Clicking navigates to the full file path in local browse view.
+- Clicking navigates to the full file path in local editor view.
 - Copied link contains the complete encoded path.
 
 #### Rollback/Cleanup
@@ -2357,12 +2357,12 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
    [`/Users/igor/temp/TestChat/qwe.txt`](/Users/igor/temp/TestChat/qwe.txt)
 2. In the rendered message, confirm it appears as one clickable file link.
 3. Verify the visible link text is `/Users/igor/temp/TestChat/qwe.txt` (without backticks).
-4. Click the link and confirm it opens local browse for the full file path.
+4. Click the link and confirm it opens the local editor for the full file path.
 
 #### Expected Results
 - Backticks inside markdown label do not break markdown-link parsing.
 - The label renders as plain link text (no backtick glyphs).
-- Clicking opens `/codex-local-browse/Users/igor/temp/TestChat/qwe.txt`.
+- Clicking opens `/codex-local-edit/Users/igor/temp/TestChat/qwe.txt`.
 
 #### Rollback/Cleanup
 - Remove test file if it was created only for this verification.
@@ -4651,6 +4651,37 @@ The `/codex-local-edit/...` Ace editor follows the browser/system light or dark 
 
 #### Rollback/Cleanup
 - Revert any disposable text edits made during validation.
+
+---
+
+### Local editor copy reference button
+
+#### Feature/Change Name
+The `/codex-local-edit/...` editor includes a `Copy ref` button that copies the current file path plus the selected line range, or the current line when there is no selection.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A text file with several visible lines is available
+3. Browser clipboard access is available
+4. Browser or device appearance can be switched between light and dark
+
+#### Steps
+1. Open the file through a `/codex-local-edit/...` URL in light appearance.
+2. Select a span covering multiple lines.
+3. Click `Copy ref`.
+4. Paste the clipboard contents into a text field or clipboard inspector and confirm the output is `/absolute/path/to/file:start-end`.
+5. Clear the selection, place the cursor on a single line, and click `Copy ref` again.
+6. Confirm the clipboard now contains `/absolute/path/to/file:line`.
+7. Switch the browser or system appearance to dark and repeat steps 2-6.
+
+#### Expected Results
+- The editor shows a `Copy ref` button alongside save controls.
+- Multi-line selections copy a 1-based inclusive line range.
+- Single-line or collapsed selections copy the current line only.
+- Light theme and dark theme both keep the toolbar and status text readable.
+
+#### Rollback/Cleanup
+- Restore any previous clipboard contents manually if needed.
 
 ---
 

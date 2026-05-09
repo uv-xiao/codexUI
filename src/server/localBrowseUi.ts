@@ -91,6 +91,22 @@ export function isMarkdownPath(pathValue: string): boolean {
   return MARKDOWN_PREVIEW_EXTENSIONS.has(extname(pathValue).toLowerCase())
 }
 
+export function createEditorReferenceText(
+  localPath: string,
+  startLine: number,
+  endLine = startLine,
+): string {
+  const normalizedPath = localPath.trim()
+  const normalizedStart = Number.isFinite(startLine) ? Math.floor(startLine) : 0
+  const normalizedEnd = Number.isFinite(endLine) ? Math.floor(endLine) : 0
+  const firstLine = Math.min(normalizedStart, normalizedEnd)
+  const lastLine = Math.max(normalizedStart, normalizedEnd)
+  if (!normalizedPath || firstLine < 1 || lastLine < 1) return ''
+  return firstLine === lastLine
+    ? `${normalizedPath}:${firstLine}`
+    : `${normalizedPath}:${firstLine}-${lastLine}`
+}
+
 function isHiddenName(value: string): boolean {
   return value.startsWith('.')
 }
@@ -146,7 +162,7 @@ function toBrowseHref(pathValue: string, newProjectName = ''): string {
   return `/codex-local-browse${encodeURI(pathValue)}${query}`
 }
 
-function toEditHref(pathValue: string, newProjectName = ''): string {
+export function toEditHref(pathValue: string, newProjectName = ''): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
   return `/codex-local-edit${encodeURI(pathValue)}${query}`
@@ -700,6 +716,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   const parentPath = dirname(localPath)
   const language = languageForPath(localPath)
   const supportsMarkdownPreview = isMarkdownPath(localPath)
+  const escapedEditorPath = escapeForInlineScriptString(localPath)
+  const copyReferenceButton = `<button id="copyRefBtn" type="button">Copy ref</button>`
   const previewButton = supportsMarkdownPreview
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
@@ -766,6 +784,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     button, a { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); padding: 6px 10px; border-radius: 6px; text-decoration: none; cursor: pointer; }
     button:hover, a:hover { filter: brightness(1.08); }
+    button:disabled { opacity: 0.65; cursor: default; }
     button[aria-pressed="true"] { border-color: var(--status-fg); color: var(--status-fg); }
     .editor-shell { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: stretch; overflow: hidden; }
     #editor { flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; border: none; overflow: hidden; }
@@ -794,6 +813,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     <div class="row">
       <a href="${escapeHtml(toBrowseHref(parentPath))}">Back</a>
       <button id="saveBtn" type="button">Save</button>
+      ${copyReferenceButton}
       ${previewButton}
       <span id="status"></span>
       <span id="previewStatus"></span>
@@ -807,12 +827,14 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.36.2/ace.js"></script>
   <script>
     const saveBtn = document.getElementById('saveBtn');
+    const copyRefBtn = document.getElementById('copyRefBtn');
     const previewBtn = document.getElementById('previewBtn');
     const status = document.getElementById('status');
     const previewStatus = document.getElementById('previewStatus');
     const editorShell = document.getElementById('editorShell');
     const previewFrame = document.getElementById('previewFrame');
     const supportsMarkdownPreview = ${supportsMarkdownPreview ? 'true' : 'false'};
+    const editorReferencePath = ${escapedEditorPath};
     const editor = ace.edit('editor');
     const editorFontFamily = '"CodexLocalEditorLatin", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
     editor.container.classList.add('ace_nobold');
@@ -840,11 +862,69 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     });
     editor.resize();
 
+    let statusTimer = 0;
     let previewVisible = false;
     let previewTimer = 0;
     let previewRevision = 0;
     let previewController = null;
     let previewStatusTimer = 0;
+
+    const setStatus = (message, timeoutMs = 0) => {
+      if (!status) return;
+      status.textContent = message;
+      if (statusTimer) {
+        window.clearTimeout(statusTimer);
+        statusTimer = 0;
+      }
+      if (timeoutMs > 0) {
+        statusTimer = window.setTimeout(() => {
+          status.textContent = '';
+          statusTimer = 0;
+        }, timeoutMs);
+      }
+    };
+
+    const normalizeReferenceLineRange = () => {
+      const selectionRange = editor.getSelectionRange();
+      if (!selectionRange || selectionRange.isEmpty()) {
+        const cursorRow = editor.getCursorPosition().row
+        return { startLine: cursorRow + 1, endLine: cursorRow + 1 }
+      }
+      const startRow = Math.min(selectionRange.start.row, selectionRange.end.row)
+      let endRow = Math.max(selectionRange.start.row, selectionRange.end.row)
+      if (selectionRange.end.row > selectionRange.start.row && selectionRange.end.column === 0) {
+        endRow -= 1
+      }
+      if (endRow < startRow) endRow = startRow
+      return { startLine: startRow + 1, endLine: endRow + 1 }
+    };
+
+    const buildReferenceText = () => {
+      const range = normalizeReferenceLineRange()
+      return createEditorReferenceText(editorReferencePath, range.startLine, range.endLine)
+    };
+
+    const writeTextToClipboard = async (text) => {
+      if (!text) return false;
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      const fallback = document.createElement('textarea');
+      fallback.value = text;
+      fallback.setAttribute('readonly', 'readonly');
+      fallback.style.position = 'fixed';
+      fallback.style.top = '-9999px';
+      fallback.style.left = '-9999px';
+      fallback.style.opacity = '0';
+      document.body.appendChild(fallback);
+      fallback.focus();
+      fallback.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(fallback);
+      if (!copied) throw new Error('Clipboard copy failed');
+      return true;
+    };
 
     const setPreviewStatus = (message) => {
       if (!previewStatus) return;
@@ -939,14 +1019,34 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       });
     }
 
+    if (copyRefBtn) {
+      copyRefBtn.addEventListener('click', async () => {
+        const referenceText = buildReferenceText();
+        if (!referenceText) {
+          setStatus('Reference unavailable');
+          return;
+        }
+        copyRefBtn.disabled = true;
+        try {
+          await writeTextToClipboard(referenceText);
+          setStatus('Reference copied', 1400);
+        } catch {
+          setStatus('Copy reference failed');
+        } finally {
+          copyRefBtn.disabled = false;
+          editor.focus();
+        }
+      });
+    }
+
     saveBtn.addEventListener('click', async () => {
-      status.textContent = 'Saving...';
+      setStatus('Saving...');
       const response = await fetch(location.pathname, {
         method: 'PUT',
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
         body: editor.getValue(),
       });
-      status.textContent = response.ok ? 'Saved' : 'Save failed';
+      setStatus(response.ok ? 'Saved' : 'Save failed');
     });
   </script>
 </body>

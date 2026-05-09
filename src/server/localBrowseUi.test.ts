@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createMarkdownPreviewHtml, createTextEditorHtml, isMarkdownPath } from './localBrowseUi'
+import { createEditorReferenceText, createMarkdownPreviewHtml, createTextEditorHtml, isMarkdownPath } from './localBrowseUi'
 
 let tempDir = ''
 
@@ -13,6 +13,14 @@ afterEach(async () => {
 })
 
 describe('local browse markdown preview', () => {
+  it('formats editor references from 1-based line ranges', () => {
+    expect(createEditorReferenceText('/tmp/note.md', 3)).toBe('/tmp/note.md:3')
+    expect(createEditorReferenceText('/tmp/note.md', 3, 7)).toBe('/tmp/note.md:3-7')
+    expect(createEditorReferenceText('/tmp/note.md', 7, 3)).toBe('/tmp/note.md:3-7')
+    expect(createEditorReferenceText('/tmp/note.md', 0)).toBe('')
+    expect(createEditorReferenceText('   ', 1)).toBe('')
+  })
+
   it('recognizes markdown files for preview support', () => {
     expect(isMarkdownPath('/tmp/note.md')).toBe(true)
     expect(isMarkdownPath('/tmp/note.markdown')).toBe(true)
@@ -27,11 +35,13 @@ describe('local browse markdown preview', () => {
     await writeFile(textPath, 'plain text\n', 'utf8')
 
     const markdownEditorHtml = await createTextEditorHtml(markdownPath)
+    expect(markdownEditorHtml).toContain('id="copyRefBtn"')
     expect(markdownEditorHtml).toContain('id="previewBtn"')
     expect(markdownEditorHtml).toContain('id="previewFrame"')
     expect(markdownEditorHtml).toContain('/codex-local-preview')
 
     const textEditorHtml = await createTextEditorHtml(textPath)
+    expect(textEditorHtml).toContain('id="copyRefBtn"')
     expect(textEditorHtml).not.toContain('id="previewBtn"')
     expect(textEditorHtml).not.toContain('id="previewFrame"')
   })

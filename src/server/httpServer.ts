@@ -6,7 +6,7 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
-import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from './localBrowseUi.js'
+import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -165,6 +165,11 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       if (fileStat.isDirectory()) {
         const html = await createDirectoryListingHtml(localPath, { newProjectName })
         res.status(200).type('text/html; charset=utf-8').send(html)
+        return
+      }
+
+      if (await isTextEditableFile(localPath)) {
+        res.redirect(302, toEditHref(localPath, newProjectName))
         return
       }
 

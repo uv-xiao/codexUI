@@ -419,9 +419,6 @@ export default defineConfig({
           });
         });
         server.middlewares.use(bridge);
-        server.httpServer?.once("close", () => {
-          bridge.dispose();
-        });
       },
     },
   ],

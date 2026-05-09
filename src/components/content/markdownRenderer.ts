@@ -373,7 +373,7 @@ function wrapListItemChildren(node: MarkdownElement): void {
     }
   }
 
-  const contentChildren = children.slice(startIndex)
+  const contentChildren = wrapListItemContentChildren(children.slice(startIndex))
   const wrappedContent: MarkdownElement = {
     type: 'element',
     tagName: 'div',
@@ -384,6 +384,54 @@ function wrapListItemChildren(node: MarkdownElement): void {
   }
 
   node.children = leadingCheckbox ? [leadingCheckbox, wrappedContent] : [wrappedContent]
+}
+
+function isListItemBlockChild(node: MarkdownNode): boolean {
+  if (!isElement(node)) return false
+  const { tagName } = node
+  return (
+    /^h[1-6]$/u.test(tagName) ||
+    tagName === 'p' ||
+    tagName === 'blockquote' ||
+    tagName === 'ul' ||
+    tagName === 'ol' ||
+    tagName === 'table' ||
+    tagName === 'pre' ||
+    tagName === 'hr' ||
+    tagName === 'div'
+  )
+}
+
+function wrapListItemContentChildren(children: MarkdownNode[]): MarkdownNode[] {
+  if (children.length === 0) return []
+
+  const wrapped: MarkdownNode[] = []
+  let inlineRun: MarkdownNode[] = []
+
+  const flushInlineRun = (): void => {
+    if (inlineRun.length === 0) return
+    wrapped.push({
+      type: 'element',
+      tagName: 'div',
+      properties: {
+        className: ['message-list-item-text'],
+      },
+      children: inlineRun,
+    })
+    inlineRun = []
+  }
+
+  for (const child of children) {
+    if (isListItemBlockChild(child)) {
+      flushInlineRun()
+      wrapped.push(child)
+      continue
+    }
+    inlineRun.push(child)
+  }
+
+  flushInlineRun()
+  return wrapped
 }
 
 function wrapTable(node: MarkdownElement, parent: MarkdownNode, index: number): void {

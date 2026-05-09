@@ -683,6 +683,39 @@ export async function sanitizeThreadTurnsInlinePayloads(method: string, result: 
   }
 }
 
+export function mergeRecoveredTurnItemsIntoThreadResult(
+  result: unknown,
+  mergeItemsIntoTurns: (threadId: string, turns: unknown[]) => unknown[],
+  sessionLogRaw?: string | null,
+): unknown {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !turns || turns.length === 0) return result
+
+  const threadId = readNonEmptyString(thread.id)
+  if (!threadId) return result
+
+  let mergedTurns = mergeItemsIntoTurns(threadId, turns)
+  if (sessionLogRaw) {
+    mergedTurns = mergeSessionCommandsIntoTurns(mergedTurns, sessionLogRaw)
+  }
+  if (
+    mergedTurns === turns ||
+    (mergedTurns.length === turns.length && mergedTurns.every((turn, index) => turn === turns[index]))
+  ) {
+    return result
+  }
+
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: mergedTurns,
+    },
+  }
+}
+
 function getErrorMessage(payload: unknown, fallback: string): string {
   if (payload instanceof Error && payload.message.trim().length > 0) {
     return payload.message
@@ -2196,14 +2229,20 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     if (!slots || slots.length === 0) return turn
 
     const existingItems = Array.isArray(turnRecord.items) ? (turnRecord.items as Record<string, unknown>[]) : []
-    const alreadyHasRecoveredItems = existingItems.some((it) => it.type === 'commandExecution' || it.type === 'fileChange')
-    if (alreadyHasRecoveredItems) return turn
-
     const agentMessages = existingItems.filter((it) => it.type === 'agentMessage')
-    const nonAgentNonUserItems = existingItems.filter((it) => it.type !== 'agentMessage' && it.type !== 'userMessage')
+    const commandMessages = existingItems.filter((it) => it.type === 'commandExecution')
+    const fileChangeMessages = existingItems.filter((it) => it.type === 'fileChange')
+    const nonAgentNonUserItems = existingItems.filter((it) => (
+      it.type !== 'agentMessage' &&
+      it.type !== 'userMessage' &&
+      it.type !== 'commandExecution' &&
+      it.type !== 'fileChange'
+    ))
     const userMessages = existingItems.filter((it) => it.type === 'userMessage')
 
     let agentIdx = 0
+    const usedCommandIndexes = new Set<number>()
+    const usedFileChangeIndexes = new Set<number>()
     const interleaved: Record<string, unknown>[] = [...userMessages]
 
     for (const slot of slots) {
@@ -2213,9 +2252,29 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
           agentIdx++
         }
       } else if (slot.type === 'commandExecution' && slot.command) {
-        interleaved.push(slot.command as unknown as Record<string, unknown>)
+        const slotCommand = slot.command.command.trim()
+        let commandIndex = commandMessages.findIndex((item, index) => {
+          if (usedCommandIndexes.has(index)) return false
+          const command = readNonEmptyString(item.command)?.trim() ?? ''
+          return slotCommand.length > 0 && command === slotCommand
+        })
+        if (commandIndex < 0) {
+          commandIndex = commandMessages.findIndex((_item, index) => !usedCommandIndexes.has(index))
+        }
+        if (commandIndex >= 0) {
+          usedCommandIndexes.add(commandIndex)
+          interleaved.push(commandMessages[commandIndex]!)
+        } else {
+          interleaved.push(slot.command as unknown as Record<string, unknown>)
+        }
       } else if (slot.type === 'fileChange' && slot.fileChange) {
-        interleaved.push(slot.fileChange as unknown as Record<string, unknown>)
+        const fileChangeIndex = fileChangeMessages.findIndex((_item, index) => !usedFileChangeIndexes.has(index))
+        if (fileChangeIndex >= 0) {
+          usedFileChangeIndexes.add(fileChangeIndex)
+          interleaved.push(fileChangeMessages[fileChangeIndex]!)
+        } else {
+          interleaved.push(slot.fileChange as unknown as Record<string, unknown>)
+        }
       }
     }
 
@@ -2224,7 +2283,20 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
       agentIdx++
     }
 
+    for (let index = 0; index < commandMessages.length; index += 1) {
+      if (!usedCommandIndexes.has(index)) interleaved.push(commandMessages[index]!)
+    }
+    for (let index = 0; index < fileChangeMessages.length; index += 1) {
+      if (!usedFileChangeIndexes.has(index)) interleaved.push(fileChangeMessages[index]!)
+    }
     interleaved.push(...nonAgentNonUserItems)
+
+    if (
+      interleaved.length === existingItems.length &&
+      interleaved.every((item, index) => item === existingItems[index])
+    ) {
+      return turn
+    }
 
     return {
       ...turnRecord,
@@ -5257,11 +5329,28 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         const rpcResult = await appServer.rpc(body.method, body.params ?? null)
-        const result = await sanitizeThreadTurnsInlinePayloads(body.method, rpcResult)
+        let result = await sanitizeThreadTurnsInlinePayloads(body.method, rpcResult)
 
         if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
-          const rpcRecord = asRecord(result)
-          const rpcThread = asRecord(rpcRecord?.thread)
+          const resultRecord = asRecord(result)
+          const resultThread = asRecord(resultRecord?.thread)
+          const sessionPath = readNonEmptyString(resultThread?.path)
+          let sessionLogRaw: string | null = null
+          if (sessionPath && isAbsolute(sessionPath)) {
+            try {
+              sessionLogRaw = await readFile(sessionPath, 'utf8')
+            } catch {
+              sessionLogRaw = null
+            }
+          }
+
+          result = mergeRecoveredTurnItemsIntoThreadResult(
+            result,
+            (threadId, turns) => appServer.mergeItemsIntoTurns(threadId, turns),
+            sessionLogRaw,
+          )
+          const mergedRecord = asRecord(result)
+          const rpcThread = asRecord(mergedRecord?.thread)
           const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
           if (rpcThreadId) {
             appServer.storeThreadReadSnapshot(rpcThreadId, result)

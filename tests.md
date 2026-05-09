@@ -4679,3 +4679,57 @@ Plain Chinese prose containing `/`, such as `系统浅/深色主题`, is not spl
 
 #### Rollback/Cleanup
 - Delete any disposable validation messages or threads if needed.
+
+---
+
+### Local browse pages follow system theme
+
+#### Feature/Change Name
+`/codex-local-browse/...` directory pages and related local browse surfaces follow the browser or system light/dark theme instead of staying fixed on one palette.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A readable folder path such as `/root/work/my-agent-configs` is available
+3. Browser or device appearance can be switched between light and dark
+
+#### Steps
+1. Open a `/codex-local-browse/...` directory page in light appearance.
+2. Confirm the page background, directory rows, parent link, open button, and edit icons use the light palette.
+3. Switch the browser or system appearance to dark and reload the same directory page.
+4. Confirm the same elements switch to the dark palette and remain readable.
+5. Repeat the check on a narrow/mobile viewport.
+
+#### Expected Results
+- Directory listings no longer use a hard-coded dark palette.
+- The page responds to the browser or system theme in both light and dark modes.
+- Buttons, row cards, and links remain readable on desktop and mobile widths.
+
+#### Rollback/Cleanup
+- None.
+
+---
+
+### Local markdown preview uses browse routes and system theme
+
+#### Feature/Change Name
+Markdown files opened through the local editor expose a preview button that renders the preview through the local browse routes and matches the browser or system theme.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A `.md` or `.markdown` file is available
+3. Browser or device appearance can be switched between light and dark
+
+#### Steps
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Confirm a `Preview` button appears only for markdown files.
+3. Click `Preview` and confirm the rendered markdown appears in the preview pane.
+4. Confirm links, images, and code blocks render in the preview.
+5. Switch the browser or system appearance to dark and confirm the preview page matches it.
+
+#### Expected Results
+- Markdown preview is available only for markdown files.
+- The preview content renders through the local browse preview route.
+- Preview surfaces stay readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Revert any disposable file edits made during validation.

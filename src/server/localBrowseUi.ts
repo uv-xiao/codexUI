@@ -1,5 +1,6 @@
 import { dirname, extname, join } from 'node:path'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
+import { renderMarkdownContent } from '../components/content/markdownRenderer.js'
 
 type DirectoryItem = {
   name: string
@@ -28,7 +29,10 @@ const TEXT_EDITABLE_EXTENSIONS = new Set([
   '.txt', '.md', '.json', '.js', '.ts', '.tsx', '.jsx', '.css', '.scss',
   '.html', '.htm', '.xml', '.yml', '.yaml', '.log', '.csv', '.env', '.py',
   '.sh', '.toml', '.ini', '.conf', '.sql', '.bat', '.cmd', '.ps1',
+  '.markdown',
 ])
+
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set(['.md', '.markdown'])
 
 function languageForPath(pathValue: string): string {
   const extension = extname(pathValue).toLowerCase()
@@ -45,6 +49,7 @@ function languageForPath(pathValue: string): string {
     case '.htm': return 'html'
     case '.json': return 'json'
     case '.md': return 'markdown'
+    case '.markdown': return 'markdown'
     case '.yaml':
     case '.yml': return 'yaml'
     case '.xml': return 'xml'
@@ -80,6 +85,10 @@ export function decodeBrowsePath(rawPath: string): string {
 
 export function isTextEditablePath(pathValue: string): boolean {
   return TEXT_EDITABLE_EXTENSIONS.has(extname(pathValue).toLowerCase())
+}
+
+export function isMarkdownPath(pathValue: string): boolean {
+  return MARKDOWN_PREVIEW_EXTENSIONS.has(extname(pathValue).toLowerCase())
 }
 
 function isHiddenName(value: string): boolean {
@@ -267,39 +276,92 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
   <title>Index of ${escapeHtml(localPath)}</title>
   <style>
-    body { font-family: ui-monospace, Menlo, Monaco, monospace; margin: 16px; background: #0b1020; color: #dbe6ff; }
-    a { color: #8cc2ff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    :root {
+      color-scheme: light dark;
+      --page-bg: #f8fafc;
+      --page-fg: #0f172a;
+      --link-fg: #2563eb;
+      --link-hover-fg: #1d4ed8;
+      --row-bg: #ffffff;
+      --row-border: #cbd5e1;
+      --row-hover-bg: #eff6ff;
+      --row-shadow: rgba(148, 163, 184, 0.14);
+      --header-link-bg: #e2e8f0;
+      --header-link-border: #cbd5e1;
+      --header-link-fg: #0f172a;
+      --button-bg-start: #2e6ee6;
+      --button-bg-end: #3d8cff;
+      --button-border: #4f8de0;
+      --button-fg: #eef6ff;
+      --button-shadow: 0 6px 18px rgba(33, 90, 199, 0.28);
+      --icon-bg: #f8fafc;
+      --icon-border: #cbd5e1;
+      --icon-fg: #0f172a;
+      --summary-fg: #475569;
+      --status-fg: #2563eb;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --page-bg: #0b1020;
+        --page-fg: #dbe6ff;
+        --link-fg: #8cc2ff;
+        --link-hover-fg: #b8d5ff;
+        --row-bg: #0f1b33;
+        --row-border: #28405f;
+        --row-hover-bg: #13213c;
+        --row-shadow: rgba(6, 13, 30, 0.45);
+        --header-link-bg: #101f3a;
+        --header-link-border: #2a4569;
+        --header-link-fg: #9ec8ff;
+        --button-bg-start: #2e6ee6;
+        --button-bg-end: #3d8cff;
+        --button-border: #4f8de0;
+        --button-fg: #eef6ff;
+        --button-shadow: 0 6px 18px rgba(18, 63, 145, 0.45);
+        --icon-bg: #162643;
+        --icon-border: #36557a;
+        --icon-fg: #dbe6ff;
+        --summary-fg: #b8d5ff;
+        --status-fg: #8cc2ff;
+      }
+    }
+    html, body { width: 100%; min-height: 100%; margin: 0; }
+    body { box-sizing: border-box; font-family: ui-monospace, Menlo, Monaco, monospace; padding: 16px; background: var(--page-bg); color: var(--page-fg); }
+    a { color: var(--link-fg); text-decoration: none; }
+    a:hover { color: var(--link-hover-fg); text-decoration: underline; }
+    h1 { font-size: 18px; margin: 0; word-break: break-all; color: var(--page-fg); }
     ul { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 8px; }
     .file-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; }
-    .file-link { display: block; padding: 10px 12px; border: 1px solid #28405f; border-radius: 10px; background: #0f1b33; overflow-wrap: anywhere; }
+    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 10px; background: var(--row-bg); box-shadow: 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
+    .file-link:hover { background: var(--row-hover-bg); text-decoration: none; }
     .header-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
-    .header-parent-link { color: #9ec8ff; font-size: 14px; padding: 8px 10px; border: 1px solid #2a4569; border-radius: 10px; background: #101f3a; }
+    .header-parent-link { color: var(--header-link-fg); font-size: 14px; padding: 8px 10px; border: 1px solid var(--header-link-border); border-radius: 10px; background: var(--header-link-bg); }
     .header-parent-link:hover { text-decoration: none; filter: brightness(1.08); }
     .header-open-btn {
       height: 42px;
       padding: 0 14px;
-      border: 1px solid #4f8de0;
+      border: 1px solid var(--button-border);
       border-radius: 10px;
-      background: linear-gradient(135deg, #2e6ee6 0%, #3d8cff 100%);
-      color: #eef6ff;
+      background: linear-gradient(135deg, var(--button-bg-start) 0%, var(--button-bg-end) 100%);
+      color: var(--button-fg);
       font-weight: 700;
       letter-spacing: 0.01em;
       cursor: pointer;
-      box-shadow: 0 6px 18px rgba(33, 90, 199, 0.35);
+      box-shadow: var(--button-shadow);
     }
     .header-open-btn:hover { filter: brightness(1.08); }
     .header-open-btn:disabled { opacity: 0.6; cursor: default; }
-    .picker-summary { margin: 10px 0 0; color: #b8d5ff; max-width: 60rem; line-height: 1.45; }
+    .picker-summary { margin: 10px 0 0; color: var(--summary-fg); max-width: 60rem; line-height: 1.45; }
     .row-actions { display: inline-flex; align-items: center; gap: 8px; min-width: 42px; justify-content: flex-end; }
-    .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid #36557a; border-radius: 10px; background: #162643; color: #dbe6ff; text-decoration: none; cursor: pointer; }
+    .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid var(--icon-border); border-radius: 10px; background: var(--icon-bg); color: var(--icon-fg); text-decoration: none; cursor: pointer; }
     .icon-btn:hover { filter: brightness(1.08); text-decoration: none; }
-    .status { margin: 10px 0 0; color: #8cc2ff; min-height: 1.25em; }
-    h1 { font-size: 18px; margin: 0; word-break: break-all; }
+    .status { margin: 10px 0 0; color: var(--status-fg); min-height: 1.25em; }
     @media (max-width: 640px) {
-      body { margin: 12px; }
+      body { padding: 12px; }
       .file-row { gap: 8px; }
       .file-link { font-size: 15px; padding: 12px; }
       .icon-btn { width: 44px; height: 44px; }
@@ -358,10 +420,292 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
 </html>`
 }
 
+function markdownPreviewStyles(): string {
+  return `
+    :root {
+      color-scheme: light dark;
+      --preview-bg: #f8fafc;
+      --preview-fg: #0f172a;
+      --muted-fg: #64748b;
+      --border: #cbd5e1;
+      --soft-bg: #f1f5f9;
+      --blockquote-bg: rgba(241, 245, 249, 0.78);
+      --link-fg: #0969da;
+      --link-hover: #1f6feb;
+      --code-bg: rgba(226, 232, 240, 0.74);
+      --code-fg: #0f172a;
+      --block-code-bg: #020617;
+      --block-code-fg: #e2e8f0;
+      --table-bg: #ffffff;
+      --table-head-bg: #f1f5f9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --preview-bg: #0b1020;
+        --preview-fg: #dbe6ff;
+        --muted-fg: #9ca3af;
+        --border: #334155;
+        --soft-bg: #111827;
+        --blockquote-bg: rgba(31, 41, 55, 0.72);
+        --link-fg: #8cc2ff;
+        --link-hover: #bfdbfe;
+        --code-bg: rgba(55, 65, 81, 0.78);
+        --code-fg: #f8fafc;
+        --block-code-bg: #020617;
+        --block-code-fg: #e5e7eb;
+        --table-bg: #0f172a;
+        --table-head-bg: #1f2937;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      background: var(--preview-bg);
+      color: var(--preview-fg);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.58;
+      letter-spacing: 0;
+      padding: 22px;
+      overflow-wrap: anywhere;
+      -webkit-text-size-adjust: 100%;
+    }
+    .preview-meta {
+      margin: 0 0 14px;
+      color: var(--muted-fg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .markdown-preview {
+      width: min(82ch, 100%);
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .message-text,
+    .message-heading,
+    .message-blockquote,
+    .message-list,
+    .message-table-wrap,
+    .message-code-block,
+    .message-divider { margin: 0; }
+    .message-text {
+      white-space: pre-wrap;
+      color: var(--preview-fg);
+    }
+    .message-heading {
+      color: var(--preview-fg);
+      font-weight: 650;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    .message-heading-h1 { font-size: 1.75rem; }
+    .message-heading-h2 { font-size: 1.45rem; }
+    .message-heading-h3 { font-size: 1.25rem; }
+    .message-heading-h4 { font-size: 1.08rem; }
+    .message-heading-h5 { font-size: 0.95rem; text-transform: uppercase; }
+    .message-heading-h6 { font-size: 0.82rem; color: var(--muted-fg); text-transform: uppercase; }
+    .message-blockquote {
+      border-left: 4px solid var(--border);
+      border-radius: 0 8px 8px 0;
+      background: var(--blockquote-bg);
+      color: var(--preview-fg);
+      padding: 0.45rem 0.9rem;
+      white-space: pre-wrap;
+    }
+    .message-list {
+      padding-left: 1.35rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .message-list-unordered { list-style: disc; }
+    .message-list-ordered { list-style: decimal; }
+    .message-list-item { padding-left: 0.15rem; }
+    .message-list-item-content {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .message-list-item-text { white-space: pre-wrap; }
+    .message-task-list {
+      list-style: none;
+      padding-left: 0;
+    }
+    .message-task-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+    .message-task-checkbox {
+      margin-top: 0.08rem;
+      color: var(--muted-fg);
+      user-select: none;
+    }
+    .message-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+    .message-table {
+      min-width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--table-bg);
+      color: var(--preview-fg);
+      font-size: 0.95em;
+    }
+    .message-table-head-cell,
+    .message-table-cell {
+      border-left: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 0.55rem 0.72rem;
+      vertical-align: top;
+      white-space: pre-wrap;
+    }
+    .message-table-head-cell:first-child,
+    .message-table-cell:first-child { border-left: 0; }
+    .message-table-head-cell {
+      background: var(--table-head-bg);
+      font-weight: 650;
+    }
+    .message-table-body-row:last-child .message-table-cell { border-bottom: 0; }
+    .message-inline-code {
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--code-bg);
+      color: var(--code-fg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.9em;
+      padding: 0.1rem 0.32rem;
+    }
+    .message-code-block {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--block-code-bg);
+      color: var(--block-code-fg);
+    }
+    .message-code-language {
+      border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+      color: #94a3b8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      padding: 0.45rem 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .message-code-pre {
+      margin: 0;
+      overflow-x: auto;
+      padding: 0.8rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre;
+    }
+    .message-code-pre .hljs {
+      display: block;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+    .hljs-comment,
+    .hljs-quote { color: #94a3b8; }
+    .hljs-keyword,
+    .hljs-selector-tag,
+    .hljs-subst { color: #f472b6; }
+    .hljs-string,
+    .hljs-doctag { color: #86efac; }
+    .hljs-number,
+    .hljs-literal,
+    .hljs-variable,
+    .hljs-template-variable,
+    .hljs-tag .hljs-attr { color: #fbbf24; }
+    .hljs-title,
+    .hljs-section,
+    .hljs-selector-id { color: #93c5fd; }
+    .message-file-link {
+      color: var(--link-fg);
+      text-decoration: none;
+      text-underline-offset: 2px;
+    }
+    .message-file-link:hover {
+      color: var(--link-hover);
+      text-decoration: underline;
+    }
+    .message-bold-text { font-weight: 650; }
+    .message-italic-text { font-style: italic; }
+    .message-strikethrough-text {
+      text-decoration: line-through;
+      color: var(--muted-fg);
+    }
+    .message-divider {
+      height: 1px;
+      border: 0;
+      background: var(--border);
+    }
+    .message-markdown-image {
+      display: block;
+      width: auto;
+      height: auto;
+      max-width: min(560px, 100%);
+      max-height: min(460px, 68vh);
+      object-fit: contain;
+      background: #fff;
+      border-radius: 8px;
+    }
+    @media (max-width: 720px) {
+      body { padding: 16px; }
+      .markdown-preview { width: 100%; }
+      .message-heading-h1 { font-size: 1.5rem; }
+      .message-heading-h2 { font-size: 1.25rem; }
+    }
+  `
+}
+
+export function createMarkdownPreviewHtml(localPath: string, markdown: string): string {
+  const rendered = renderMarkdownContent(markdown, {
+    cwd: dirname(localPath),
+    kind: 'message',
+    highlightVersion: 0,
+  }).html
+  const bodyHtml = rendered.trim()
+    ? rendered
+    : '<p class="message-text">Nothing to preview.</p>'
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Preview ${escapeHtml(localPath)}</title>
+  <style>${markdownPreviewStyles()}</style>
+</head>
+<body>
+  <p class="preview-meta">${escapeHtml(localPath)}</p>
+  <article class="markdown-preview message-text-flow">${bodyHtml}</article>
+</body>
+</html>`
+}
+
 export async function createTextEditorHtml(localPath: string): Promise<string> {
   const content = await readFile(localPath, 'utf8')
   const parentPath = dirname(localPath)
   const language = languageForPath(localPath)
+  const supportsMarkdownPreview = isMarkdownPath(localPath)
+  const previewButton = supportsMarkdownPreview
+    ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
+    : ''
+  const previewPane = supportsMarkdownPreview
+    ? '<iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
+    : ''
   const safeContentLiteral = escapeForInlineScriptString(content)
   return `<!doctype html>
 <html lang="en">
@@ -388,6 +732,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       --control-fg: #0f172a;
       --control-border: #cbd5e1;
       --status-fg: #2563eb;
+      --preview-status-fg: #64748b;
       --ace-bg: #ffffff;
       --ace-gutter-bg: #f1f5f9;
       --ace-gutter-fg: #64748b;
@@ -407,6 +752,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         --control-fg: #dbe6ff;
         --control-border: #334455;
         --status-fg: #8cc2ff;
+        --preview-status-fg: #9ca3af;
         --ace-bg: #07101f;
         --ace-gutter-bg: #07101f;
         --ace-gutter-fg: #6f8eb5;
@@ -420,8 +766,13 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     button, a { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); padding: 6px 10px; border-radius: 6px; text-decoration: none; cursor: pointer; }
     button:hover, a:hover { filter: brightness(1.08); }
-    #editor { flex: 1 1 auto; min-height: 0; width: 100%; border: none; overflow: hidden; }
+    button[aria-pressed="true"] { border-color: var(--status-fg); color: var(--status-fg); }
+    .editor-shell { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: stretch; overflow: hidden; }
+    #editor { flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; border: none; overflow: hidden; }
+    .preview-pane { flex: 1 1 42%; min-width: min(420px, 48vw); border: 0; border-left: 1px solid var(--toolbar-border); background: var(--page-bg); }
+    .editor-shell[data-preview="false"] .preview-pane { display: none; }
     #status { margin-left: 8px; color: var(--status-fg); }
+    #previewStatus { color: var(--preview-status-fg); font-size: 12px; }
     .ace_editor { background: var(--ace-bg) !important; color: var(--page-fg) !important; width: 100% !important; height: 100% !important; }
     .ace_editor, .ace_editor .ace_content, .ace_editor .ace_text-layer { font-family: var(--editor-font-family) !important; font-weight: var(--editor-font-weight) !important; font-synthesis: none; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
     .ace_editor.ace_nobold .ace_line > span, .ace_editor.ace_nobold .ace_bold { font-weight: var(--editor-font-weight) !important; }
@@ -431,6 +782,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     .meta { opacity: 0.9; font-size: 12px; overflow-wrap: anywhere; font-family: var(--editor-font-family); }
     @media (max-width: 768px), (pointer: coarse) {
       .toolbar { gap: 10px; padding: 12px; }
+      .editor-shell[data-preview="true"] { flex-direction: column; }
+      .editor-shell[data-preview="true"] #editor { flex-basis: 52%; }
+      .preview-pane { min-width: 0; min-height: 38vh; border-left: 0; border-top: 1px solid var(--toolbar-border); }
       .ace_editor, .ace_editor * { font-weight: var(--editor-font-weight) !important; font-synthesis: none; }
     }
   </style>
@@ -440,15 +794,25 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     <div class="row">
       <a href="${escapeHtml(toBrowseHref(parentPath))}">Back</a>
       <button id="saveBtn" type="button">Save</button>
+      ${previewButton}
       <span id="status"></span>
+      <span id="previewStatus"></span>
     </div>
     <div class="meta">${escapeHtml(localPath)} · ${escapeHtml(language)}</div>
   </div>
-  <div id="editor"></div>
+  <div id="editorShell" class="editor-shell" data-preview="false">
+    <div id="editor"></div>
+    ${previewPane}
+  </div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.36.2/ace.js"></script>
   <script>
     const saveBtn = document.getElementById('saveBtn');
+    const previewBtn = document.getElementById('previewBtn');
     const status = document.getElementById('status');
+    const previewStatus = document.getElementById('previewStatus');
+    const editorShell = document.getElementById('editorShell');
+    const previewFrame = document.getElementById('previewFrame');
+    const supportsMarkdownPreview = ${supportsMarkdownPreview ? 'true' : 'false'};
     const editor = ace.edit('editor');
     const editorFontFamily = '"CodexLocalEditorLatin", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
     editor.container.classList.add('ace_nobold');
@@ -475,6 +839,105 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       behavioursEnabled: true,
     });
     editor.resize();
+
+    let previewVisible = false;
+    let previewTimer = 0;
+    let previewRevision = 0;
+    let previewController = null;
+    let previewStatusTimer = 0;
+
+    const setPreviewStatus = (message) => {
+      if (!previewStatus) return;
+      previewStatus.textContent = message;
+      if (previewStatusTimer) {
+        window.clearTimeout(previewStatusTimer);
+        previewStatusTimer = 0;
+      }
+      if (message === 'Preview updated') {
+        previewStatusTimer = window.setTimeout(() => {
+          previewStatus.textContent = '';
+          previewStatusTimer = 0;
+        }, 1200);
+      }
+    };
+
+    const previewEndpoint = () => {
+      if (!location.pathname.startsWith('/codex-local-edit')) return '';
+      return '/codex-local-preview' + location.pathname.slice('/codex-local-edit'.length);
+    };
+
+    const previewErrorHtml = (message) => {
+      const escaped = String(message || 'Preview failed')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+      return '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:22px;font:14px system-ui;color:#b91c1c;background:#fff1f2}@media(prefers-color-scheme:dark){body{color:#fecdd3;background:#2a0f18}}</style></head><body>' + escaped + '</body></html>';
+    };
+
+    const renderPreview = async () => {
+      if (!supportsMarkdownPreview || !previewVisible || !previewFrame) return;
+      const endpoint = previewEndpoint();
+      if (!endpoint) return;
+      const revision = ++previewRevision;
+      if (previewController) {
+        previewController.abort();
+      }
+      previewController = new AbortController();
+      setPreviewStatus('Rendering preview...');
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          body: editor.getValue(),
+          signal: previewController.signal,
+        });
+        if (!response.ok) throw new Error('Preview failed');
+        const html = await response.text();
+        if (revision !== previewRevision) return;
+        previewFrame.srcdoc = html;
+        setPreviewStatus('Preview updated');
+      } catch (error) {
+        if (error && error.name === 'AbortError') return;
+        if (revision !== previewRevision) return;
+        previewFrame.srcdoc = previewErrorHtml('Preview failed');
+        setPreviewStatus('Preview failed');
+      }
+    };
+
+    const schedulePreview = (delay = 250) => {
+      if (!supportsMarkdownPreview || !previewVisible) return;
+      if (previewTimer) window.clearTimeout(previewTimer);
+      previewTimer = window.setTimeout(() => {
+        previewTimer = 0;
+        renderPreview();
+      }, delay);
+    };
+
+    const setPreviewVisible = (visible) => {
+      if (!supportsMarkdownPreview || !previewBtn || !editorShell || !previewFrame) return;
+      previewVisible = visible;
+      editorShell.dataset.preview = visible ? 'true' : 'false';
+      previewFrame.hidden = !visible;
+      previewBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+      previewBtn.textContent = visible ? 'Hide Preview' : 'Preview';
+      window.requestAnimationFrame(() => editor.resize());
+      if (visible) {
+        schedulePreview(0);
+      } else {
+        setPreviewStatus('');
+      }
+    };
+
+    if (previewBtn) {
+      previewBtn.addEventListener('click', () => {
+        setPreviewVisible(!previewVisible);
+      });
+      editor.session.on('change', () => {
+        schedulePreview();
+      });
+    }
 
     saveBtn.addEventListener('click', async () => {
       status.textContent = 'Saving...';

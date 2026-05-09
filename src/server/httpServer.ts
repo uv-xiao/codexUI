@@ -6,7 +6,7 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
-import { createDirectoryListingHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from './localBrowseUi.js'
+import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from './localBrowseUi.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -192,6 +192,27 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
         return
       }
       const html = await createTextEditorHtml(localPath)
+      res.status(200).type('text/html; charset=utf-8').send(html)
+    } catch {
+      res.status(404).json({ error: 'File not found.' })
+    }
+  })
+
+  app.post('/codex-local-preview/*path', express.text({ type: '*/*', limit: '10mb' }), async (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const localPath = decodeBrowsePath(`/${rawPath}`)
+    if (!localPath || !isAbsolute(localPath)) {
+      res.status(400).json({ error: 'Expected absolute local file path.' })
+      return
+    }
+    try {
+      const fileStat = await stat(localPath)
+      if (!fileStat.isFile()) {
+        res.status(400).json({ error: 'Expected file path.' })
+        return
+      }
+      const markdown = typeof req.body === 'string' ? req.body : ''
+      const html = createMarkdownPreviewHtml(localPath, markdown)
       res.status(200).type('text/html; charset=utf-8').send(html)
     } catch {
       res.status(404).json({ error: 'File not found.' })

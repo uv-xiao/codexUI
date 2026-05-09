@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
-import { createDirectoryListingHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from "./src/server/localBrowseUi";
+import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from "./src/server/localBrowseUi";
 import tailwindcss from "@tailwindcss/vite";
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
@@ -330,6 +330,44 @@ export default defineConfig({
             res.statusCode = 200;
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.end(html);
+          } catch {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "File not found." }));
+          }
+        });
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url || req.method !== "POST") return next();
+          const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith("/codex-local-preview/")) return next();
+          const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-preview".length));
+          if (!localPath || !isAbsolute(localPath)) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Expected absolute local file path." }));
+            return;
+          }
+          try {
+            const fileStat = await stat(localPath);
+            if (!fileStat.isFile()) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Expected file path." }));
+              return;
+            }
+            const chunks: Buffer[] = [];
+            req.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+            req.on("end", () => {
+              const html = createMarkdownPreviewHtml(localPath, Buffer.concat(chunks).toString("utf8"));
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              res.end(html);
+            });
+            req.on("error", () => {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Preview failed." }));
+            });
           } catch {
             res.statusCode = 404;
             res.setHeader("Content-Type", "application/json");

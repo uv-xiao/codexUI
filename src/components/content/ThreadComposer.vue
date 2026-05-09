@@ -107,7 +107,16 @@
               @mousedown.prevent="applyFileMention(item)"
             >
               <span
-                v-if="getMentionBadgeText(item.path)"
+                v-if="item.isSymlink"
+                class="thread-composer-file-mention-symlink-badge"
+                :title="t('Symlink')"
+                aria-hidden="true"
+              >
+                ↗
+              </span>
+              <IconTablerFolderOpen v-if="item.kind === 'directory'" class="thread-composer-file-mention-icon-folder" />
+              <span
+                v-else-if="getMentionBadgeText(item.path)"
                 class="thread-composer-file-mention-icon-badge"
                 :class="`is-${getMentionBadgeClass(item.path)}`"
               >
@@ -121,7 +130,7 @@
               </span>
             </button>
           </template>
-          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching files') }}</div>
+          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching paths') }}</div>
         </div>
         <textarea
           ref="inputRef"
@@ -418,6 +427,7 @@ import IconTablerBolt from '../icons/IconTablerBolt.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
 import IconTablerMaximize from '../icons/IconTablerMaximize.vue'
+import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
 import IconTablerMicrophone from '../icons/IconTablerMicrophone.vue'
 import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
@@ -719,7 +729,7 @@ const placeholderText = computed(() =>
     ? t('Select a thread to send a message')
     : isPlanModeWaitingForModel.value
       ? t('Loading models for plan mode...')
-      : t('Type a message... (@ for files)'),
+      : t('Type a message... (@ for paths)'),
 )
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
@@ -2073,8 +2083,16 @@ watch(
   @apply inline-flex h-5 min-w-5 items-center justify-center text-sm leading-none text-zinc-700;
 }
 
+.thread-composer-file-mention-icon-folder {
+  @apply h-4 w-4 text-amber-600;
+}
+
 .thread-composer-file-mention-icon-file {
   @apply h-4 w-4 text-zinc-600;
+}
+
+.thread-composer-file-mention-symlink-badge {
+  @apply inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-1 text-[10px] font-semibold leading-none text-sky-700;
 }
 
 .thread-composer-file-mention-text {

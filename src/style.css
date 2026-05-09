@@ -441,6 +441,32 @@
   @apply text-zinc-300 hover:bg-zinc-700;
 }
 
+:root.dark .thread-composer-file-mention-icon-badge {
+  @apply bg-zinc-600 text-zinc-100;
+}
+
+:root.dark .thread-composer-file-mention-icon-markdown,
+:root.dark .thread-composer-file-mention-icon-file,
+:root.dark .thread-composer-file-mention-icon-folder {
+  @apply text-zinc-200;
+}
+
+:root.dark .thread-composer-file-mention-symlink-badge {
+  @apply border-sky-900/70 bg-sky-950 text-sky-300;
+}
+
+:root.dark .thread-composer-file-mention-name {
+  @apply text-zinc-100;
+}
+
+:root.dark .thread-composer-file-mention-dir {
+  @apply text-zinc-400;
+}
+
+:root.dark .thread-composer-file-mention-empty {
+  @apply text-zinc-500;
+}
+
 :root.dark .thread-composer-file-chip {
   @apply border-zinc-600 bg-zinc-700 text-zinc-300;
 }

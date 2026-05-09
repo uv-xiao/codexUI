@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -258,6 +258,33 @@ describe('resumeThread', () => {
     expect(requests).toEqual([
       { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
       { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
+    ])
+  })
+})
+
+describe('searchComposerFiles', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves directory and symlink metadata from the server', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: [
+        { path: 'src', kind: 'directory', isSymlink: false },
+        { path: 'link.txt', kind: 'file', isSymlink: true },
+      ],
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })))
+
+    const results = await searchComposerFiles('/tmp/project', 'src', 10)
+
+    expect(results).toEqual([
+      { path: 'src', kind: 'directory', isSymlink: false },
+      { path: 'link.txt', kind: 'file', isSymlink: true },
     ])
   })
 })

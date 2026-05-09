@@ -1743,6 +1743,34 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - Close any opened file tabs and remove temporary test messages if needed.
 
+### Feature: Composer @ search includes folders and symlinks
+
+#### Prerequisites
+- Start the app from this repository (`pnpm run dev`).
+- Open a thread whose `cwd` contains at least one folder and one symlink you can safely reference.
+- Have a temporary folder and symlink available inside the workspace if the current tree does not already contain one.
+
+#### Steps
+1. Switch the app to `Light` theme.
+2. Focus the composer and type `@` followed by a folder name from the current workspace.
+3. Confirm a folder result appears in the mention list and shows a folder-style icon.
+4. Select the folder result and confirm it becomes a file attachment chip.
+5. Type `@` again and search for a symlink path or symlink target name.
+6. Confirm the symlink result appears with a symlink indicator and can be selected.
+7. Send the message and confirm the attached folder/symlink path is preserved in the sent message.
+8. Switch the app to `Dark` theme and repeat steps 2-7.
+
+#### Expected Results
+- `@` search returns both files and folders from the workspace.
+- Symlinked paths also appear in the suggestion list.
+- Folder rows use a folder icon and symlink rows are visibly marked.
+- Selected folder and symlink paths attach the same way as file paths.
+- Light theme and dark theme both keep the suggestion list readable.
+
+#### Rollback/Cleanup
+- Remove any temporary symlink or folder created only for this test.
+- Clear attached chips or discard the test message if you do not want to keep it.
+
 ### Feature: Frontend missing-entry 404 page auto-redirects to chat
 
 #### Prerequisites

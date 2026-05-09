@@ -7,6 +7,7 @@ import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
 import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -105,6 +106,22 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     res.sendFile(localPath, { dotfiles: 'allow' }, (error) => {
       if (!error) return
       if (!res.headersSent) res.status(404).json({ error: 'Image file not found.' })
+    })
+  })
+
+  app.get(`${KATEX_ASSET_ROUTE}/*path`, (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const assetPath = resolveKatexAssetPath(`/${rawPath}`)
+    if (!assetPath) {
+      res.status(404).json({ error: 'KaTeX asset not found.' })
+      return
+    }
+
+    res.type(getKatexAssetContentType(assetPath))
+    res.setHeader('Cache-Control', 'private, max-age=86400')
+    res.sendFile(assetPath, { dotfiles: 'allow' }, (error) => {
+      if (!error) return
+      if (!res.headersSent) res.status(404).json({ error: 'KaTeX asset not found.' })
     })
   })
 

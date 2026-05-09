@@ -1,6 +1,7 @@
 import { dirname, extname, join } from 'node:path'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { renderMarkdownContent } from '../components/content/markdownRenderer.js'
+import { KATEX_STYLESHEET_HREF } from './katexAssets.js'
 
 type DirectoryItem = {
   name: string
@@ -702,6 +703,7 @@ export function createMarkdownPreviewHtml(localPath: string, markdown: string): 
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Preview ${escapeHtml(localPath)}</title>
+  <link rel="stylesheet" href="${KATEX_STYLESHEET_HREF}" />
   <style>${markdownPreviewStyles()}</style>
 </head>
 <body>

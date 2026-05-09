@@ -7278,21 +7278,66 @@ type SharedBridgeState = {
 }
 
 const SHARED_BRIDGE_KEY = '__codexRemoteSharedBridge__'
+const SHARED_BRIDGE_EXIT_CLEANUP_KEY = '__codexRemoteSharedBridgeExitCleanup__'
 const SHARED_BRIDGE_VERSION = 'experimental-api-v2'
 
-function getSharedBridgeState(): SharedBridgeState {
-  const globalScope = globalThis as typeof globalThis & {
-    [SHARED_BRIDGE_KEY]?: SharedBridgeState
+type SharedBridgeStateLike = Partial<SharedBridgeState> & {
+  version?: string
+}
+
+type SharedBridgeGlobalScope = typeof globalThis & {
+  [SHARED_BRIDGE_KEY]?: SharedBridgeStateLike
+  [SHARED_BRIDGE_EXIT_CLEANUP_KEY]?: boolean
+}
+
+function getSharedBridgeGlobalScope(): SharedBridgeGlobalScope {
+  return globalThis as SharedBridgeGlobalScope
+}
+
+function disposeSharedBridgeState(state: SharedBridgeStateLike, globalScope = getSharedBridgeGlobalScope()): void {
+  if (globalScope[SHARED_BRIDGE_KEY] === state) {
+    delete globalScope[SHARED_BRIDGE_KEY]
   }
+  state.telegramBridge?.stop()
+  state.backendQueueProcessor?.dispose()
+  state.terminalManager?.dispose()
+  state.appServer?.dispose()
+}
+
+function disposeCurrentSharedBridgeState(globalScope = getSharedBridgeGlobalScope()): void {
+  const current = globalScope[SHARED_BRIDGE_KEY]
+  if (!current) return
+  disposeSharedBridgeState(current)
+}
+
+function ensureSharedBridgeExitCleanup(globalScope: SharedBridgeGlobalScope): void {
+  if (globalScope[SHARED_BRIDGE_EXIT_CLEANUP_KEY]) return
+  globalScope[SHARED_BRIDGE_EXIT_CLEANUP_KEY] = true
+  process.once('exit', () => {
+    disposeCurrentSharedBridgeState(globalScope)
+  })
+}
+
+function isCompleteSharedBridgeState(state: SharedBridgeStateLike): state is SharedBridgeState {
+  return Boolean(
+    state.appServer &&
+    state.terminalManager &&
+    state.methodCatalog &&
+    state.telegramBridge &&
+    state.backendQueueProcessor,
+  )
+}
+
+function getSharedBridgeState(): SharedBridgeState {
+  const globalScope = getSharedBridgeGlobalScope()
+  ensureSharedBridgeExitCleanup(globalScope)
 
   const existing = globalScope[SHARED_BRIDGE_KEY]
   if (existing) {
-    if (existing.version === SHARED_BRIDGE_VERSION && existing.terminalManager) {
+    if (existing.version === SHARED_BRIDGE_VERSION && isCompleteSharedBridgeState(existing)) {
       return existing
     }
-    existing.appServer.dispose()
-    existing.backendQueueProcessor?.dispose()
-    existing.terminalManager?.dispose()
+    disposeCurrentSharedBridgeState(globalScope)
   }
 
   const appServer = new AppServerProcess()
@@ -7391,7 +7436,8 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
 }
 
 export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
-  const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = getSharedBridgeState()
+  const sharedBridgeState = getSharedBridgeState()
+  const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = sharedBridgeState
   let threadSearchIndex: ThreadSearchIndex | null = null
   let threadSearchIndexPromise: Promise<ThreadSearchIndex> | null = null
 
@@ -9572,10 +9618,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
   middleware.dispose = () => {
     threadSearchIndex = null
-    telegramBridge.stop()
-    terminalManager.dispose()
-    backendQueueProcessor.dispose()
-    appServer.dispose()
+    disposeSharedBridgeState(sharedBridgeState)
   }
   middleware.subscribeNotifications = (
     listener: (value: { method: string; params: unknown; atIso: string }) => void,

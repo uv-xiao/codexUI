@@ -36,4 +36,16 @@ describe('searchComposerPaths', () => {
     expect(byPath.get('real/nested')?.kind).toBe('directory')
     expect(byPath.get('real/nested')?.isSymlink).toBe(false)
   })
+
+  it('supports fuzzy matching for misspelled file names', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await writeFile(join(tempDir, 'install-configs.py'), 'print("ok")')
+    await writeFile(join(tempDir, 'other-file.txt'), 'other')
+
+    const results = await searchComposerPaths(tempDir, 'instalconf', 20)
+
+    expect(results[0]?.path).toBe('install-configs.py')
+    expect(results.some((entry) => entry.path === 'install-configs.py')).toBe(true)
+  })
 })

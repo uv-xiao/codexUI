@@ -50,6 +50,33 @@ function addAncestorDirectories(
   }
 }
 
+function normalizeFuzzyMatchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, '')
+}
+
+function scoreFuzzySubsequence(path: string, query: string): number | null {
+  const normalizedPath = normalizeFuzzyMatchText(path)
+  const normalizedQuery = normalizeFuzzyMatchText(query)
+  if (!normalizedPath || !normalizedQuery) return null
+
+  let searchFrom = 0
+  let firstMatch = -1
+  let previousMatch = -1
+  for (const char of normalizedQuery) {
+    const nextMatch = normalizedPath.indexOf(char, searchFrom)
+    if (nextMatch < 0) return null
+    if (firstMatch < 0) firstMatch = nextMatch
+    previousMatch = nextMatch
+    searchFrom = nextMatch + 1
+  }
+
+  const span = previousMatch - firstMatch + 1
+  const compactnessPenalty = span - normalizedQuery.length
+  const leadingPenalty = firstMatch
+  const lengthPenalty = Math.max(0, normalizedPath.length - normalizedQuery.length)
+  return Math.min(9.5, 5 + (leadingPenalty * 0.15) + (compactnessPenalty * 0.35) + (lengthPenalty * 0.02))
+}
+
 export function scoreComposerPathCandidate(path: string, query: string): number {
   if (!query) return 0
   const lowerPath = path.toLowerCase()
@@ -61,6 +88,13 @@ export function scoreComposerPathCandidate(path: string, query: string): number 
   if (baseName.includes(lowerQuery)) return 2
   if (normalizedPath.includes(`/${lowerQuery}`)) return 3
   if (normalizedPath.includes(lowerQuery)) return 4
+  const fuzzyScores = [
+    scoreFuzzySubsequence(baseName, lowerQuery),
+    scoreFuzzySubsequence(normalizedPath, lowerQuery),
+  ].filter((score): score is number => typeof score === 'number')
+  if (fuzzyScores.length > 0) {
+    return Math.min(...fuzzyScores)
+  }
   return 10
 }
 

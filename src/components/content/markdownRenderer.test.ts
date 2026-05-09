@@ -67,6 +67,15 @@ const answer = 42
     expect(html).toContain('<code class="message-inline-code">repos/codexUI</code>：<code class="message-inline-code">origin/crz/dev</code> → <code class="message-inline-code">18dd52c</code>')
   })
 
+  it('does not split ambiguous slash text into absolute tail links', () => {
+    const html = render('origin/crz/dev and xx/yy')
+
+    expect(html).toContain('origin/crz/dev and xx/yy')
+    expect(html).not.toContain('message-file-link')
+    expect(html).not.toContain('title="/crz/dev"')
+    expect(html).not.toContain('title="/yy"')
+  })
+
   it('parses local markdown links with spaces in the target', () => {
     const html = render('MARK [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)')
 

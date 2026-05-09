@@ -422,6 +422,11 @@ import {
   type ComposerFileSuggestion,
   type ComposerPromptInfo,
 } from '../../api/codexGateway'
+import {
+  extractComposerFileMentionAttachments,
+  formatComposerFileMention,
+  toComposerFileMentionSearchQuery,
+} from './composerFileMentions'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
@@ -965,10 +970,11 @@ function buildContextUsageView(
 function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   const text = draft.value.trim()
   if (!canSubmit.value) return
+  const inlineFileAttachments = extractComposerFileMentionAttachments(text, props.cwd ?? '')
   emit('submit', {
     text,
     imageUrls: selectedImages.value.map((image) => image.url),
-    fileAttachments: [...fileAttachments.value],
+    fileAttachments: dedupeFileAttachments([...fileAttachments.value, ...inlineFileAttachments]),
     skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
     mode,
   })
@@ -1250,6 +1256,18 @@ function addFileAttachment(filePath: string, customLabel?: string): void {
   const parts = normalized.split('/').filter(Boolean)
   const label = customLabel?.trim() || parts[parts.length - 1] || normalized
   fileAttachments.value = [...fileAttachments.value, { label, path: normalized, fsPath: normalized }]
+}
+
+function dedupeFileAttachments(attachments: FileAttachment[]): FileAttachment[] {
+  const seen = new Set<string>()
+  const next: FileAttachment[] = []
+  for (const attachment of attachments) {
+    const key = attachment.fsPath || attachment.path
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    next.push(attachment)
+  }
+  return next
 }
 
 function isImageFile(file: File): boolean {
@@ -1650,7 +1668,7 @@ async function queueFileMentionSearch(): Promise<void> {
   const token = ++fileMentionSearchToken
   fileMentionDebounceTimer = setTimeout(async () => {
     try {
-      const rows = await searchComposerFiles(cwd, mentionQuery.value, 20)
+      const rows = await searchComposerFiles(cwd, toComposerFileMentionSearchQuery(mentionQuery.value), 20)
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = rows
       fileMentionHighlightedIndex.value = 0
@@ -1664,13 +1682,30 @@ async function queueFileMentionSearch(): Promise<void> {
 function applyFileMention(suggestion: ComposerFileSuggestion): void {
   const input = inputRef.value
   const start = mentionStartIndex.value
-  if (start !== null && input) {
-    const cursor = input.selectionStart ?? draft.value.length
-    draft.value = `${draft.value.slice(0, start)}${draft.value.slice(cursor)}`.trimEnd()
+  const cursor = input?.selectionStart ?? draft.value.length
+  const mentionText = formatComposerFileMention(suggestion.path)
+  if (!mentionText) {
+    closeFileMention()
+    nextTick(() => input?.focus())
+    return
   }
-  addFileAttachment(suggestion.path)
+
+  let selectionIndex = draft.value.length
+  if (start !== null && input) {
+    const after = draft.value.slice(cursor)
+    const separator = after.length > 0 && !/^\s/u.test(after) ? ' ' : ''
+    draft.value = `${draft.value.slice(0, start)}${mentionText}${separator}${after}`
+    selectionIndex = start + mentionText.length + separator.length
+  } else {
+    const prefix = draft.value.length > 0 && !/\s$/u.test(draft.value) ? ' ' : ''
+    draft.value = `${draft.value}${prefix}${mentionText}`
+    selectionIndex = draft.value.length
+  }
   closeFileMention()
-  nextTick(() => input?.focus())
+  nextTick(() => {
+    input?.focus()
+    input?.setSelectionRange(selectionIndex, selectionIndex)
+  })
 }
 
 function hydrateDraft(payload: ComposerDraftPayload): void {

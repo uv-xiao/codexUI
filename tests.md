@@ -4618,3 +4618,36 @@ Managed worktree threads remain visible under their matching canonical workspace
 
 #### Rollback/Cleanup
 - None.
+
+---
+
+### Local editor follows system theme and separates CJK font fallback
+
+#### Feature/Change Name
+The `/codex-local-edit/...` Ace editor follows the browser/system light or dark color scheme, keeps Latin/code glyphs on a monospace font, and renders Chinese text through the system UI CJK font fallback.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A text file containing mixed English, paths, code spans, and Chinese text is available
+3. Browser or device system appearance can be switched between light and dark
+4. A mobile or narrow viewport is available for checking the editor font rendering
+
+#### Steps
+1. Open the mixed-language file through a `/codex-local-edit/...` URL in light system/browser appearance.
+2. Confirm the toolbar, gutter, active line, selection, and editor surface use a light theme.
+3. Confirm Latin letters, numbers, punctuation, and paths continue to align as monospace text.
+4. Confirm Chinese text renders with one consistent non-heavy system CJK style instead of mixed fallback glyphs.
+5. Switch the browser or system appearance to dark and reload or revisit the same editor URL.
+6. Confirm the page and Ace editor switch to the dark theme and remain readable.
+7. In a mobile viewport, repeat steps 3 and 4.
+8. Edit the file, click `Save`, and confirm the status changes to `Saved`.
+
+#### Expected Results
+- The standalone editor no longer stays fixed on the dark `tomorrow_night` theme in light system appearance.
+- Light and dark system appearances both theme the surrounding toolbar and Ace editor consistently.
+- Latin/code text remains monospace.
+- Chinese text uses a consistent lighter CJK fallback on mobile instead of alternating with a heavy-looking font.
+- Saving still writes the edited file successfully.
+
+#### Rollback/Cleanup
+- Revert any disposable text edits made during validation.

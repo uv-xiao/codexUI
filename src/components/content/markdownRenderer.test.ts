@@ -76,6 +76,14 @@ const answer = 42
     expect(html).not.toContain('title="/yy"')
   })
 
+  it('does not split Chinese slash text into absolute tail links', () => {
+    const html = render('本地编辑页的系统浅/深色主题、中文字体都正常。')
+
+    expect(html).toContain('系统浅/深色主题')
+    expect(html).not.toContain('message-file-link')
+    expect(html).not.toContain('title="/深色主题"')
+  })
+
   it('parses local markdown links with spaces in the target', () => {
     const html = render('MARK [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)')
 

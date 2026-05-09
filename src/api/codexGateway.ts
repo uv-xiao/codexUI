@@ -1479,6 +1479,11 @@ export async function forkThread(
 
 export type FileAttachmentParam = { label: string; path: string; fsPath: string }
 
+type BuiltUserInputPayload = {
+  input: Array<Record<string, unknown>>
+  attachments: FileAttachmentParam[]
+}
+
 function extractLocalImagePathFromUrl(value: string): string | null {
   if (!value) return null
   try {
@@ -1507,6 +1512,59 @@ function fileNameFromPath(pathValue: string): string {
   const normalized = pathValue.replace(/\\/g, '/')
   const segments = normalized.split('/').filter(Boolean)
   return segments.at(-1) ?? normalized
+}
+
+function buildUserInputPayload(
+  text: string,
+  imageUrls: string[],
+  skills: Array<{ name: string; path: string }> | undefined,
+  fileAttachments: FileAttachmentParam[],
+): BuiltUserInputPayload {
+  const localImageAttachments: FileAttachmentParam[] = []
+  for (const imageUrl of imageUrls) {
+    const localImagePath = extractLocalImagePathFromUrl(imageUrl.trim())
+    if (!localImagePath) continue
+    localImageAttachments.push({
+      label: fileNameFromPath(localImagePath),
+      path: localImagePath,
+      fsPath: localImagePath,
+    })
+  }
+
+  const allFileAttachments = [...fileAttachments, ...localImageAttachments]
+  const dedupedFileAttachments = allFileAttachments.filter((entry, index) =>
+    allFileAttachments.findIndex((candidate) => candidate.fsPath === entry.fsPath) === index)
+  const finalText = buildTextWithAttachments(text, dedupedFileAttachments)
+  const input: Array<Record<string, unknown>> = [{ type: 'text', text: finalText }]
+
+  for (const imageUrl of imageUrls) {
+    const normalizedUrl = imageUrl.trim()
+    if (!normalizedUrl) continue
+    const localImagePath = extractLocalImagePathFromUrl(normalizedUrl)
+    if (localImagePath) {
+      input.push({
+        type: 'localImage',
+        path: localImagePath,
+      })
+      continue
+    }
+    input.push({
+      type: 'image',
+      url: normalizedUrl,
+      image_url: normalizedUrl,
+    })
+  }
+
+  if (skills) {
+    for (const skill of skills) {
+      input.push({ type: 'skill', name: skill.name, path: skill.path })
+    }
+  }
+
+  return {
+    input,
+    attachments: dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath })),
+  }
 }
 
 async function resolveCollaborationModeSettings(
@@ -1573,44 +1631,7 @@ export async function startThreadTurn(
 ): Promise<string> {
   try {
     const normalizedModel = model?.trim() ?? ''
-    const localImageAttachments: FileAttachmentParam[] = []
-    for (const imageUrl of imageUrls) {
-      const localImagePath = extractLocalImagePathFromUrl(imageUrl.trim())
-      if (!localImagePath) continue
-      localImageAttachments.push({
-        label: fileNameFromPath(localImagePath),
-        path: localImagePath,
-        fsPath: localImagePath,
-      })
-    }
-    const allFileAttachments = [...fileAttachments, ...localImageAttachments]
-    const dedupedFileAttachments = allFileAttachments.filter((entry, index) =>
-      allFileAttachments.findIndex((candidate) => candidate.fsPath === entry.fsPath) === index)
-    const finalText = buildTextWithAttachments(text, dedupedFileAttachments)
-    const input: Array<Record<string, unknown>> = [{ type: 'text', text: finalText }]
-    for (const imageUrl of imageUrls) {
-      const normalizedUrl = imageUrl.trim()
-      if (!normalizedUrl) continue
-      const localImagePath = extractLocalImagePathFromUrl(normalizedUrl)
-      if (localImagePath) {
-        input.push({
-          type: 'localImage',
-          path: localImagePath,
-        })
-        continue
-      }
-      input.push({
-        type: 'image',
-        url: normalizedUrl,
-        image_url: normalizedUrl,
-      })
-    }
-    if (skills) {
-      for (const skill of skills) {
-        input.push({ type: 'skill', name: skill.name, path: skill.path })
-      }
-    }
-    const attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
+    const { input, attachments } = buildUserInputPayload(text, imageUrls, skills, fileAttachments)
     const params: Record<string, unknown> = {
       threadId,
       input,
@@ -1637,6 +1658,37 @@ export async function startThreadTurn(
     return typeof payload?.turn?.id === 'string' ? payload.turn.id.trim() : ''
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to start turn for thread ${threadId}`, 'turn/start')
+  }
+}
+
+export async function steerThreadTurn(
+  threadId: string,
+  expectedTurnId: string,
+  text: string,
+  imageUrls: string[] = [],
+  skills?: Array<{ name: string; path: string }>,
+  fileAttachments: FileAttachmentParam[] = [],
+): Promise<string> {
+  const normalizedThreadId = threadId.trim()
+  const normalizedExpectedTurnId = expectedTurnId.trim()
+  if (!normalizedThreadId) return ''
+
+  try {
+    if (!normalizedExpectedTurnId) {
+      throw new Error('turn/steer requires expectedTurnId')
+    }
+
+    const { input } = buildUserInputPayload(text, imageUrls, skills, fileAttachments)
+    const payload = await callRpc<{ turnId?: string }>('turn/steer', {
+      threadId: normalizedThreadId,
+      expectedTurnId: normalizedExpectedTurnId,
+      input,
+    })
+    return typeof payload?.turnId === 'string' && payload.turnId.trim()
+      ? payload.turnId.trim()
+      : normalizedExpectedTurnId
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to steer active turn for thread ${normalizedThreadId}`, 'turn/steer')
   }
 }
 

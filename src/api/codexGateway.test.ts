@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forkThread, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, startThread, startThreadTurn } from './codexGateway'
+import { forkThread, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -96,6 +96,40 @@ describe('startThreadTurn collaboration mode payloads', () => {
         reasoning_effort: 'medium',
         developer_instructions: null,
       },
+    })
+  })
+})
+
+describe('steerThreadTurn payloads', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses turn/steer with the active turn id precondition', async () => {
+    const { requests } = mockRpcFetchWithResponder(() => ({ turnId: 'turn-active' }))
+
+    const turnId = await steerThreadTurn(
+      'thread-1',
+      'turn-active',
+      'continue with this context',
+      [],
+      [{ name: 'brainstorming', path: '/skills/brainstorming' }],
+      [{ label: 'plan.md', path: 'docs/plan.md', fsPath: '/repo/docs/plan.md' }],
+    )
+
+    expect(turnId).toBe('turn-active')
+    expect(requests).toHaveLength(1)
+    expect(requests[0].method).toBe('turn/steer')
+    expect(requests[0].params).toEqual({
+      threadId: 'thread-1',
+      expectedTurnId: 'turn-active',
+      input: [
+        {
+          type: 'text',
+          text: '# Files mentioned by the user:\n\n## plan.md: docs/plan.md\n\n## My request for Codex:\n\ncontinue with this context\n',
+        },
+        { type: 'skill', name: 'brainstorming', path: '/skills/brainstorming' },
+      ],
     })
   })
 })

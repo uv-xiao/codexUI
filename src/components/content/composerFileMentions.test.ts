@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractComposerFileMentionAttachments,
   formatComposerFileMention,
+  insertComposerFileMentionText,
   toComposerFileMentionSearchQuery,
 } from './composerFileMentions'
 
@@ -12,6 +13,20 @@ describe('composerFileMentions', () => {
 
   it('quotes paths with spaces so the mention remains parseable', () => {
     expect(formatComposerFileMention('New Project/app file.ts')).toBe('@"New Project/app file.ts"')
+  })
+
+  it('inserts a trailing space after inline mentions', () => {
+    expect(insertComposerFileMentionText('', 'repos/codexUI', 0)).toEqual({
+      text: '@repos/codexUI ',
+      selectionIndex: 15,
+    })
+  })
+
+  it('keeps the cursor after existing whitespace when replacing a mention', () => {
+    expect(insertComposerFileMentionText('Read @instalconf now', 'install-configs.py', 5, 16)).toEqual({
+      text: 'Read @install-configs.py now',
+      selectionIndex: 25,
+    })
   })
 
   it('treats leading slashes in mention search text as relative prefixes', () => {

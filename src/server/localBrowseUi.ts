@@ -370,19 +370,69 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Edit ${escapeHtml(localPath)}</title>
   <style>
+    @font-face {
+      font-family: "CodexLocalEditorLatin";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
+      unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF, U+2100-214F, U+2190-21FF, U+2200-22FF;
+    }
+    :root {
+      color-scheme: light dark;
+      --page-bg: #f8fafc;
+      --page-fg: #0f172a;
+      --toolbar-bg: #ffffff;
+      --toolbar-border: #cbd5e1;
+      --control-bg: #f1f5f9;
+      --control-fg: #0f172a;
+      --control-border: #cbd5e1;
+      --status-fg: #2563eb;
+      --ace-bg: #ffffff;
+      --ace-gutter-bg: #f1f5f9;
+      --ace-gutter-fg: #64748b;
+      --ace-active-line: rgba(148, 163, 184, 0.16);
+      --ace-selection: rgba(37, 99, 235, 0.22);
+      --editor-font-family: "CodexLocalEditorLatin", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      --editor-font-weight: 400;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --page-bg: #0b1020;
+        --page-fg: #dbe6ff;
+        --toolbar-bg: #0b1020;
+        --toolbar-border: #243a5a;
+        --control-bg: #1b2a4a;
+        --control-fg: #dbe6ff;
+        --control-border: #334455;
+        --status-fg: #8cc2ff;
+        --ace-bg: #07101f;
+        --ace-gutter-bg: #07101f;
+        --ace-gutter-fg: #6f8eb5;
+        --ace-active-line: #10213c;
+        --ace-selection: rgba(140, 194, 255, 0.3);
+      }
+    }
     html, body { width: 100%; height: 100%; margin: 0; }
-    body { font-family: ui-monospace, Menlo, Monaco, monospace; background: #0b1020; color: #dbe6ff; display: flex; flex-direction: column; overflow: hidden; }
-    .toolbar { position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: #0b1020; border-bottom: 1px solid #243a5a; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--page-bg); color: var(--page-fg); display: flex; flex-direction: column; overflow: hidden; -webkit-text-size-adjust: 100%; }
+    .toolbar { position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--toolbar-bg); border-bottom: 1px solid var(--toolbar-border); }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    button, a { background: #1b2a4a; color: #dbe6ff; border: 1px solid #345; padding: 6px 10px; border-radius: 6px; text-decoration: none; cursor: pointer; }
+    button, a { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); padding: 6px 10px; border-radius: 6px; text-decoration: none; cursor: pointer; }
     button:hover, a:hover { filter: brightness(1.08); }
     #editor { flex: 1 1 auto; min-height: 0; width: 100%; border: none; overflow: hidden; }
-    #status { margin-left: 8px; color: #8cc2ff; }
-    .ace_editor { background: #07101f !important; color: #dbe6ff !important; width: 100% !important; height: 100% !important; }
-    .ace_gutter { background: #07101f !important; color: #6f8eb5 !important; }
-    .ace_marker-layer .ace_active-line { background: #10213c !important; }
-    .ace_marker-layer .ace_selection { background: rgba(140, 194, 255, 0.3) !important; }
-    .meta { opacity: 0.9; font-size: 12px; overflow-wrap: anywhere; }
+    #status { margin-left: 8px; color: var(--status-fg); }
+    .ace_editor { background: var(--ace-bg) !important; color: var(--page-fg) !important; width: 100% !important; height: 100% !important; }
+    .ace_editor, .ace_editor .ace_content, .ace_editor .ace_text-layer { font-family: var(--editor-font-family) !important; font-weight: var(--editor-font-weight) !important; font-synthesis: none; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+    .ace_editor.ace_nobold .ace_line > span, .ace_editor.ace_nobold .ace_bold { font-weight: var(--editor-font-weight) !important; }
+    .ace_gutter { background: var(--ace-gutter-bg) !important; color: var(--ace-gutter-fg) !important; }
+    .ace_marker-layer .ace_active-line { background: var(--ace-active-line) !important; }
+    .ace_marker-layer .ace_selection { background: var(--ace-selection) !important; }
+    .meta { opacity: 0.9; font-size: 12px; overflow-wrap: anywhere; font-family: var(--editor-font-family); }
+    @media (max-width: 768px), (pointer: coarse) {
+      .toolbar { gap: 10px; padding: 12px; }
+      .ace_editor, .ace_editor * { font-weight: var(--editor-font-weight) !important; font-synthesis: none; }
+    }
   </style>
 </head>
 <body>
@@ -400,11 +450,24 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const saveBtn = document.getElementById('saveBtn');
     const status = document.getElementById('status');
     const editor = ace.edit('editor');
-    editor.setTheme('ace/theme/tomorrow_night');
+    const editorFontFamily = '"CodexLocalEditorLatin", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
+    editor.container.classList.add('ace_nobold');
+    const colorSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyEditorTheme = () => {
+      const theme = colorSchemeQuery.matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = theme;
+      editor.setTheme(theme === 'dark' ? 'ace/theme/tomorrow_night' : 'ace/theme/github');
+      editor.container.classList.add('ace_nobold');
+    };
+    applyEditorTheme();
+    if (typeof colorSchemeQuery.addEventListener === 'function') {
+      colorSchemeQuery.addEventListener('change', applyEditorTheme);
+    }
     editor.session.setMode('ace/mode/${escapeHtml(language)}');
     editor.setValue(${safeContentLiteral}, -1);
     editor.setOptions({
       fontSize: '13px',
+      fontFamily: editorFontFamily,
       wrap: true,
       showPrintMargin: false,
       useSoftTabs: true,

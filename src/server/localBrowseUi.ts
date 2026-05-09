@@ -724,7 +724,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
   const previewPane = supportsMarkdownPreview
-    ? '<iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
+    ? '<div id="previewSplitter" class="preview-splitter" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview" tabindex="0" hidden></div><iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
     : ''
   const safeContentLiteral = escapeForInlineScriptString(content)
   return `<!doctype html>
@@ -788,10 +788,40 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     button:hover, a:hover { filter: brightness(1.08); }
     button:disabled { opacity: 0.65; cursor: default; }
     button[aria-pressed="true"] { border-color: var(--status-fg); color: var(--status-fg); }
-    .editor-shell { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: stretch; overflow: hidden; }
+    .editor-shell { --preview-editor-ratio: 0.48; flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: stretch; overflow: hidden; }
     #editor { flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; border: none; overflow: hidden; }
-    .preview-pane { flex: 1 1 42%; min-width: min(420px, 48vw); border: 0; border-left: 1px solid var(--toolbar-border); background: var(--page-bg); }
+    .editor-shell[data-preview="true"] #editor {
+      flex: 0 0 calc(var(--preview-editor-ratio) * 100%);
+      width: calc(var(--preview-editor-ratio) * 100%);
+    }
+    .preview-splitter {
+      display: none;
+      flex: 0 0 12px;
+      width: 12px;
+      cursor: col-resize;
+      touch-action: none;
+      user-select: none;
+      background: transparent;
+      position: relative;
+    }
+    .preview-splitter::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      transform: translateX(-50%);
+      background: var(--toolbar-border);
+    }
+    .preview-splitter:hover::before,
+    .preview-splitter.is-dragging::before {
+      background: var(--status-fg);
+    }
+    .preview-pane { flex: 1 1 0; min-width: 320px; border: 0; border-left: 1px solid var(--toolbar-border); background: var(--page-bg); }
     .editor-shell[data-preview="false"] .preview-pane { display: none; }
+    .editor-shell[data-preview="false"] .preview-splitter { display: none; }
+    .editor-shell[data-preview="true"] .preview-splitter { display: block; }
     #status { margin-left: 8px; color: var(--status-fg); }
     #previewStatus { color: var(--preview-status-fg); font-size: 12px; }
     .ace_editor { background: var(--ace-bg) !important; color: var(--page-fg) !important; width: 100% !important; height: 100% !important; }
@@ -804,8 +834,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     @media (max-width: 768px), (pointer: coarse) {
       .toolbar { gap: 10px; padding: 12px; }
       .editor-shell[data-preview="true"] { flex-direction: column; }
-      .editor-shell[data-preview="true"] #editor { flex-basis: 52%; }
-      .preview-pane { min-width: 0; min-height: 38vh; border-left: 0; border-top: 1px solid var(--toolbar-border); }
+      .editor-shell[data-preview="true"] #editor { flex-basis: 52%; width: 100%; }
+      .editor-shell[data-preview="true"] .preview-splitter { display: none; }
+      .preview-pane { width: 100%; min-width: 0; min-height: 38vh; border-left: 0; border-top: 1px solid var(--toolbar-border); }
       .ace_editor, .ace_editor * { font-weight: var(--editor-font-weight) !important; font-synthesis: none; }
     }
   </style>
@@ -834,6 +865,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const status = document.getElementById('status');
     const previewStatus = document.getElementById('previewStatus');
     const editorShell = document.getElementById('editorShell');
+    const previewSplitter = document.getElementById('previewSplitter');
     const previewFrame = document.getElementById('previewFrame');
     const supportsMarkdownPreview = ${supportsMarkdownPreview ? 'true' : 'false'};
     const editorReferencePath = ${escapedEditorPath};
@@ -870,6 +902,122 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let previewRevision = 0;
     let previewController = null;
     let previewStatusTimer = 0;
+    let previewDragCleanup = null;
+    const previewSplitStorageKey = 'codex.localBrowse.previewEditorRatio.v1';
+    const defaultPreviewEditorRatio = 0.48;
+    const previewEditorMinWidth = 320;
+    const previewPaneMinWidth = 420;
+    const previewSplitterWidth = 12;
+
+    const createEditorReferenceText = (localPath, startLine, endLine = startLine) => {
+      const normalizedPath = String(localPath || '').trim();
+      const normalizedStart = Number.isFinite(startLine) ? Math.floor(startLine) : 0;
+      const normalizedEnd = Number.isFinite(endLine) ? Math.floor(endLine) : 0;
+      const firstLine = Math.min(normalizedStart, normalizedEnd);
+      const lastLine = Math.max(normalizedStart, normalizedEnd);
+      if (!normalizedPath || firstLine < 1 || lastLine < 1) return '';
+      return firstLine === lastLine
+        ? normalizedPath + ':' + String(firstLine)
+        : normalizedPath + ':' + String(firstLine) + '-' + String(lastLine);
+    };
+
+    const loadPreviewEditorRatio = () => {
+      try {
+        const raw = window.localStorage.getItem(previewSplitStorageKey);
+        const parsed = Number.parseFloat(raw ?? '');
+        if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) {
+          return parsed;
+        }
+      } catch {
+        // Ignore storage failures and use the default split.
+      }
+      return defaultPreviewEditorRatio;
+    };
+
+    const savePreviewEditorRatio = (ratio) => {
+      try {
+        window.localStorage.setItem(previewSplitStorageKey, String(ratio));
+      } catch {
+        // Ignore storage failures.
+      }
+    };
+
+    const getPreviewEditorRatioBounds = () => {
+      const shellWidth = editorShell ? editorShell.getBoundingClientRect().width : 0;
+      if (!shellWidth) {
+        return { min: 0.28, max: 0.72 };
+      }
+      const usableWidth = Math.max(shellWidth - previewSplitterWidth, 1);
+      const min = Math.min(0.75, Math.max(0.25, previewEditorMinWidth / usableWidth));
+      const max = Math.max(min, Math.min(0.82, 1 - (previewPaneMinWidth / usableWidth)));
+      return { min, max };
+    };
+
+    const clampPreviewEditorRatio = (ratio) => {
+      const value = Number.isFinite(ratio) ? ratio : defaultPreviewEditorRatio;
+      const { min, max } = getPreviewEditorRatioBounds();
+      return Math.min(max, Math.max(min, value));
+    };
+
+    const applyPreviewEditorRatio = (ratio, persist = false) => {
+      if (!editorShell) return defaultPreviewEditorRatio;
+      const nextRatio = clampPreviewEditorRatio(ratio);
+      editorShell.style.setProperty('--preview-editor-ratio', String(nextRatio));
+      if (persist) {
+        savePreviewEditorRatio(nextRatio);
+      }
+      window.requestAnimationFrame(() => editor.resize());
+      return nextRatio;
+    };
+
+    const syncPreviewEditorRatio = (persist = false) => {
+      applyPreviewEditorRatio(loadPreviewEditorRatio(), persist);
+    };
+
+    const stopPreviewDrag = () => {
+      if (previewDragCleanup) {
+        previewDragCleanup();
+        previewDragCleanup = null;
+      }
+      if (previewSplitter) {
+        previewSplitter.classList.remove('is-dragging');
+      }
+    };
+
+    const startPreviewDrag = (startEvent) => {
+      if (!supportsMarkdownPreview || !previewVisible || !editorShell || !previewSplitter || startEvent.button !== 0) return;
+      startEvent.preventDefault();
+      startEvent.stopPropagation();
+      previewSplitter.classList.add('is-dragging');
+
+      const updateFromClientX = (clientX) => {
+        const shellRect = editorShell.getBoundingClientRect();
+        const usableWidth = Math.max(shellRect.width - previewSplitterWidth, 1);
+        const nextRatio = clampPreviewEditorRatio((clientX - shellRect.left) / usableWidth);
+        applyPreviewEditorRatio(nextRatio, true);
+      };
+
+      const onPointerMove = (moveEvent) => {
+        if (moveEvent.pointerId !== startEvent.pointerId) return;
+        updateFromClientX(moveEvent.clientX);
+      };
+
+      const onPointerUp = (endEvent) => {
+        if (endEvent.pointerId !== startEvent.pointerId) return;
+        stopPreviewDrag();
+      };
+
+      previewDragCleanup = () => {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', onPointerUp);
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+      updateFromClientX(startEvent.clientX);
+    };
 
     const setStatus = (message, timeoutMs = 0) => {
       if (!status) return;
@@ -1002,8 +1150,16 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       previewVisible = visible;
       editorShell.dataset.preview = visible ? 'true' : 'false';
       previewFrame.hidden = !visible;
+      if (previewSplitter) {
+        previewSplitter.hidden = !visible;
+      }
       previewBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
       previewBtn.textContent = visible ? 'Hide Preview' : 'Preview';
+      if (visible) {
+        syncPreviewEditorRatio(false);
+      } else {
+        stopPreviewDrag();
+      }
       window.requestAnimationFrame(() => editor.resize());
       if (visible) {
         schedulePreview(0);
@@ -1020,6 +1176,36 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         schedulePreview();
       });
     }
+
+    if (previewSplitter) {
+      previewSplitter.addEventListener('pointerdown', startPreviewDrag);
+      previewSplitter.addEventListener('dblclick', () => {
+        if (!supportsMarkdownPreview || !previewVisible) return;
+        applyPreviewEditorRatio(defaultPreviewEditorRatio, true);
+      });
+      previewSplitter.addEventListener('keydown', (event) => {
+        if (!supportsMarkdownPreview || !previewVisible) return;
+        const key = event.key;
+        if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') return;
+        event.preventDefault();
+        const { min, max } = getPreviewEditorRatioBounds();
+        const currentRatio = clampPreviewEditorRatio(Number.parseFloat(editorShell.style.getPropertyValue('--preview-editor-ratio')) || loadPreviewEditorRatio());
+        if (key === 'Home') {
+          applyPreviewEditorRatio(min, true);
+        } else if (key === 'End') {
+          applyPreviewEditorRatio(max, true);
+        } else if (key === 'ArrowLeft') {
+          applyPreviewEditorRatio(currentRatio - 0.03, true);
+        } else if (key === 'ArrowRight') {
+          applyPreviewEditorRatio(currentRatio + 0.03, true);
+        }
+      });
+    }
+
+    window.addEventListener('resize', () => {
+      if (!supportsMarkdownPreview || !previewVisible) return;
+      syncPreviewEditorRatio(false);
+    });
 
     if (copyRefBtn) {
       copyRefBtn.addEventListener('click', async () => {

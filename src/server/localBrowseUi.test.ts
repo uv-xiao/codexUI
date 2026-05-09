@@ -38,12 +38,18 @@ describe('local browse markdown preview', () => {
     const markdownEditorHtml = await createTextEditorHtml(markdownPath)
     expect(markdownEditorHtml).toContain('id="copyRefBtn"')
     expect(markdownEditorHtml).toContain('id="previewBtn"')
+    expect(markdownEditorHtml).toContain('id="previewSplitter"')
+    expect(markdownEditorHtml).toContain('role="separator"')
     expect(markdownEditorHtml).toContain('id="previewFrame"')
     expect(markdownEditorHtml).toContain('/codex-local-preview')
+    const referenceHelperIndex = markdownEditorHtml.indexOf('const createEditorReferenceText =')
+    expect(referenceHelperIndex).toBeGreaterThan(-1)
+    expect(referenceHelperIndex).toBeLessThan(markdownEditorHtml.indexOf('return createEditorReferenceText('))
 
     const textEditorHtml = await createTextEditorHtml(textPath)
     expect(textEditorHtml).toContain('id="copyRefBtn"')
     expect(textEditorHtml).not.toContain('id="previewBtn"')
+    expect(textEditorHtml).not.toContain('id="previewSplitter"')
     expect(textEditorHtml).not.toContain('id="previewFrame"')
   })
 

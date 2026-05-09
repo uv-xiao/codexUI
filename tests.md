@@ -4787,3 +4787,26 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Revert any disposable file edits made during validation.
+
+### Feature: Resizable markdown preview split
+
+#### Prerequisites
+- App server is running from this repository.
+- A `.md` or `.markdown` file is available.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Click `Preview` to show the rendered pane.
+3. Drag the divider between editor and preview to widen the preview pane.
+4. Confirm the editor and preview resize live while dragging.
+5. Switch to dark theme and repeat the drag check.
+
+#### Expected Results
+- The divider between editor and preview is draggable on desktop layouts.
+- Preview width updates immediately while dragging and persists for the next markdown editor page.
+- The preview pane can be widened enough to read dense formulas or long rendered lines.
+- Light and dark preview surfaces remain readable during and after resizing.
+
+#### Rollback/Cleanup
+- Close the editor or refresh the page to clear any temporary state from the local split width.

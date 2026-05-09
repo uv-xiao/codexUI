@@ -4793,6 +4793,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Prerequisites
 - App server is running from this repository.
 - A `.md` or `.markdown` file is available.
+- A mobile viewport or touch-capable browser context is available.
 - Light theme and dark theme are both available from Settings.
 
 #### Steps
@@ -4800,11 +4801,13 @@ Markdown files opened through the local editor expose a preview button that rend
 2. Click `Preview` to show the rendered pane.
 3. Drag the divider between editor and preview to widen the preview pane.
 4. Confirm the editor and preview resize live while dragging.
-5. Switch to dark theme and repeat the drag check.
+5. Switch to a mobile viewport or touch-capable browser context and repeat the drag check.
+6. Switch to dark theme and repeat the desktop and mobile drag checks.
 
 #### Expected Results
 - The divider between editor and preview is draggable on desktop layouts.
-- Preview width updates immediately while dragging and persists for the next markdown editor page.
+- The divider remains draggable on mobile or touch-capable layouts, but switches to a vertical split.
+- Preview size updates immediately while dragging and persists for the next markdown editor page.
 - The preview pane can be widened enough to read dense formulas or long rendered lines.
 - Light and dark preview surfaces remain readable during and after resizing.
 

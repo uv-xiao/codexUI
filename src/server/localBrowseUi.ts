@@ -834,9 +834,26 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     @media (max-width: 768px), (pointer: coarse) {
       .toolbar { gap: 10px; padding: 12px; }
       .editor-shell[data-preview="true"] { flex-direction: column; }
-      .editor-shell[data-preview="true"] #editor { flex-basis: 52%; width: 100%; }
-      .editor-shell[data-preview="true"] .preview-splitter { display: none; }
-      .preview-pane { width: 100%; min-width: 0; min-height: 38vh; border-left: 0; border-top: 1px solid var(--toolbar-border); }
+      .editor-shell[data-preview="true"] #editor {
+        flex: 0 0 calc(var(--preview-editor-ratio) * 100%);
+        width: 100%;
+      }
+      .editor-shell[data-preview="true"] .preview-splitter {
+        display: block;
+        flex: 0 0 12px;
+        width: 100%;
+        height: 12px;
+        cursor: row-resize;
+      }
+      .editor-shell[data-preview="true"] .preview-splitter::before {
+        top: 50%;
+        bottom: auto;
+        left: 0;
+        width: 100%;
+        height: 1px;
+        transform: translateY(-50%);
+      }
+      .preview-pane { width: 100%; min-width: 0; min-height: 240px; border-left: 0; border-top: 1px solid var(--toolbar-border); }
       .ace_editor, .ace_editor * { font-weight: var(--editor-font-weight) !important; font-synthesis: none; }
     }
   </style>
@@ -903,10 +920,13 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let previewController = null;
     let previewStatusTimer = 0;
     let previewDragCleanup = null;
-    const previewSplitStorageKey = 'codex.localBrowse.previewEditorRatio.v1';
+    const previewSplitStorageKeyHorizontal = 'codex.localBrowse.previewEditorRatio.horizontal.v1';
+    const previewSplitStorageKeyVertical = 'codex.localBrowse.previewEditorRatio.vertical.v1';
     const defaultPreviewEditorRatio = 0.48;
     const previewEditorMinWidth = 320;
     const previewPaneMinWidth = 420;
+    const previewEditorMinHeight = 240;
+    const previewPaneMinHeight = 240;
     const previewSplitterWidth = 12;
 
     const createEditorReferenceText = (localPath, startLine, endLine = startLine) => {
@@ -921,9 +941,25 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         : normalizedPath + ':' + String(firstLine) + '-' + String(lastLine);
     };
 
+    const isStackedPreviewLayout = () => {
+      if (!editorShell) return false;
+      return window.getComputedStyle(editorShell).flexDirection === 'column';
+    };
+
+    const getPreviewSplitStorageKey = () => {
+      return isStackedPreviewLayout()
+        ? previewSplitStorageKeyVertical
+        : previewSplitStorageKeyHorizontal;
+    };
+
+    const updatePreviewSplitterOrientation = () => {
+      if (!previewSplitter) return;
+      previewSplitter.setAttribute('aria-orientation', isStackedPreviewLayout() ? 'horizontal' : 'vertical');
+    };
+
     const loadPreviewEditorRatio = () => {
       try {
-        const raw = window.localStorage.getItem(previewSplitStorageKey);
+        const raw = window.localStorage.getItem(getPreviewSplitStorageKey());
         const parsed = Number.parseFloat(raw ?? '');
         if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) {
           return parsed;
@@ -936,20 +972,41 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const savePreviewEditorRatio = (ratio) => {
       try {
-        window.localStorage.setItem(previewSplitStorageKey, String(ratio));
+        window.localStorage.setItem(getPreviewSplitStorageKey(), String(ratio));
       } catch {
         // Ignore storage failures.
       }
     };
 
+    const getPreviewSplitMetrics = () => {
+      const shellRect = editorShell
+        ? editorShell.getBoundingClientRect()
+        : { left: 0, top: 0, width: 0, height: 0 };
+      const splitterRect = previewSplitter
+        ? previewSplitter.getBoundingClientRect()
+        : { width: previewSplitterWidth, height: previewSplitterWidth };
+      const stacked = isStackedPreviewLayout();
+      const splitterSize = stacked
+        ? (splitterRect.height || previewSplitterWidth)
+        : (splitterRect.width || previewSplitterWidth);
+      const shellLength = stacked ? shellRect.height : shellRect.width;
+      return {
+        stacked,
+        shellRect,
+        usableLength: Math.max(shellLength - splitterSize, 1),
+        shellLength,
+        editorMin: stacked ? previewEditorMinHeight : previewEditorMinWidth,
+        previewMin: stacked ? previewPaneMinHeight : previewPaneMinWidth,
+      };
+    };
+
     const getPreviewEditorRatioBounds = () => {
-      const shellWidth = editorShell ? editorShell.getBoundingClientRect().width : 0;
-      if (!shellWidth) {
+      const metrics = getPreviewSplitMetrics();
+      if (!metrics.shellLength) {
         return { min: 0.28, max: 0.72 };
       }
-      const usableWidth = Math.max(shellWidth - previewSplitterWidth, 1);
-      const min = Math.min(0.75, Math.max(0.25, previewEditorMinWidth / usableWidth));
-      const max = Math.max(min, Math.min(0.82, 1 - (previewPaneMinWidth / usableWidth)));
+      const min = Math.min(0.75, Math.max(0.25, metrics.editorMin / metrics.usableLength));
+      const max = Math.max(min, Math.min(0.82, 1 - (metrics.previewMin / metrics.usableLength)));
       return { min, max };
     };
 
@@ -961,6 +1018,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const applyPreviewEditorRatio = (ratio, persist = false) => {
       if (!editorShell) return defaultPreviewEditorRatio;
+      updatePreviewSplitterOrientation();
       const nextRatio = clampPreviewEditorRatio(ratio);
       editorShell.style.setProperty('--preview-editor-ratio', String(nextRatio));
       if (persist) {
@@ -985,21 +1043,30 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     };
 
     const startPreviewDrag = (startEvent) => {
-      if (!supportsMarkdownPreview || !previewVisible || !editorShell || !previewSplitter || startEvent.button !== 0) return;
+      const primaryPointer = startEvent.button === 0 || startEvent.pointerType === 'touch' || startEvent.pointerType === 'pen';
+      if (!supportsMarkdownPreview || !previewVisible || !editorShell || !previewSplitter || !primaryPointer) return;
       startEvent.preventDefault();
       startEvent.stopPropagation();
       previewSplitter.classList.add('is-dragging');
 
-      const updateFromClientX = (clientX) => {
-        const shellRect = editorShell.getBoundingClientRect();
-        const usableWidth = Math.max(shellRect.width - previewSplitterWidth, 1);
-        const nextRatio = clampPreviewEditorRatio((clientX - shellRect.left) / usableWidth);
+      try {
+        previewSplitter.setPointerCapture(startEvent.pointerId);
+      } catch {
+        // Pointer capture is best effort across browsers.
+      }
+
+      const updateFromClientPosition = (clientX, clientY) => {
+        const metrics = getPreviewSplitMetrics();
+        const rawRatio = metrics.stacked
+          ? (clientY - metrics.shellRect.top) / metrics.usableLength
+          : (clientX - metrics.shellRect.left) / metrics.usableLength;
+        const nextRatio = clampPreviewEditorRatio(rawRatio);
         applyPreviewEditorRatio(nextRatio, true);
       };
 
       const onPointerMove = (moveEvent) => {
         if (moveEvent.pointerId !== startEvent.pointerId) return;
-        updateFromClientX(moveEvent.clientX);
+        updateFromClientPosition(moveEvent.clientX, moveEvent.clientY);
       };
 
       const onPointerUp = (endEvent) => {
@@ -1016,7 +1083,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       window.addEventListener('pointermove', onPointerMove);
       window.addEventListener('pointerup', onPointerUp);
       window.addEventListener('pointercancel', onPointerUp);
-      updateFromClientX(startEvent.clientX);
+      updateFromClientPosition(startEvent.clientX, startEvent.clientY);
     };
 
     const setStatus = (message, timeoutMs = 0) => {
@@ -1186,7 +1253,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       previewSplitter.addEventListener('keydown', (event) => {
         if (!supportsMarkdownPreview || !previewVisible) return;
         const key = event.key;
-        if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') return;
+        const stacked = isStackedPreviewLayout();
+        const shrinkKey = stacked ? 'ArrowUp' : 'ArrowLeft';
+        const growKey = stacked ? 'ArrowDown' : 'ArrowRight';
+        if (key !== shrinkKey && key !== growKey && key !== 'Home' && key !== 'End') return;
         event.preventDefault();
         const { min, max } = getPreviewEditorRatioBounds();
         const currentRatio = clampPreviewEditorRatio(Number.parseFloat(editorShell.style.getPropertyValue('--preview-editor-ratio')) || loadPreviewEditorRatio());
@@ -1194,9 +1264,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           applyPreviewEditorRatio(min, true);
         } else if (key === 'End') {
           applyPreviewEditorRatio(max, true);
-        } else if (key === 'ArrowLeft') {
+        } else if (key === shrinkKey) {
           applyPreviewEditorRatio(currentRatio - 0.03, true);
-        } else if (key === 'ArrowRight') {
+        } else if (key === growKey) {
           applyPreviewEditorRatio(currentRatio + 0.03, true);
         }
       });

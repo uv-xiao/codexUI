@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
 import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
+import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from "./src/server/katexAssets";
 import tailwindcss from "@tailwindcss/vite";
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
@@ -205,6 +206,31 @@ export default defineConfig({
             res.statusCode = 404;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: "Image file not found." }));
+          });
+          stream.pipe(res);
+        });
+        server.middlewares.use((req, res, next) => {
+          if (!req.url || (req.method !== "GET" && req.method !== "HEAD")) return next();
+          const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith(`${KATEX_ASSET_ROUTE}/`)) return next();
+
+          const assetPath = resolveKatexAssetPath(url.pathname.slice(KATEX_ASSET_ROUTE.length));
+          if (!assetPath) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "KaTeX asset not found." }));
+            return;
+          }
+
+          res.statusCode = 200;
+          res.setHeader("Content-Type", getKatexAssetContentType(assetPath));
+          res.setHeader("Cache-Control", "private, max-age=86400");
+          const stream = createReadStream(assetPath);
+          stream.on("error", () => {
+            if (res.headersSent) return;
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "KaTeX asset not found." }));
           });
           stream.pipe(res);
         });

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createEditorReferenceText, createMarkdownPreviewHtml, createTextEditorHtml, isMarkdownPath } from './localBrowseUi'
+import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
 
@@ -66,5 +67,11 @@ const enabled: boolean = true
     expect(html).toContain('src="/codex-local-image?path=%2Ftmp%2Fpreview%20space%2Fassets%2Fdiagram.png"')
     expect(html).toContain('message-code-block')
     expect(html).toContain('language-ts')
+  })
+
+  it('links KaTeX assets in standalone markdown preview', () => {
+    const html = createMarkdownPreviewHtml('/tmp/preview space/note.md', 'Plain preview')
+
+    expect(html).toContain(`<link rel="stylesheet" href="${KATEX_STYLESHEET_HREF}" />`)
   })
 })

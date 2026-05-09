@@ -19,6 +19,29 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - <cleanup action, if any>
 
+### Feature: Markdown editor preview for local files
+
+#### Prerequisites
+- App server is running from this repository.
+- A writable local `.md` file is available, or a temporary markdown file can be created under a test folder.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open a local markdown file through the local edit route.
+2. Click `Preview` to open the rendered panel.
+3. Confirm inline and block math render with proper KaTeX formatting, including subscript and superscript placement.
+4. Switch to light theme and repeat the preview check.
+5. Switch to dark theme and repeat the preview check.
+
+#### Expected Results
+- The preview panel renders markdown with the same KaTeX styling used by the main app.
+- Formula fragments such as `$L_0$` keep their subscript spacing and do not collapse to plain `L0` text.
+- The KaTeX MathML layer remains hidden, so rendered math is not duplicated by raw accessibility text.
+- Light and dark preview surfaces both stay readable.
+
+#### Rollback/Cleanup
+- Delete any temporary markdown file created for the check.
+
 ### Feature: Thread heartbeat automations
 
 #### Prerequisites

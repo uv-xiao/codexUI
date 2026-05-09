@@ -32,6 +32,7 @@ import {
   startThread,
   subscribeCodexNotifications,
   startThreadTurn,
+  steerThreadTurn,
   type RpcNotification,
   type SkillInfo,
   type ThreadQueueState,
@@ -4887,13 +4888,14 @@ export function useDesktopState() {
 
     if (isInProgress) {
       shouldAutoScrollOnNextAgentEvent = true
-      void startTurnForThread(
+      error.value = ''
+      setTurnErrorForThread(threadId, null)
+      void steerActiveTurnForThread(
         threadId,
         nextText,
         imageUrls,
         skills,
         fileAttachments,
-        collaborationModeOverride,
       ).catch((unknownError) => {
         const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
         setTurnErrorForThread(threadId, errorMessage)
@@ -5037,6 +5039,78 @@ export function useDesktopState() {
       isSendingMessage.value = false
       throw unknownError
     }
+  }
+
+  async function resolveActiveTurnIdForThread(threadId: string): Promise<string> {
+    const cachedTurnId = activeTurnIdByThreadId.value[threadId]
+    if (cachedTurnId) return cachedTurnId
+
+    const { activeTurnId } = await getThreadDetail(threadId)
+    if (activeTurnId) {
+      activeTurnIdByThreadId.value = {
+        ...activeTurnIdByThreadId.value,
+        [threadId]: activeTurnId,
+      }
+      maybeUnblockInterruptForActiveTurn(threadId, activeTurnId)
+    }
+    return activeTurnId
+  }
+
+  async function steerActiveTurnForThread(
+    threadId: string,
+    nextText: string,
+    imageUrls: string[] = [],
+    skills: Array<{ name: string; path: string }> = [],
+    fileAttachments: FileAttachment[] = [],
+  ): Promise<void> {
+    const normalizedText = nextText.trim()
+    const normalizedImageUrls = [...imageUrls]
+    if (
+      normalizedImageUrls.length === 0
+      && shouldReuseAttachedImageFromPrompt(normalizedText)
+    ) {
+      const latestAttachedImageUrl = findLatestUserLocalImageUrl(threadId)
+      if (latestAttachedImageUrl) {
+        normalizedImageUrls.push(latestAttachedImageUrl)
+      }
+    }
+    const normalizedSkills = skills.map((skill) => ({ name: skill.name, path: skill.path }))
+    const normalizedFileAttachments = fileAttachments.map((file) => ({ ...file }))
+    const expectedTurnId = await resolveActiveTurnIdForThread(threadId)
+    if (!expectedTurnId) {
+      throw new Error('Could not determine active turn id for steering')
+    }
+
+    if (resumedThreadById.value[threadId] !== true) {
+      const resumedThread = await resumeThread(threadId)
+      setThreadModelId(threadId, resumedThread.model)
+    }
+
+    const steeredTurnId = await steerThreadTurn(
+      threadId,
+      expectedTurnId,
+      normalizedText,
+      normalizedImageUrls,
+      normalizedSkills.length > 0 ? normalizedSkills : undefined,
+      normalizedFileAttachments,
+    )
+
+    if (steeredTurnId) {
+      activeTurnIdByThreadId.value = {
+        ...activeTurnIdByThreadId.value,
+        [threadId]: steeredTurnId,
+      }
+      maybeUnblockInterruptForActiveTurn(threadId, steeredTurnId)
+    }
+
+    resumedThreadById.value = {
+      ...resumedThreadById.value,
+      [threadId]: true,
+    }
+
+    pendingThreadMessageRefresh.add(threadId)
+    await syncFromNotifications()
+    scheduleDelayedTurnSync(threadId)
   }
 
   async function startTurnForThread(

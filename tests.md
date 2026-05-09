@@ -4651,3 +4651,31 @@ The `/codex-local-edit/...` Ace editor follows the browser/system light or dark 
 
 #### Rollback/Cleanup
 - Revert any disposable text edits made during validation.
+
+---
+
+### Chinese slash text does not become a file link
+
+#### Feature/Change Name
+Plain Chinese prose containing `/`, such as `系统浅/深色主题`, is not split into an absolute-path file link.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A TestChat thread or disposable local chat is available
+3. Light theme and dark theme are available from the appearance switcher
+
+#### Steps
+1. In light theme, send or render a message containing `本地编辑页的系统浅/深色主题、中文字体都正常。`
+2. Confirm the full text `系统浅/深色主题` remains plain inline text.
+3. Confirm `/深色主题` is not blue, clickable, or rendered as a `.message-file-link`.
+4. Send or render a separate message containing a real absolute path such as `/tmp/example.txt`.
+5. Confirm the real absolute path still renders as a file link.
+6. Switch to dark theme and repeat steps 1 through 5.
+
+#### Expected Results
+- Chinese prose with an internal slash remains plain text in both light and dark themes.
+- The renderer does not split off the slash tail as an absolute path.
+- Real absolute paths that start at a valid boundary still render as local file links.
+
+#### Rollback/Cleanup
+- Delete any disposable validation messages or threads if needed.

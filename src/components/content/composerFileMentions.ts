@@ -152,6 +152,31 @@ export function formatComposerFileMention(pathValue: string): string {
   return normalizedPath ? `@${quoteMentionPathIfNeeded(normalizedPath)}` : ''
 }
 
+export function insertComposerFileMentionText(
+  draft: string,
+  pathValue: string,
+  startIndex: number | null,
+  cursorIndex = draft.length,
+): { text: string; selectionIndex: number } | null {
+  const mentionText = formatComposerFileMention(pathValue)
+  if (!mentionText) return null
+
+  if (startIndex !== null) {
+    const start = Math.max(0, Math.min(startIndex, draft.length))
+    const cursor = Math.max(start, Math.min(cursorIndex, draft.length))
+    const after = draft.slice(cursor)
+    const leadingWhitespaceLength = after.match(/^\s+/u)?.[0].length ?? 0
+    const separator = leadingWhitespaceLength > 0 ? '' : ' '
+    const text = `${draft.slice(0, start)}${mentionText}${separator}${after}`
+    const selectionIndex = start + mentionText.length + separator.length + leadingWhitespaceLength
+    return { text, selectionIndex }
+  }
+
+  const prefix = draft.length > 0 && !/\s$/u.test(draft) ? ' ' : ''
+  const text = `${draft}${prefix}${mentionText} `
+  return { text, selectionIndex: text.length }
+}
+
 export function createComposerFileAttachment(pathValue: string, cwd = ''): ComposerInlineFileAttachment | null {
   const normalizedPath = normalizeMentionPath(pathValue)
   if (!normalizedPath) return null

@@ -424,7 +424,7 @@ import {
 } from '../../api/codexGateway'
 import {
   extractComposerFileMentionAttachments,
-  formatComposerFileMention,
+  insertComposerFileMentionText,
   toComposerFileMentionSearchQuery,
 } from './composerFileMentions'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -1683,28 +1683,18 @@ function applyFileMention(suggestion: ComposerFileSuggestion): void {
   const input = inputRef.value
   const start = mentionStartIndex.value
   const cursor = input?.selectionStart ?? draft.value.length
-  const mentionText = formatComposerFileMention(suggestion.path)
-  if (!mentionText) {
+  const insertion = insertComposerFileMentionText(draft.value, suggestion.path, start, cursor)
+  if (!insertion) {
     closeFileMention()
     nextTick(() => input?.focus())
     return
   }
 
-  let selectionIndex = draft.value.length
-  if (start !== null && input) {
-    const after = draft.value.slice(cursor)
-    const separator = after.length > 0 && !/^\s/u.test(after) ? ' ' : ''
-    draft.value = `${draft.value.slice(0, start)}${mentionText}${separator}${after}`
-    selectionIndex = start + mentionText.length + separator.length
-  } else {
-    const prefix = draft.value.length > 0 && !/\s$/u.test(draft.value) ? ' ' : ''
-    draft.value = `${draft.value}${prefix}${mentionText}`
-    selectionIndex = draft.value.length
-  }
+  draft.value = insertion.text
   closeFileMention()
   nextTick(() => {
     input?.focus()
-    input?.setSelectionRange(selectionIndex, selectionIndex)
+    input?.setSelectionRange(insertion.selectionIndex, insertion.selectionIndex)
   })
 }
 

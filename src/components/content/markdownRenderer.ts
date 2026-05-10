@@ -18,8 +18,18 @@ type MarkdownRenderResult = {
   html: string
 }
 
+type MarkdownSourcePoint = {
+  line?: number
+}
+
+type MarkdownSourcePosition = {
+  start?: MarkdownSourcePoint
+  end?: MarkdownSourcePoint
+}
+
 type MarkdownNode = {
   type: string
+  position?: MarkdownSourcePosition
   [key: string]: unknown
   children?: MarkdownNode[]
 }
@@ -161,8 +171,8 @@ export function createMarkdownProcessor(context: MarkdownRenderContext) {
       aliases: HIGHLIGHT_LANGUAGE_ALIASES,
       detect: false,
     })
-    .use(() => (tree: MarkdownNode) => {
-      transformMarkdownTree(tree, context)
+    .use(() => (tree) => {
+      transformMarkdownTree(tree as MarkdownNode, context)
     })
     .use(rehypeStringify)
 }
@@ -236,6 +246,37 @@ function setProperty(node: MarkdownElement, name: string, value: unknown): void 
   node.properties[name] = value
 }
 
+function normalizeSourceLine(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const line = Math.floor(value)
+  return line >= 1 ? line : null
+}
+
+function readSourceLocation(position: MarkdownSourcePosition | undefined): { startLine: number; endLine: number } | null {
+  const startLine = normalizeSourceLine(position?.start?.line)
+  if (startLine === null) return null
+  const endLine = normalizeSourceLine(position?.end?.line) ?? startLine
+  return {
+    startLine: Math.min(startLine, endLine),
+    endLine: Math.max(startLine, endLine),
+  }
+}
+
+function annotateSourceLocations(node: MarkdownNode): void {
+  if (isElement(node)) {
+    const location = readSourceLocation(node.position)
+    if (location) {
+      setProperty(node, 'dataSourceLine', String(location.startLine))
+      setProperty(node, 'dataSourceEndLine', String(location.endLine))
+    }
+  }
+
+  if (!Array.isArray(node.children)) return
+  for (const child of node.children) {
+    annotateSourceLocations(child)
+  }
+}
+
 function hasPreserveWhitespaceAncestor(ancestors: MarkdownElement[]): boolean {
   return ancestors.some((ancestor) => (
     ancestor.tagName === 'pre' ||
@@ -280,6 +321,7 @@ function isWhitespaceText(node: MarkdownNode): boolean {
 function transformMarkdownTree(root: MarkdownNode, context: MarkdownRenderContext): void {
   if (!Array.isArray(root.children)) return
   transformChildren(root, [], context)
+  annotateSourceLocations(root)
 }
 
 function transformChildren(parent: MarkdownNode, ancestors: MarkdownElement[], context: MarkdownRenderContext): void {
@@ -458,6 +500,7 @@ function wrapListItemChildren(node: MarkdownElement): void {
   const wrappedContent: MarkdownElement = {
     type: 'element',
     tagName: 'div',
+    position: node.position,
     properties: {
       className: ['message-list-item-content'],
     },
@@ -519,6 +562,7 @@ function wrapTable(node: MarkdownElement, parent: MarkdownNode, index: number): 
   const wrapper: MarkdownElement = {
     type: 'element',
     tagName: 'div',
+    position: node.position,
     properties: {
       className: ['message-table-wrap'],
     },
@@ -552,6 +596,7 @@ function wrapCodeBlock(node: MarkdownElement, parent: MarkdownNode, index: numbe
   const wrapper: MarkdownElement = {
     type: 'element',
     tagName: 'div',
+    position: node.position,
     properties: {
       className: ['message-code-block'],
     },

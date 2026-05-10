@@ -43,6 +43,8 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('cursor: row-resize')
     expect(markdownEditorHtml).toContain('previewSplitStorageKeyVertical')
     expect(markdownEditorHtml).toContain("const shrinkKey = stacked ? 'ArrowUp' : 'ArrowLeft'")
+    expect(markdownEditorHtml).toContain('codex-local-markdown-preview-jump')
+    expect(markdownEditorHtml).toContain('handlePreviewJumpMessage')
     expect(markdownEditorHtml).toContain('id="previewFrame"')
     expect(markdownEditorHtml).toContain('/codex-local-preview')
     const referenceHelperIndex = markdownEditorHtml.indexOf('const createEditorReferenceText =')
@@ -57,17 +59,17 @@ describe('local browse markdown preview', () => {
   })
 
   it('renders markdown preview HTML with local links, images, and code blocks', () => {
-    const html = createMarkdownPreviewHtml('/tmp/preview space/note.md', `
-# Preview Title
-
-[Docs](./docs/readme.md)
-
-![Diagram](./assets/diagram.png)
-
-\`\`\`ts
-const enabled: boolean = true
-\`\`\`
-`)
+    const html = createMarkdownPreviewHtml('/tmp/preview space/note.md', [
+      '# Preview Title',
+      '',
+      '[Docs](./docs/readme.md)',
+      '',
+      '![Diagram](./assets/diagram.png)',
+      '',
+      '```ts',
+      'const enabled: boolean = true',
+      '```',
+    ].join('\n'))
 
     expect(html).toContain('message-heading message-heading-h1')
     expect(html).toContain('class="message-file-link"')
@@ -76,6 +78,10 @@ const enabled: boolean = true
     expect(html).toContain('src="/codex-local-image?path=%2Ftmp%2Fpreview%20space%2Fassets%2Fdiagram.png"')
     expect(html).toContain('message-code-block')
     expect(html).toContain('language-ts')
+    expect(html).toContain('data-source-line=')
+    expect(html).toContain('data-source-end-line=')
+    expect(html).toContain('codex-local-markdown-preview-jump')
+    expect(html).toContain('data-source-line="1"')
   })
 
   it('links KaTeX assets in standalone markdown preview', () => {

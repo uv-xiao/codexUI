@@ -42,8 +42,8 @@ const answer = 42
 \`\`\`
 `)
 
-    expect(html).toContain('<h1 class="message-heading message-heading-h1">')
-    expect(html).toContain('<blockquote class="message-blockquote">')
+    expect(html).toContain('<h1 class="message-heading message-heading-h1"')
+    expect(html).toContain('<blockquote class="message-blockquote"')
     expect(html).toContain('message-task-list')
     expect(html).toContain('class="message-task-checkbox"')
     expect(html).toContain('data-checked="true"')
@@ -60,11 +60,32 @@ const answer = 42
     expect(html).toContain('src/App.vue')
   })
 
+  it('annotates rendered blocks with source line metadata for preview jumps', () => {
+    const html = render([
+      '# Title',
+      '',
+      'Paragraph',
+      '',
+      '- item',
+      '',
+      '```js',
+      'const answer = 42',
+      '```',
+    ].join('\n'))
+
+    expect(html).toContain('data-source-line="1"')
+    expect(html).toContain('data-source-end-line="1"')
+    expect(html).toContain('data-source-line="3"')
+    expect(html).toContain('data-source-line="5"')
+    expect(html).toContain('data-source-line="7"')
+    expect(html).toContain('data-source-end-line="9"')
+  })
+
   it('wraps tight list item inline content in a single text block', () => {
     const html = render('- `repos/codexUI`：`origin/crz/dev` → `18dd52c`')
 
-    expect(html).toContain('<div class="message-list-item-text">')
-    expect(html).toContain('<code class="message-inline-code">repos/codexUI</code>：<code class="message-inline-code">origin/crz/dev</code> → <code class="message-inline-code">18dd52c</code>')
+    expect(html).toContain('<div class="message-list-item-text"')
+    expect(html).toMatch(/<code class="message-inline-code"[^>]*>repos\/codexUI<\/code>：<code class="message-inline-code"[^>]*>origin\/crz\/dev<\/code> → <code class="message-inline-code"[^>]*>18dd52c<\/code>/u)
   })
 
   it('does not split ambiguous slash text into absolute tail links', () => {
@@ -106,7 +127,7 @@ const answer = 42
     expect(html).toContain('<a class="message-file-link message-inline-code-link"')
     expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/App.vue?line=3-7"')
     expect(html).toContain('title="./src/App.vue:3-7"')
-    expect(html).toContain('<code class="message-inline-code">./src/App.vue:3-7</code>')
+    expect(html).toMatch(/<code class="message-inline-code"[^>]*>\.\/src\/App\.vue:3-7<\/code>/u)
   })
 
   it('renders local markdown images through the local image route', () => {

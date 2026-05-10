@@ -247,6 +247,34 @@
   @apply border-zinc-400 shadow-zinc-950/60;
 }
 
+:root.dark .thread-composer-rate-limit {
+  @apply text-zinc-400;
+}
+
+:root.dark .thread-composer-rate-limit-value {
+  @apply text-zinc-300;
+}
+
+:root.dark .thread-composer-context-usage-inline {
+  --context-usage-accent: rgb(74 222 128);
+}
+
+:root.dark .thread-composer-context-usage-inline.is-muted {
+  --context-usage-accent: rgb(156 163 175);
+}
+
+:root.dark .thread-composer-context-usage-inline.is-warning {
+  --context-usage-accent: rgb(251 191 36);
+}
+
+:root.dark .thread-composer-context-usage-inline.is-danger {
+  --context-usage-accent: rgb(248 113 113);
+}
+
+:root.dark .thread-composer-context-usage-inline-bar {
+  @apply bg-zinc-700/80;
+}
+
 :root.dark .thread-composer-input {
   @apply text-zinc-100;
 }

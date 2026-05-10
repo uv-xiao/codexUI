@@ -4813,3 +4813,24 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Close the editor or refresh the page to clear any temporary state from the local split width.
+
+### Feature: Markdown preview double-click source jump
+
+#### Prerequisites
+- App server is running from this repository.
+- A `.md` or `.markdown` file is available.
+
+#### Steps
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Click `Preview` to show the rendered pane.
+3. Double-click a rendered heading, paragraph, list item, or code block in the preview.
+4. Confirm the editor caret jumps to the matching source line.
+5. Repeat the check after editing the file so the preview rerenders.
+
+#### Expected Results
+- Double-clicking rendered markdown in the preview moves the editor to the corresponding source line.
+- The preview keeps working after rerendering.
+- Link clicks still behave like normal links when they are not double-clicked.
+
+#### Rollback/Cleanup
+- Close the editor or refresh the page to clear any temporary state.

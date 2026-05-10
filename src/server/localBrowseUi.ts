@@ -706,6 +706,37 @@ function markdownPreviewStyles(): string {
   `
 }
 
+function markdownPreviewScript(localPath: string): string {
+  const safePathLiteral = escapeForInlineScriptString(localPath)
+  return `
+    (() => {
+      const sourcePath = ${safePathLiteral};
+      const interactiveSelector = 'a[href], button, input, textarea, select, label, summary';
+      const sourceElementForTarget = (target) => {
+        if (!(target instanceof Element)) return null;
+        if (target.closest(interactiveSelector)) return null;
+        return target.closest('[data-source-line]');
+      };
+
+      document.addEventListener('dblclick', (event) => {
+        const sourceElement = sourceElementForTarget(event.target);
+        if (!sourceElement) return;
+        const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+        const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
+        event.preventDefault();
+        event.stopPropagation();
+        window.parent.postMessage({
+          type: 'codex-local-markdown-preview-jump',
+          path: sourcePath,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+        }, '*');
+      });
+    })();
+  `
+}
+
 export function createMarkdownPreviewHtml(localPath: string, markdown: string): string {
   const rendered = renderMarkdownContent(markdown, {
     cwd: dirname(localPath),
@@ -728,6 +759,7 @@ export function createMarkdownPreviewHtml(localPath: string, markdown: string): 
 <body>
   <p class="preview-meta">${escapeHtml(localPath)}</p>
   <article class="markdown-preview message-text-flow">${bodyHtml}</article>
+  <script>${markdownPreviewScript(localPath)}</script>
 </body>
 </html>`
 }
@@ -945,15 +977,13 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const jumpToRequestedLineRange = () => {
-      const requestedRange = parseRequestedLineRange();
-      if (!requestedRange) return;
+    const jumpEditorToLineRange = (rawStartLine, rawEndLine = rawStartLine, preserveSelection = false) => {
       const lineCount = editor.session.getLength();
-      const startLine = Math.min(Math.max(requestedRange.startLine, 1), lineCount);
-      const endLine = Math.min(Math.max(requestedRange.endLine, startLine), lineCount);
+      const startLine = Math.min(Math.max(Number.parseInt(String(rawStartLine), 10) || 1, 1), lineCount);
+      const endLine = Math.min(Math.max(Number.parseInt(String(rawEndLine), 10) || startLine, startLine), lineCount);
       editor.gotoLine(startLine, 0, true);
       editor.scrollToLine(startLine, true, true, () => {});
-      if (endLine > startLine) {
+      if (preserveSelection && endLine > startLine) {
         try {
           const Range = ace.require('ace/range').Range;
           const endColumn = editor.session.getLine(endLine - 1).length;
@@ -966,6 +996,12 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         editor.clearSelection();
       }
       editor.focus();
+    };
+
+    const jumpToRequestedLineRange = () => {
+      const requestedRange = parseRequestedLineRange();
+      if (!requestedRange) return;
+      jumpEditorToLineRange(requestedRange.startLine, requestedRange.endLine, true);
     };
 
     window.requestAnimationFrame(jumpToRequestedLineRange);
@@ -1214,6 +1250,20 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         }, 1200);
       }
     };
+
+    const handlePreviewJumpMessage = (event) => {
+      if (!supportsMarkdownPreview || !previewFrame || event.source !== previewFrame.contentWindow) return;
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type !== 'codex-local-markdown-preview-jump') return;
+      if (data.path !== editorReferencePath) return;
+      const sourceLine = Number.parseInt(String(data.line), 10);
+      if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+      const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
+      jumpEditorToLineRange(sourceLine, Number.isFinite(sourceEndLine) ? sourceEndLine : sourceLine, false);
+    };
+
+    window.addEventListener('message', handlePreviewJumpMessage);
 
     const previewEndpoint = () => {
       if (!location.pathname.startsWith('/codex-local-edit')) return '';

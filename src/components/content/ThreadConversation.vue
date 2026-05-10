@@ -118,6 +118,7 @@
         <div
           v-else-if="isFileChangeMessage(message)"
           class="message-row"
+          :class="{ 'message-row-agent-start': showAgentAvatar(message, messageIndex) }"
           :data-role="message.role"
           :data-message-type="message.messageType || ''"
         >
@@ -196,7 +197,13 @@
           </div>
         </div>
 
-        <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
+        <div
+          v-else
+          class="message-row"
+          :class="{ 'message-row-agent-start': showAgentAvatar(message, messageIndex) }"
+          :data-role="message.role"
+          :data-message-type="message.messageType || ''"
+        >
           <div v-if="showAgentAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
             <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
           </div>
@@ -4154,6 +4161,14 @@ onBeforeUnmount(() => {
   @apply justify-start;
 }
 
+.message-row-agent-start {
+  @apply flex-col items-start gap-2;
+}
+
+.message-row-agent-start .message-stack {
+  @apply w-full flex-none;
+}
+
 .conversation-bottom-anchor {
   @apply h-px;
 }
@@ -4171,7 +4186,7 @@ onBeforeUnmount(() => {
 }
 
 .message-avatar {
-  @apply mt-1 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden border border-zinc-200 bg-white shadow-sm;
+  @apply flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden border border-zinc-200 bg-white shadow-sm;
 }
 
 .message-avatar-image {

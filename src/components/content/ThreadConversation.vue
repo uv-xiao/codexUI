@@ -1060,7 +1060,7 @@ type InlineSegment =
   | { kind: 'strikethrough'; value: string }
   | { kind: 'code'; value: string }
   | { kind: 'url'; value: string; href: string }
-  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string; line: number | null; endLine: number | null }
+  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string; line: number | null; endLine: number | null; inlineCode?: boolean }
 type ParsedFileReference = {
   path: string
   line: number | null
@@ -1329,6 +1329,16 @@ function parseFileReference(value: string): ParsedFileReference | null {
     line: normalizedRange?.startLine ?? null,
     endLine: normalizedRange?.endLine ?? null,
   }
+}
+
+function shouldLinkInlineCodeFileReference(ref: ParsedFileReference): boolean {
+  if (ref.line !== null) return true
+
+  const normalizedPath = normalizePathSeparators(ref.path)
+  if (/^(?:\/|[A-Za-z]:[\\/]|\.{1,2}\/|~\/)/u.test(normalizedPath)) return true
+
+  const baseName = getBasename(normalizedPath)
+  return /\.[A-Za-z0-9]{1,12}$/u.test(baseName)
 }
 
 function trimLinkWrappers(value: string): { core: string; leading: string; trailing: string } {
@@ -2346,7 +2356,7 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
           })
         } else {
           const fileReference = parseFileReference(token)
-          if (fileReference) {
+          if (fileReference && shouldLinkInlineCodeFileReference(fileReference)) {
             const displayPath = fileReferenceDisplayPath(fileReference.path, fileReference.line, fileReference.endLine)
             segments.push({
               kind: 'file',
@@ -2356,6 +2366,7 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
               downloadName: getBasename(fileReference.path),
               line: fileReference.line,
               endLine: fileReference.endLine,
+              inlineCode: true,
             })
           } else {
             segments.push({ kind: 'code', value: token })
@@ -3240,6 +3251,9 @@ function renderInlineSegmentsAsHtml(text: string): string {
         return `<s class="message-strikethrough-text">${escapeHtml(segment.value)}</s>`
       }
       if (segment.kind === 'file') {
+        if (segment.inlineCode) {
+          return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}"><code class="message-inline-code">${escapeHtml(segment.displayPath)}</code></a>`
+        }
         return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
@@ -4456,6 +4470,19 @@ onBeforeUnmount(() => {
 
 .plan-card-markdown :deep(.message-inline-code) {
   @apply rounded-md bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-900;
+}
+
+.plan-card-markdown :deep(.message-inline-code-link) {
+  @apply inline-flex no-underline;
+}
+
+.plan-card-markdown :deep(.message-inline-code-link:hover),
+.plan-card-markdown :deep(.message-inline-code-link:focus-visible) {
+  @apply no-underline;
+}
+
+.plan-card-markdown :deep(.message-inline-code-link:hover .message-inline-code) {
+  @apply border-sky-300 bg-sky-100 text-slate-900;
 }
 
 .plan-card-markdown :deep(.message-file-link) {

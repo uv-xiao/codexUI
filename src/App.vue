@@ -487,6 +487,26 @@
                   <span class="sidebar-settings-context-meta">{{ threadContextSecondaryText }}</span>
                 </span>
               </div>
+              <div
+                v-if="showThreadSessionIdRow"
+                class="sidebar-settings-row sidebar-settings-session-row"
+                :title="threadSessionId"
+              >
+                <span class="sidebar-settings-label">{{ t('Session ID') }}</span>
+                <span class="sidebar-settings-session-actions">
+                  <span class="sidebar-settings-session-value" :title="threadSessionId">{{ threadSessionId }}</span>
+                  <button
+                    type="button"
+                    class="sidebar-settings-session-copy"
+                    :data-copied="isThreadSessionIdCopied"
+                    :aria-label="threadSessionCopyButtonLabel"
+                    :title="threadSessionCopyButtonLabel"
+                    @click.stop="copyThreadSessionId"
+                  >
+                    <IconTablerCopy class="sidebar-settings-session-copy-icon" />
+                  </button>
+                </span>
+              </div>
               <div class="sidebar-settings-rate-limits">
                 <RateLimitStatus :snapshots="accountRateLimitSnapshots" />
               </div>
@@ -1181,6 +1201,7 @@ import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdow
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerCopy from './components/icons/IconTablerCopy.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
 import IconTablerTerminal from './components/icons/IconTablerTerminal.vue'
@@ -1802,6 +1823,10 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
+const threadSessionId = computed(() => selectedThreadId.value.trim())
+const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && threadSessionId.value.length > 0)
+const copiedThreadSessionId = ref('')
+let copiedThreadSessionIdResetTimer: ReturnType<typeof setTimeout> | null = null
 const isAccountSwitchBlocked = computed(() =>
   isSendingMessage.value ||
   isInterruptingTurn.value ||
@@ -1848,6 +1873,62 @@ function onOpenPluginsHomeCard(): void {
   void router.push({ name: 'skills', query: { tab: 'plugins' } })
 }
 
+function copyTextWithSelectionFallback(text: string): boolean {
+  if (typeof document === 'undefined') return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+async function copyThreadSessionId(): Promise<void> {
+  const sessionId = threadSessionId.value
+  if (!sessionId) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(sessionId)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(sessionId)
+  }
+
+  if (!copied) return
+
+  copiedThreadSessionId.value = sessionId
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+  }
+  copiedThreadSessionIdResetTimer = setTimeout(() => {
+    if (copiedThreadSessionId.value === sessionId) {
+      copiedThreadSessionId.value = ''
+    }
+    copiedThreadSessionIdResetTimer = null
+  }, 1800)
+}
+
 const threadContextBadgeState = computed(() => {
   const remainingPercent = selectedThreadTokenUsage.value?.remainingContextPercent
   if (remainingPercent === null || typeof remainingPercent !== 'number') return 'pending'
@@ -1875,6 +1956,10 @@ const threadContextSecondaryText = computed(() => {
 })
 
 const threadContextTooltip = computed(() => buildThreadContextTooltip(selectedThreadTokenUsage.value))
+const isThreadSessionIdCopied = computed(() => copiedThreadSessionId.value === threadSessionId.value && threadSessionId.value.length > 0)
+const threadSessionCopyButtonLabel = computed(() => (
+  isThreadSessionIdCopied.value ? t('Session ID copied') : t('Copy session ID')
+))
 
 function hasDuplicateFolderLeaf(path: string, knownPaths: string[]): boolean {
   const normalizedPath = normalizePathForUi(path).trim()
@@ -2173,6 +2258,10 @@ onUnmounted(() => {
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
+  }
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+    copiedThreadSessionIdResetTimer = null
   }
   clearTerminalKeyboardFocusFallbackTimer()
   stopPolling()
@@ -6109,6 +6198,30 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-context-meta {
   @apply block text-[11px] font-normal text-zinc-500;
+}
+
+.sidebar-settings-session-row {
+  @apply cursor-default gap-3;
+}
+
+.sidebar-settings-session-actions {
+  @apply flex min-w-0 flex-1 items-center justify-end gap-1.5;
+}
+
+.sidebar-settings-session-value {
+  @apply min-w-0 truncate font-mono text-xs text-zinc-600;
+}
+
+.sidebar-settings-session-copy {
+  @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-default disabled:opacity-60;
+}
+
+.sidebar-settings-session-copy[data-copied='true'] {
+  @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+}
+
+.sidebar-settings-session-copy-icon {
+  @apply h-4 w-4;
 }
 
 .sidebar-settings-rate-limits {

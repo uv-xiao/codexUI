@@ -6,7 +6,9 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
+import { all as lowlightAll } from 'lowlight'
 import { unified } from 'unified'
+import { HIGHLIGHT_LANGUAGE_ALIASES } from '../../utils/codeLanguage.js'
 
 type MarkdownRenderContext = {
   cwd: string
@@ -60,23 +62,6 @@ type ParsedFileReference = {
 
 const MARKDOWN_RENDER_CACHE_LIMIT = 400
 const markdownRenderCache = new Map<string, MarkdownRenderResult>()
-
-const HIGHLIGHT_LANGUAGE_ALIASES: Record<string, string> = {
-  js: 'javascript',
-  jsx: 'jsx',
-  ts: 'typescript',
-  tsx: 'tsx',
-  py: 'python',
-  rb: 'ruby',
-  sh: 'bash',
-  shell: 'bash',
-  zsh: 'bash',
-  yml: 'yaml',
-  md: 'markdown',
-  'c++': 'cpp',
-  'c#': 'csharp',
-  ps1: 'powershell',
-}
 
 export function clearMarkdownRendererCache(): void {
   markdownRenderCache.clear()
@@ -169,6 +154,7 @@ export function createMarkdownProcessor(context: MarkdownRenderContext) {
     .use(rehypeKatex)
     .use(rehypeHighlight, {
       aliases: HIGHLIGHT_LANGUAGE_ALIASES,
+      languages: lowlightAll,
       detect: false,
     })
     .use(() => (tree) => {

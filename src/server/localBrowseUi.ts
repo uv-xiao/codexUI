@@ -2,6 +2,7 @@ import { dirname, extname, join } from 'node:path'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { renderMarkdownContent } from '../components/content/markdownRenderer.js'
 import { KATEX_STYLESHEET_HREF } from './katexAssets.js'
+import { getEditorModeForPath } from '../utils/codeLanguage.js'
 
 type DirectoryItem = {
   name: string
@@ -35,34 +36,6 @@ const TEXT_EDITABLE_EXTENSIONS = new Set([
 
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set(['.md', '.markdown'])
 
-function languageForPath(pathValue: string): string {
-  const extension = extname(pathValue).toLowerCase()
-  switch (extension) {
-    case '.js': return 'javascript'
-    case '.ts': return 'typescript'
-    case '.jsx': return 'javascript'
-    case '.tsx': return 'typescript'
-    case '.rs': return 'rust'
-    case '.py': return 'python'
-    case '.sh': return 'sh'
-    case '.css':
-    case '.scss': return 'css'
-    case '.html':
-    case '.htm': return 'html'
-    case '.json': return 'json'
-    case '.md': return 'markdown'
-    case '.markdown': return 'markdown'
-    case '.yaml':
-    case '.yml': return 'yaml'
-    case '.xml': return 'xml'
-    case '.sql': return 'sql'
-    case '.toml': return 'ini'
-    case '.ini':
-    case '.conf': return 'ini'
-    default: return 'plaintext'
-  }
-}
-
 export function normalizeLocalPath(rawPath: string): string {
   const trimmed = rawPath.trim()
   if (!trimmed) return ''
@@ -86,7 +59,7 @@ export function decodeBrowsePath(rawPath: string): string {
 }
 
 export function isTextEditablePath(pathValue: string): boolean {
-  return TEXT_EDITABLE_EXTENSIONS.has(extname(pathValue).toLowerCase())
+  return TEXT_EDITABLE_EXTENSIONS.has(extname(pathValue).toLowerCase()) || getEditorModeForPath(pathValue) !== 'plaintext'
 }
 
 export function isMarkdownPath(pathValue: string): boolean {
@@ -768,7 +741,7 @@ export function createMarkdownPreviewHtml(localPath: string, markdown: string): 
 export async function createTextEditorHtml(localPath: string): Promise<string> {
   const content = await readFile(localPath, 'utf8')
   const parentPath = dirname(localPath)
-  const language = languageForPath(localPath)
+  const language = getEditorModeForPath(localPath)
   const supportsMarkdownPreview = isMarkdownPath(localPath)
   const escapedEditorPath = escapeForInlineScriptString(localPath)
   const copyReferenceButton = `<button id="copyRefBtn" type="button">Copy ref</button>`

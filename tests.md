@@ -1783,6 +1783,7 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Expected Results
 - Each assistant turn begins with a visible 64px square agent avatar on its own line.
 - The message content starts on the next line instead of running directly after the avatar.
+- The avatar image comes from `public/icons/agent-avatar.png`.
 - User messages keep their existing layout and do not gain the avatar.
 - The avatar stays readable in both light and dark themes.
 

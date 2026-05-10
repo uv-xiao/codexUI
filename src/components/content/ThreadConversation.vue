@@ -1110,7 +1110,7 @@ const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
 const highlightCacheVersion = ref(0)
 const markdownImageFailureVersion = ref(0)
-const agentAvatarSrc = '/icons/codexui-icon.svg'
+const agentAvatarSrc = '/icons/agent-avatar.jpg'
 let highlightJsLoader: Promise<void> | null = null
 const MESSAGE_BLOCK_CACHE_LIMIT = 300
 const INLINE_SEGMENT_CACHE_LIMIT = 1200
@@ -4171,11 +4171,11 @@ onBeforeUnmount(() => {
 }
 
 .message-avatar {
-  @apply mt-1 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-white shadow-sm;
+  @apply mt-1 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden border border-zinc-200 bg-white shadow-sm;
 }
 
 .message-avatar-image {
-  @apply block h-full w-full object-contain p-0.5;
+  @apply block h-full w-full object-cover;
 }
 
 :global(:root.dark) .message-avatar,

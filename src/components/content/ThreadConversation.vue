@@ -620,6 +620,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
 import { useMobile } from '../../composables/useMobile'
 import { clearMarkdownRendererCache, renderMarkdownContent } from './markdownRenderer'
+import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
@@ -627,7 +628,7 @@ import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 
-type HighlightJsModule = (typeof import('highlight.js/lib/common'))['default']
+type HighlightJsModule = (typeof import('highlight.js'))['default']
 
 const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
@@ -1005,23 +1006,6 @@ const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const mcpElicitationAnswers = ref<Record<string, string | number | boolean | string[]>>({})
 const autoFollowOutput = ref(true)
 const BOTTOM_THRESHOLD_PX = 16
-const CODE_LANGUAGE_ALIASES: Record<string, string> = {
-  js: 'javascript',
-  jsx: 'jsx',
-  ts: 'typescript',
-  tsx: 'tsx',
-  py: 'python',
-  rb: 'ruby',
-  sh: 'bash',
-  shell: 'bash',
-  zsh: 'bash',
-  yml: 'yaml',
-  md: 'markdown',
-  'c++': 'cpp',
-  'c#': 'csharp',
-  ps1: 'powershell',
-}
-
 function normalizeLineRange(line: number | null, endLine: number | null = line): { startLine: number; endLine: number } | null {
   if (!Number.isFinite(line ?? NaN) || !Number.isFinite(endLine ?? NaN)) return null
   const startLine = Math.floor(line ?? NaN)
@@ -1148,7 +1132,7 @@ const showJumpToLatestButton = computed(
 function ensureHighlightJsLoaded(): Promise<void> {
   if (highlightJsModule.value) return Promise.resolve()
   if (!highlightJsLoader) {
-    highlightJsLoader = import('highlight.js/lib/common')
+    highlightJsLoader = import('highlight.js')
       .then((module) => {
         highlightJsModule.value = module.default
         highlightHtmlCache.clear()
@@ -1800,8 +1784,7 @@ const activeDiffViewerChange = computed<UiFileChange | null>(() => {
 
 function inferDiffViewerLanguage(change: UiFileChange): string {
   const targetPath = change.movedToPath || change.path
-  const extension = targetPath.split('.').pop()?.toLowerCase() ?? ''
-  return CODE_LANGUAGE_ALIASES[extension] ?? extension ?? ''
+  return getHighlightLanguageForPath(targetPath)
 }
 
 function hasStructuredUnifiedDiff(change: UiFileChange): boolean {
@@ -3194,9 +3177,7 @@ function escapeHtml(value: string): string {
 }
 
 function normalizeCodeLanguage(language: string): string {
-  const token = language.trim().split(/\s+/u)[0]?.toLowerCase() ?? ''
-  if (!token) return ''
-  return CODE_LANGUAGE_ALIASES[token] ?? token
+  return normalizeHighlightLanguage(language)
 }
 
 function renderHighlightedCodeAsHtmlUncached(language: string, value: string): string {

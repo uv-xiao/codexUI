@@ -147,6 +147,13 @@ const answer = 42
     expect(html).not.toContain('message-file-link')
   })
 
+  it('highlights expanded fenced code language aliases', () => {
+    const html = render('```shellscript\necho "$HOME"\n```')
+
+    expect(html).toContain('hljs-built_in')
+    expect(html).toContain('hljs-variable')
+  })
+
   it('shares the same renderer for message and plan contexts', () => {
     const text = 'Plan with $a^2 + b^2 = c^2$ and [src/App.vue](./src/App.vue)'
     expect(render(text, 'message')).toBe(render(text, 'plan'))

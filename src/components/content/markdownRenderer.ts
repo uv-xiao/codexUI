@@ -350,6 +350,7 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
   } else if (tagName === 'code') {
     if (parentTagName !== 'pre') {
       addClass(node, 'message-inline-code')
+      wrapInlineCodeFileReference(node, parent, index, context)
     }
   } else if (tagName === 'a') {
     enhanceAnchor(node, context.cwd)
@@ -373,6 +374,49 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
   } else if (tagName === 'del') {
     addClass(node, 'message-strikethrough-text')
   }
+}
+
+function wrapInlineCodeFileReference(
+  node: MarkdownElement,
+  parent: MarkdownNode,
+  index: number,
+  context: MarkdownRenderContext,
+): void {
+  if (!isElement(parent)) return
+  if (parent.tagName === 'a') return
+  if (!Array.isArray(node.children) || node.children.length === 0) return
+  if (!node.children.every(isText)) return
+
+  const codeValue = node.children.map((child) => child.value).join('')
+  const ref = parseFileReference(codeValue)
+  if (!ref) return
+  if (!shouldLinkInlineCodeFileReference(ref)) return
+
+  const href = toBrowseUrl(codeValue, context.cwd, ref.line, ref.endLine)
+  if (href === '#') return
+
+  parent.children.splice(index, 1, {
+    type: 'element',
+    tagName: 'a',
+    properties: {
+      className: ['message-file-link', 'message-inline-code-link'],
+      href,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      title: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
+    },
+    children: [node],
+  })
+}
+
+function shouldLinkInlineCodeFileReference(ref: ParsedFileReference): boolean {
+  if (ref.line !== null) return true
+
+  const normalizedPath = normalizePathSeparators(ref.path)
+  if (/^(?:\/|[A-Za-z]:[\\/]|\.{1,2}\/|~\/)/u.test(normalizedPath)) return true
+
+  const baseName = getBasename(normalizedPath)
+  return /\.[A-Za-z0-9]{1,12}$/u.test(baseName)
 }
 
 function wrapListItemChildren(node: MarkdownElement): void {

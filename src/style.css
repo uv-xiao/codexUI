@@ -826,6 +826,20 @@
   @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
 }
 
+.message-inline-code-link {
+  @apply inline-flex no-underline;
+}
+
+.message-inline-code-link:hover,
+.message-inline-code-link:focus-visible {
+  @apply no-underline;
+}
+
+.message-inline-code-link:hover .message-inline-code,
+.message-inline-code-link:focus-visible .message-inline-code {
+  @apply border-sky-300 bg-sky-100 text-slate-900;
+}
+
 .message-code-block {
   @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
 }
@@ -888,6 +902,11 @@
 
 :root.dark .message-inline-code {
   @apply bg-transparent text-inherit;
+}
+
+:root.dark .message-inline-code-link:hover .message-inline-code,
+:root.dark .message-inline-code-link:focus-visible .message-inline-code {
+  @apply border-sky-500/60 bg-sky-900/40 text-zinc-50;
 }
 
 :root.dark .message-image-fallback {
@@ -1547,6 +1566,11 @@
 
 :root.dark .plan-card-markdown .message-inline-code {
   @apply bg-transparent text-inherit;
+}
+
+:root.dark .plan-card-markdown .message-inline-code-link:hover .message-inline-code,
+:root.dark .plan-card-markdown .message-inline-code-link:focus-visible .message-inline-code {
+  @apply border-sky-500/60 bg-sky-900/40 text-zinc-50;
 }
 
 :root.dark .plan-card-markdown .message-file-link {

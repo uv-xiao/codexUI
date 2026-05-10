@@ -1775,13 +1775,13 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 
 #### Steps
 1. Open the app in light theme and select a thread with assistant replies.
-2. Confirm each assistant turn starts with a square avatar on its own line.
+2. Confirm each assistant turn starts with a 64px square avatar on its own line.
 3. Confirm user messages do not show the same avatar.
 4. If needed, send a short prompt such as `avatar smoke test` and confirm the assistant reply shows the avatar first, then the message content starts on the next line.
 5. Switch to dark theme and repeat the same check on the same thread.
 
 #### Expected Results
-- Each assistant turn begins with a visible square agent avatar on its own line.
+- Each assistant turn begins with a visible 64px square agent avatar on its own line.
 - The message content starts on the next line instead of running directly after the avatar.
 - User messages keep their existing layout and do not gain the avatar.
 - The avatar stays readable in both light and dark themes.

@@ -121,6 +121,9 @@
           :data-role="message.role"
           :data-message-type="message.messageType || ''"
         >
+          <div v-if="showAgentAvatar(message)" class="message-avatar" aria-hidden="true">
+            <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
+          </div>
           <div class="message-stack" :data-role="message.role">
             <article class="message-body" :data-role="message.role">
               <section v-if="readStandaloneFileChangeSummary(message)" class="file-change-summary-block">
@@ -194,6 +197,9 @@
         </div>
 
         <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
+          <div v-if="showAgentAvatar(message)" class="message-avatar" aria-hidden="true">
+            <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
+          </div>
           <div class="message-stack" :data-role="message.role">
             <article class="message-body" :data-role="message.role">
               <ul
@@ -740,6 +746,10 @@ function isCopyableAssistantMessage(message: UiMessage): boolean {
     && !(message.messageType ?? '').endsWith('.live')
 }
 
+function showAgentAvatar(message: UiMessage): boolean {
+  return message.role === 'assistant'
+}
+
 const activeCommandMessageId = computed(() => {
   for (let index = props.messages.length - 1; index >= 0; index -= 1) {
     const message = props.messages[index]
@@ -1080,6 +1090,7 @@ const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
 const highlightCacheVersion = ref(0)
 const markdownImageFailureVersion = ref(0)
+const agentAvatarSrc = '/icons/codexui-icon.svg'
 let highlightJsLoader: Promise<void> | null = null
 const MESSAGE_BLOCK_CACHE_LIMIT = 300
 const INLINE_SEGMENT_CACHE_LIMIT = 1200
@@ -4111,7 +4122,7 @@ onBeforeUnmount(() => {
 }
 
 .message-row {
-  @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex;
+  @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex items-start gap-3;
 }
 
 .message-row[data-role='user'] {
@@ -4136,7 +4147,20 @@ onBeforeUnmount(() => {
 }
 
 .message-stack {
-  @apply flex flex-col w-full min-w-0;
+  @apply flex flex-col min-w-0 flex-1;
+}
+
+.message-avatar {
+  @apply mt-1 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-white shadow-sm;
+}
+
+.message-avatar-image {
+  @apply block h-full w-full object-contain p-0.5;
+}
+
+:global(:root.dark) .message-avatar,
+:global(.dark) .message-avatar {
+  @apply border-zinc-700 bg-zinc-900;
 }
 
 .request-card {

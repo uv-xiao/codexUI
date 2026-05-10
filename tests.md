@@ -1766,6 +1766,28 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - Close any opened file tabs and remove temporary test messages if needed.
 
+### Feature: Assistant messages show agent avatar in conversation
+
+#### Prerequisites
+- App server is running from this repository.
+- Open a thread that already contains at least one assistant message, or send a short prompt to create one.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the app in light theme and select a thread with assistant replies.
+2. Confirm assistant messages show a circular avatar at the left edge of the message row.
+3. Confirm user messages do not show the same avatar.
+4. If needed, send a short prompt such as `avatar smoke test` and confirm the next assistant reply also shows the avatar.
+5. Switch to dark theme and repeat the same check on the same thread.
+
+#### Expected Results
+- Assistant messages in the conversation render with a visible agent avatar.
+- User messages keep their existing layout and do not gain the avatar.
+- The avatar stays readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Delete or ignore any disposable test thread/message created for the check.
+
 ### Feature: Composer @ search includes folders and symlinks
 
 #### Prerequisites

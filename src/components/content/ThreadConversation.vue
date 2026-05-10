@@ -200,11 +200,17 @@
         <div
           v-else
           class="message-row"
-          :class="{ 'message-row-agent-start': showAgentAvatar(message, messageIndex) }"
+          :class="{
+            'message-row-agent-start': showAgentAvatar(message, messageIndex),
+            'message-row-user-start': showUserAvatar(message, messageIndex),
+          }"
           :data-role="message.role"
           :data-message-type="message.messageType || ''"
         >
-          <div v-if="showAgentAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
+          <div v-if="showUserAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
+            <img class="message-avatar-image" :src="userAvatarSrc" alt="" />
+          </div>
+          <div v-else-if="showAgentAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
             <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
           </div>
           <div class="message-stack" :data-role="message.role">
@@ -753,13 +759,13 @@ function isCopyableAssistantMessage(message: UiMessage): boolean {
     && !(message.messageType ?? '').endsWith('.live')
 }
 
-function showAgentAvatar(message: UiMessage, messageIndex: number): boolean {
-  if (message.role !== 'assistant') return false
+function showTurnAvatar(message: UiMessage, messageIndex: number, role: 'assistant' | 'user'): boolean {
+  if (message.role !== role) return false
 
   if (typeof message.turnIndex === 'number') {
     for (let index = messageIndex - 1; index >= 0; index -= 1) {
       const previous = visibleMessages.value[index]
-      if (previous?.role === 'assistant' && previous.turnIndex === message.turnIndex) {
+      if (previous?.role === role && previous.turnIndex === message.turnIndex) {
         return false
       }
     }
@@ -768,13 +774,20 @@ function showAgentAvatar(message: UiMessage, messageIndex: number): boolean {
 
   for (let index = messageIndex - 1; index >= 0; index -= 1) {
     const previous = visibleMessages.value[index]
-    if (previous?.role === 'user') return true
-    if (previous?.role === 'assistant') {
-      return false
-    }
+    if (previous?.role === role) return false
+    if (role === 'assistant' && previous?.role === 'user') return true
+    if (role === 'user' && previous?.role === 'assistant') return true
   }
 
   return true
+}
+
+function showAgentAvatar(message: UiMessage, messageIndex: number): boolean {
+  return showTurnAvatar(message, messageIndex, 'assistant')
+}
+
+function showUserAvatar(message: UiMessage, messageIndex: number): boolean {
+  return showTurnAvatar(message, messageIndex, 'user')
 }
 
 const activeCommandMessageId = computed(() => {
@@ -1118,6 +1131,7 @@ const highlightJsModule = ref<HighlightJsModule | null>(null)
 const highlightCacheVersion = ref(0)
 const markdownImageFailureVersion = ref(0)
 const agentAvatarSrc = '/icons/agent-avatar.png'
+const userAvatarSrc = '/icons/user-avatar.png'
 let highlightJsLoader: Promise<void> | null = null
 const MESSAGE_BLOCK_CACHE_LIMIT = 300
 const INLINE_SEGMENT_CACHE_LIMIT = 1200
@@ -4165,7 +4179,12 @@ onBeforeUnmount(() => {
   @apply flex-col items-start gap-2;
 }
 
-.message-row-agent-start .message-stack {
+.message-row-user-start {
+  @apply flex-col items-end gap-2;
+}
+
+.message-row-agent-start .message-stack,
+.message-row-user-start .message-stack {
   @apply w-full flex-none;
 }
 

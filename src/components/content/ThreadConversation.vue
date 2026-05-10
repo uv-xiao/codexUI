@@ -4186,7 +4186,7 @@ onBeforeUnmount(() => {
 }
 
 .message-avatar {
-  @apply flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden border border-zinc-200 bg-white shadow-sm;
+  @apply flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden border border-zinc-200 bg-white shadow-sm;
 }
 
 .message-avatar-image {

@@ -58,6 +58,17 @@ describe('local browse markdown preview', () => {
     expect(textEditorHtml).not.toContain('id="previewFrame"')
   })
 
+  it('uses the Rust Ace mode for Rust editor pages', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-rust-editor-'))
+    const rustPath = join(tempDir, 'main.rs')
+    await writeFile(rustPath, 'fn main() { println!("hello"); }\n', 'utf8')
+
+    const editorHtml = await createTextEditorHtml(rustPath)
+
+    expect(editorHtml).toContain("editor.session.setMode('ace/mode/rust')")
+    expect(editorHtml).toContain('· rust')
+  })
+
   it('renders markdown preview HTML with local links, images, and code blocks', () => {
     const html = createMarkdownPreviewHtml('/tmp/preview space/note.md', [
       '# Preview Title',

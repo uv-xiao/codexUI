@@ -29,7 +29,7 @@ type LocalDirectoryListingOptions = {
 const TEXT_EDITABLE_EXTENSIONS = new Set([
   '.txt', '.md', '.json', '.js', '.ts', '.tsx', '.jsx', '.css', '.scss',
   '.html', '.htm', '.xml', '.yml', '.yaml', '.log', '.csv', '.env', '.py',
-  '.sh', '.toml', '.ini', '.conf', '.sql', '.bat', '.cmd', '.ps1',
+  '.sh', '.toml', '.ini', '.conf', '.sql', '.bat', '.cmd', '.ps1', '.rs',
   '.markdown',
 ])
 
@@ -42,6 +42,7 @@ function languageForPath(pathValue: string): string {
     case '.ts': return 'typescript'
     case '.jsx': return 'javascript'
     case '.tsx': return 'typescript'
+    case '.rs': return 'rust'
     case '.py': return 'python'
     case '.sh': return 'sh'
     case '.css':

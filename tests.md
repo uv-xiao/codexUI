@@ -1766,7 +1766,7 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - Close any opened file tabs and remove temporary test messages if needed.
 
-### Feature: Assistant messages show agent avatar in conversation
+### Feature: Assistant conversation starts show agent avatar
 
 #### Prerequisites
 - App server is running from this repository.
@@ -1775,13 +1775,14 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 
 #### Steps
 1. Open the app in light theme and select a thread with assistant replies.
-2. Confirm assistant messages show a circular avatar at the left edge of the message row.
+2. Confirm the first assistant message in a turn shows a circular avatar at the left edge of the message row.
 3. Confirm user messages do not show the same avatar.
-4. If needed, send a short prompt such as `avatar smoke test` and confirm the next assistant reply also shows the avatar.
+4. If needed, send a short prompt such as `avatar smoke test` and confirm the first assistant reply shows the avatar while later assistant messages in the same turn do not repeat it.
 5. Switch to dark theme and repeat the same check on the same thread.
 
 #### Expected Results
-- Assistant messages in the conversation render with a visible agent avatar.
+- The first assistant message in each conversation turn renders with a visible agent avatar.
+- Later assistant messages in the same turn do not repeat the avatar.
 - User messages keep their existing layout and do not gain the avatar.
 - The avatar stays readable in both light and dark themes.
 

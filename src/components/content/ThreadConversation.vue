@@ -20,7 +20,7 @@
           {{ isLoadingMore ? 'Loading…' : 'Load earlier messages' }}
         </button>
       </li>
-      <template v-for="message in visibleMessages" :key="message.id">
+      <template v-for="(message, messageIndex) in visibleMessages" :key="message.id">
       <li
         v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
         class="conversation-item"
@@ -121,7 +121,7 @@
           :data-role="message.role"
           :data-message-type="message.messageType || ''"
         >
-          <div v-if="showAgentAvatar(message)" class="message-avatar" aria-hidden="true">
+          <div v-if="showAgentAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
             <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
           </div>
           <div class="message-stack" :data-role="message.role">
@@ -197,7 +197,7 @@
         </div>
 
         <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
-          <div v-if="showAgentAvatar(message)" class="message-avatar" aria-hidden="true">
+          <div v-if="showAgentAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
             <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
           </div>
           <div class="message-stack" :data-role="message.role">
@@ -746,8 +746,28 @@ function isCopyableAssistantMessage(message: UiMessage): boolean {
     && !(message.messageType ?? '').endsWith('.live')
 }
 
-function showAgentAvatar(message: UiMessage): boolean {
-  return message.role === 'assistant'
+function showAgentAvatar(message: UiMessage, messageIndex: number): boolean {
+  if (message.role !== 'assistant') return false
+
+  if (typeof message.turnIndex === 'number') {
+    for (let index = messageIndex - 1; index >= 0; index -= 1) {
+      const previous = visibleMessages.value[index]
+      if (previous?.role === 'assistant' && previous.turnIndex === message.turnIndex) {
+        return false
+      }
+    }
+    return true
+  }
+
+  for (let index = messageIndex - 1; index >= 0; index -= 1) {
+    const previous = visibleMessages.value[index]
+    if (previous?.role === 'user') return true
+    if (previous?.role === 'assistant') {
+      return false
+    }
+  }
+
+  return true
 }
 
 const activeCommandMessageId = computed(() => {

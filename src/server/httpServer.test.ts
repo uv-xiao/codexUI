@@ -64,4 +64,18 @@ describe('local browse redirect behavior', () => {
     expect(response.status).toBe(302)
     expect(response.headers.get('location')).toBe(`/codex-local-edit${encodeURI(filePath)}`)
   })
+
+  it('preserves line ranges when redirecting editable browse URLs', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-lines-'))
+    const filePath = join(tempDir, 'note.txt')
+    await writeFile(filePath, 'hello world\nnext line\n', 'utf8')
+
+    const baseUrl = await startServer()
+    const response = await fetch(`${baseUrl}/codex-local-browse${encodeURI(filePath)}?line=2-3`, {
+      redirect: 'manual',
+    })
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get('location')).toBe(`/codex-local-edit${encodeURI(filePath)}?line=2-3`)
+  })
 })

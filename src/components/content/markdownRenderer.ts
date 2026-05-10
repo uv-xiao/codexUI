@@ -39,8 +39,14 @@ type MarkdownText = MarkdownNode & {
 type InlineToken =
   | { kind: 'text'; value: string }
   | { kind: 'url'; value: string; href: string }
-  | { kind: 'file'; value: string; path: string; displayPath: string }
+  | { kind: 'file'; value: string; path: string; displayPath: string; line: number | null; endLine: number | null }
   | { kind: 'image'; alt: string; url: string; markdown: string }
+
+type ParsedFileReference = {
+  path: string
+  line: number | null
+  endLine: number | null
+}
 
 const MARKDOWN_RENDER_CACHE_LIMIT = 400
 const markdownRenderCache = new Map<string, MarkdownRenderResult>()
@@ -64,6 +70,37 @@ const HIGHLIGHT_LANGUAGE_ALIASES: Record<string, string> = {
 
 export function clearMarkdownRendererCache(): void {
   markdownRenderCache.clear()
+}
+
+function normalizeLineRange(line: number | null, endLine: number | null = line): { startLine: number; endLine: number } | null {
+  if (!Number.isFinite(line ?? NaN) || !Number.isFinite(endLine ?? NaN)) return null
+  const startLine = Math.floor(line ?? NaN)
+  const normalizedEndLine = Math.floor(endLine ?? NaN)
+  if (startLine < 1 || normalizedEndLine < 1) return null
+  return {
+    startLine: Math.min(startLine, normalizedEndLine),
+    endLine: Math.max(startLine, normalizedEndLine),
+  }
+}
+
+function lineRangeQueryValue(line: number | null, endLine: number | null = line): string {
+  const normalized = normalizeLineRange(line, endLine)
+  if (!normalized) return ''
+  return normalized.startLine === normalized.endLine
+    ? String(normalized.startLine)
+    : `${normalized.startLine}-${normalized.endLine}`
+}
+
+function appendLineQuery(href: string, line: number | null, endLine: number | null = line): string {
+  const queryValue = lineRangeQueryValue(line, endLine)
+  if (!queryValue) return href
+  const separator = href.includes('?') ? '&' : '?'
+  return `${href}${separator}line=${encodeURIComponent(queryValue)}`
+}
+
+function fileReferenceDisplayPath(pathValue: string, line: number | null, endLine: number | null = line): string {
+  const queryValue = lineRangeQueryValue(line, endLine)
+  return queryValue ? `${pathValue}:${queryValue}` : pathValue
 }
 
 export function renderMarkdownContent(
@@ -537,7 +574,7 @@ function resolveMarkdownHref(href: string, cwd: string): { href: string; title: 
   if (!ref) return null
 
   return {
-    href: toBrowseUrl(ref.path, cwd),
+    href: toBrowseUrl(normalized, cwd),
     title: normalized,
   }
 }
@@ -574,10 +611,10 @@ function splitTextNode(text: string, context: MarkdownRenderContext): MarkdownNo
         tagName: 'a',
         properties: {
           className: ['message-file-link'],
-          href: toBrowseUrl(segment.path, context.cwd),
+          href: toBrowseUrl(segment.path, context.cwd, segment.line, segment.endLine),
           target: '_blank',
           rel: 'noopener noreferrer',
-          title: segment.path,
+          title: fileReferenceDisplayPath(segment.path, segment.line, segment.endLine),
         },
         children: [{ type: 'text', value: segment.displayPath }],
       })
@@ -654,6 +691,8 @@ function splitTextByMarkdownInlineTokens(text: string): InlineToken[] {
           value: parsed.target,
           path: ref.path,
           displayPath: parsed.label || parsed.target,
+          line: ref.line,
+          endLine: ref.endLine,
         })
       } else {
         segments.push({ kind: 'text', value: token })
@@ -730,7 +769,7 @@ function findNextMarkdownInlineToken(
 
 function splitPlainTextByLinks(text: string): InlineToken[] {
   const segments: InlineToken[] = []
-  const pattern = /https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`|(?<![\p{L}\p{N}._@()-])(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+\.[A-Za-z0-9]{1,12}(?::\d+(?::\d+)?)?(?:#L\d+(?:C\d+)?)?/gu
+  const pattern = /https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`|(?<![\p{L}\p{N}._@()-])(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+\.[A-Za-z0-9]{1,12}(?::\d+(?:-\d+)?(?::\d+)?)?(?:#L\d+(?:-L?\d+)?(?:C\d+)?)?/gu
   let cursor = 0
 
   for (const match of text.matchAll(pattern)) {
@@ -780,7 +819,9 @@ function splitPlainTextByLinks(text: string): InlineToken[] {
         kind: 'file',
         value: token,
         path: ref.path,
-        displayPath: token,
+        displayPath: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
+        line: ref.line,
+        endLine: ref.endLine,
       })
       if (trailing) {
         segments.push({ kind: 'text', value: trailing })
@@ -958,23 +999,26 @@ function resolveRelativePath(pathValue: string, cwd: string): string {
   return normalizePathDots(`${base.replace(/\/+$/u, '')}/${normalizedPath}`)
 }
 
-function parseFileReference(value: string): { path: string; line: number | null } | null {
+function parseFileReference(value: string): ParsedFileReference | null {
   if (!value) return null
 
   let pathValue = value.trim()
   const wrapped = trimLinkWrappers(pathValue)
   pathValue = wrapped.core.trim()
   let line: number | null = null
+  let endLine: number | null = null
 
-  const hashLineMatch = pathValue.match(/^(.*)#L(\d+)(?:C\d+)?$/u)
+  const hashLineMatch = pathValue.match(/^(.*)#L(\d+)(?:-L?(\d+))?(?:C\d+)?$/u)
   if (hashLineMatch) {
     pathValue = hashLineMatch[1]
     line = Number(hashLineMatch[2])
+    endLine = Number(hashLineMatch[3] ?? hashLineMatch[2])
   } else {
-    const colonLineMatch = pathValue.match(/^(.*):(\d+)(?::\d+)?$/u)
+    const colonLineMatch = pathValue.match(/^(.*):(\d+)(?:-(\d+))?(?::\d+)?$/u)
     if (colonLineMatch) {
       pathValue = colonLineMatch[1]
       line = Number(colonLineMatch[2])
+      endLine = Number(colonLineMatch[3] ?? colonLineMatch[2])
     }
   }
 
@@ -985,10 +1029,15 @@ function parseFileReference(value: string): { path: string; line: number | null 
     // Keep best-effort path if decoding fails.
   }
   if (!isFilePath(pathValue)) return null
-  return { path: pathValue, line }
+  const normalizedRange = normalizeLineRange(line, endLine)
+  return {
+    path: pathValue,
+    line: normalizedRange?.startLine ?? null,
+    endLine: normalizedRange?.endLine ?? null,
+  }
 }
 
-function toBrowseUrl(pathValue: string, cwd = ''): string {
+function toBrowseUrl(pathValue: string, cwd = '', line: number | null = null, endLine: number | null = line): string {
   const normalized = pathValue.trim()
   if (!normalized) return '#'
 
@@ -998,7 +1047,11 @@ function toBrowseUrl(pathValue: string, cwd = ''): string {
   if (!resolved) return '#'
 
   const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
-  return `/codex-local-browse${encodeURI(normalizedResolved)}`
+  return appendLineQuery(
+    `/codex-local-browse${encodeURI(normalizedResolved)}`,
+    parsed?.line ?? line,
+    parsed?.endLine ?? endLine,
+  )
 }
 
 function toRenderableImageUrl(value: string, cwd = ''): string {

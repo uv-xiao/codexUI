@@ -1021,6 +1021,38 @@ const CODE_LANGUAGE_ALIASES: Record<string, string> = {
   'c#': 'csharp',
   ps1: 'powershell',
 }
+
+function normalizeLineRange(line: number | null, endLine: number | null = line): { startLine: number; endLine: number } | null {
+  if (!Number.isFinite(line ?? NaN) || !Number.isFinite(endLine ?? NaN)) return null
+  const startLine = Math.floor(line ?? NaN)
+  const normalizedEndLine = Math.floor(endLine ?? NaN)
+  if (startLine < 1 || normalizedEndLine < 1) return null
+  return {
+    startLine: Math.min(startLine, normalizedEndLine),
+    endLine: Math.max(startLine, normalizedEndLine),
+  }
+}
+
+function lineRangeQueryValue(line: number | null, endLine: number | null = line): string {
+  const normalized = normalizeLineRange(line, endLine)
+  if (!normalized) return ''
+  return normalized.startLine === normalized.endLine
+    ? String(normalized.startLine)
+    : `${normalized.startLine}-${normalized.endLine}`
+}
+
+function appendLineQuery(href: string, line: number | null, endLine: number | null = line): string {
+  const queryValue = lineRangeQueryValue(line, endLine)
+  if (!queryValue) return href
+  const separator = href.includes('?') ? '&' : '?'
+  return `${href}${separator}line=${encodeURIComponent(queryValue)}`
+}
+
+function fileReferenceDisplayPath(pathValue: string, line: number | null, endLine: number | null = line): string {
+  const queryValue = lineRangeQueryValue(line, endLine)
+  return queryValue ? `${pathValue}:${queryValue}` : pathValue
+}
+
 type InlineSegment =
   | { kind: 'text'; value: string }
   | { kind: 'bold'; value: string }
@@ -1028,7 +1060,12 @@ type InlineSegment =
   | { kind: 'strikethrough'; value: string }
   | { kind: 'code'; value: string }
   | { kind: 'url'; value: string; href: string }
-  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string }
+  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string; line: number | null; endLine: number | null }
+type ParsedFileReference = {
+  path: string
+  line: number | null
+  endLine: number | null
+}
 type TaskListItem = {
   text: string
   checked: boolean
@@ -1261,29 +1298,37 @@ function resolveRelativePath(pathValue: string, cwd: string): string {
   return normalizePathDots(`${base.replace(/\/+$/u, '')}/${normalizedPath}`)
 }
 
-function parseFileReference(value: string): { path: string; line: number | null } | null {
+function parseFileReference(value: string): ParsedFileReference | null {
   if (!value) return null
 
   let pathValue = value.trim()
   const wrapped = trimLinkWrappers(pathValue)
   pathValue = wrapped.core.trim()
   let line: number | null = null
+  let endLine: number | null = null
 
-  const hashLineMatch = pathValue.match(/^(.*)#L(\d+)(?:C\d+)?$/u)
+  const hashLineMatch = pathValue.match(/^(.*)#L(\d+)(?:-L?(\d+))?(?:C\d+)?$/u)
   if (hashLineMatch) {
     pathValue = hashLineMatch[1]
     line = Number(hashLineMatch[2])
+    endLine = Number(hashLineMatch[3] ?? hashLineMatch[2])
   } else {
-    const colonLineMatch = pathValue.match(/^(.*):(\d+)(?::\d+)?$/u)
+    const colonLineMatch = pathValue.match(/^(.*):(\d+)(?:-(\d+))?(?::\d+)?$/u)
     if (colonLineMatch) {
       pathValue = colonLineMatch[1]
       line = Number(colonLineMatch[2])
+      endLine = Number(colonLineMatch[3] ?? colonLineMatch[2])
     }
   }
 
   pathValue = normalizeFileUrlToPath(pathValue)
   if (!isFilePath(pathValue)) return null
-  return { path: pathValue, line }
+  const normalizedRange = normalizeLineRange(line, endLine)
+  return {
+    path: pathValue,
+    line: normalizedRange?.startLine ?? null,
+    endLine: normalizedRange?.endLine ?? null,
+  }
 }
 
 function trimLinkWrappers(value: string): { core: string; leading: string; trailing: string } {
@@ -1997,8 +2042,10 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
           kind: 'file',
           value: token,
           path: ref.path,
-          displayPath: token,
+          displayPath: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
           downloadName: getBasename(ref.path),
+          line: ref.line,
+          endLine: ref.endLine,
         })
         if (trailing) {
           segments.push({ kind: 'text', value: trailing })
@@ -2193,6 +2240,8 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
           path: ref.path,
           displayPath: label || target,
           downloadName: getBasename(ref.path),
+          line: ref.line,
+          endLine: ref.endLine,
         })
       } else {
         segments.push({ kind: 'text', value: token })
@@ -2282,6 +2331,8 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
                 path: markdownFileReference.path,
                 displayPath: markdownLink.label || markdownLink.target,
                 downloadName: getBasename(markdownFileReference.path),
+                line: markdownFileReference.line,
+                endLine: markdownFileReference.endLine,
               })
             } else {
               segments.push({ kind: 'code', value: token })
@@ -2296,15 +2347,15 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
         } else {
           const fileReference = parseFileReference(token)
           if (fileReference) {
-            const displayPath = fileReference.line
-              ? `${fileReference.path}:${String(fileReference.line)}`
-              : fileReference.path
+            const displayPath = fileReferenceDisplayPath(fileReference.path, fileReference.line, fileReference.endLine)
             segments.push({
               kind: 'file',
               value: token,
               path: fileReference.path,
               displayPath,
               downloadName: getBasename(fileReference.path),
+              line: fileReference.line,
+              endLine: fileReference.endLine,
             })
           } else {
             segments.push({ kind: 'code', value: token })
@@ -2368,7 +2419,7 @@ function toRenderableImageUrl(value: string): string {
   return normalized
 }
 
-function toBrowseUrl(pathValue: string): string {
+function toBrowseUrl(pathValue: string, line: number | null = null, endLine: number | null = line): string {
   const normalized = pathValue.trim()
   if (!normalized) return '#'
   const looksLikeAbsolutePath = (candidate: string): boolean => (
@@ -2381,7 +2432,11 @@ function toBrowseUrl(pathValue: string): string {
 
   if (looksLikeAbsolutePath(resolved)) {
     const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
-    return `/codex-local-browse${encodeURI(normalizedResolved)}`
+    return appendLineQuery(
+      `/codex-local-browse${encodeURI(normalizedResolved)}`,
+      parsed?.line ?? line,
+      parsed?.endLine ?? endLine,
+    )
   }
 
   return '#'
@@ -3185,7 +3240,7 @@ function renderInlineSegmentsAsHtml(text: string): string {
         return `<s class="message-strikethrough-text">${escapeHtml(segment.value)}</s>`
       }
       if (segment.kind === 'file') {
-        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.path)}">${escapeHtml(segment.displayPath)}</a>`
+        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
         return `<a class="message-file-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`

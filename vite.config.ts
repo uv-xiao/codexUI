@@ -300,6 +300,7 @@ export default defineConfig({
 
           const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-browse".length));
           const newProjectName = url.searchParams.get("newProjectName") ?? "";
+          const lineRange = url.searchParams.get("line") ?? "";
           if (!localPath || !isAbsolute(localPath)) {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
@@ -320,7 +321,7 @@ export default defineConfig({
 
             if (await isTextEditableFile(localPath)) {
               res.statusCode = 302;
-              res.setHeader("Location", toEditHref(localPath, newProjectName));
+              res.setHeader("Location", toEditHref(localPath, newProjectName, lineRange));
               res.end();
               return;
             }

@@ -1766,25 +1766,26 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - Close any opened file tabs and remove temporary test messages if needed.
 
-### Feature: Assistant conversation starts show agent avatar
+### Feature: Conversation turn avatars show agent and user images
 
 #### Prerequisites
 - App server is running from this repository.
-- Open a thread that already contains at least one assistant message, or send a short prompt to create one.
+- Open a thread that already contains at least one assistant message and one user message, or send a short prompt to create them.
 - Light and dark themes are both available from Settings.
 
 #### Steps
-1. Open the app in light theme and select a thread with assistant replies.
+1. Open the app in light theme and select a thread with both user and assistant replies.
 2. Confirm each assistant turn starts with a 64px square avatar on its own line.
-3. Confirm user messages do not show the same avatar.
-4. If needed, send a short prompt such as `avatar smoke test` and confirm the assistant reply shows the avatar first, then the message content starts on the next line.
+3. Confirm each user turn starts with the provided 64px square avatar on its own line and the message content starts on the next line.
+4. If needed, send a short prompt such as `avatar smoke test` and confirm both turns show the avatar first, then the message content starts on the next line.
 5. Switch to dark theme and repeat the same check on the same thread.
 
 #### Expected Results
 - Each assistant turn begins with a visible 64px square agent avatar on its own line.
+- Each user turn begins with a visible 64px square user avatar on its own line.
 - The message content starts on the next line instead of running directly after the avatar.
 - The avatar image comes from `public/icons/agent-avatar.png`.
-- User messages keep their existing layout and do not gain the avatar.
+- The user avatar image comes from `public/icons/user-avatar.png`.
 - The avatar stays readable in both light and dark themes.
 
 #### Rollback/Cleanup

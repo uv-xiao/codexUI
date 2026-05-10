@@ -2451,6 +2451,36 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 
 ---
 
+### Feature: Conversation inline code, composer, and request-panel math-symbol fallback
+
+#### Prerequisites
+- App is running from this repository.
+- `TestChat` is available as a project and opened in the composer.
+- A thread is available that contains inline code spans or fenced code blocks with symbols such as `⊑`, `∧`, `⊥`, `⊔`, `¬`, `≥`, and `ω`.
+- A pending user-input or elicitation request is available in the thread, or can be triggered in the current session.
+- A mobile viewport is available for the font check.
+
+#### Steps
+1. Open the target TestChat thread in light theme.
+2. Confirm inline code spans render symbols like `⊑`, `∧`, `⊥`, `⊔`, `¬`, `≥`, and `ω` with the same light regular-looking fallback as nearby Latin code text, not a thicker system fallback.
+3. Confirm fenced code blocks render the same symbols without the bold mobile fallback.
+4. Type the same symbols into the composer input and confirm they do not switch to the thicker system fallback.
+5. Open the pending request panel and confirm the request title, question text, option labels, and preview text render the same symbols without the thicker fallback.
+6. Switch to dark theme and repeat steps 2-5.
+7. Repeat steps 2-6 in a mobile viewport.
+
+#### Expected Results
+- Inline code keeps the symbol glyphs visually light and consistent with Latin code text.
+- Fenced code blocks no longer show thick mobile fallback glyphs for math symbols.
+- The composer input renders math symbols with the same lighter fallback while normal text remains readable.
+- Pending request panels render the same symbols with the same lighter fallback in both light and dark themes.
+- The result holds on mobile and desktop.
+
+#### Rollback/Cleanup
+- None.
+
+---
+
 ### Fix: Codex.app "New Worktree" Button Missing After Account Switch (CDP Injection)
 
 #### Prerequisites

@@ -981,6 +981,12 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
 
 .thread-pending-request-shell {
   @apply w-full rounded-[1.75rem] border border-zinc-700 bg-zinc-900 px-4 py-4 sm:px-5 sm:py-4 text-zinc-100 shadow-xl;
+  --thread-pending-request-code-font-family: var(--codex-code-font-family);
+  --thread-pending-request-ui-symbol-font-family: var(--codex-ui-symbol-font-family);
+  font-family: var(--thread-pending-request-ui-symbol-font-family);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .thread-pending-request-shell--no-top-radius {
@@ -1012,8 +1018,21 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
   @apply mt-3 rounded-xl bg-zinc-800/85 px-4 py-3 text-sm font-medium text-zinc-100;
 }
 
+.thread-pending-request-command-line {
+  font-family: var(--thread-pending-request-code-font-family);
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
 .thread-pending-request-preview-code {
   @apply block truncate whitespace-nowrap font-mono;
+  font-family: var(--thread-pending-request-code-font-family);
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .thread-pending-request-approval,
@@ -1027,6 +1046,8 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
 
 .thread-pending-request-option {
   @apply flex h-12 w-full items-center gap-3 rounded-2xl border border-zinc-800 bg-transparent px-4 text-left transition hover:border-zinc-600 hover:bg-zinc-800/70;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .thread-pending-request-option.is-selected {
@@ -1052,6 +1073,8 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
 
 .thread-pending-request-inline-control {
   @apply w-full min-w-0 border-none bg-transparent p-0 text-sm leading-none text-zinc-100 outline-none placeholder:text-zinc-500;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .thread-pending-request-question {
@@ -1078,6 +1101,8 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
 
 .thread-pending-request-link {
   @apply inline-flex w-fit items-center rounded-full border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 transition hover:border-zinc-500 hover:bg-zinc-800;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .thread-pending-request-select-wrap {
@@ -1091,6 +1116,8 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
 .thread-pending-request-select,
 .thread-pending-request-input {
   @apply h-11 rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .thread-pending-request-select:focus,
@@ -1127,6 +1154,8 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
 .thread-pending-request-primary,
 .thread-pending-request-secondary {
   @apply h-12 shrink-0 rounded-full border px-5 text-sm font-medium transition;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .thread-pending-request-primary {
@@ -1140,6 +1169,12 @@ function onRejectUnknownRequest(request: UiServerRequest): void {
 @media (max-width: 640px) {
   .thread-pending-request-shell {
     @apply rounded-[1.5rem] px-3 py-3;
+  }
+
+  .thread-pending-request-select,
+  .thread-pending-request-input,
+  .thread-pending-request-inline-control {
+    font-size: 16px;
   }
 
   .thread-pending-request-footer--approval {

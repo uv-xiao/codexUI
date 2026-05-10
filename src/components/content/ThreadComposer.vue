@@ -2101,6 +2101,10 @@ watch(
 
 .thread-composer-input {
   @apply w-full min-w-0 min-h-10 sm:min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 text-sm text-zinc-900 outline-none transition resize-none overflow-y-auto;
+  font-family: var(--codex-ui-symbol-font-family);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .thread-composer-input:focus {

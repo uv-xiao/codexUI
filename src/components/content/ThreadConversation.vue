@@ -4068,6 +4068,9 @@ onBeforeUnmount(() => {
 @reference "tailwindcss";
 
 .conversation-root {
+  --conversation-code-font-family: var(--codex-code-font-family);
+  --conversation-ui-symbol-font-family: var(--codex-ui-symbol-font-family);
+  --conversation-code-font-weight: var(--codex-code-font-weight);
   @apply relative h-full min-h-0 min-w-0 p-0 flex flex-col overflow-y-hidden overflow-x-hidden bg-transparent border-none rounded-none;
 }
 
@@ -4138,6 +4141,10 @@ onBeforeUnmount(() => {
 
 .request-card {
   @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-col gap-2;
+  font-family: var(--conversation-ui-symbol-font-family);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .request-title {
@@ -4159,10 +4166,14 @@ onBeforeUnmount(() => {
 
 .request-button {
   @apply rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs text-amber-900 hover:bg-amber-100 transition;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-button-primary {
   @apply border-amber-500 bg-amber-500 text-white hover:bg-amber-600;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-user-input {
@@ -4187,14 +4198,20 @@ onBeforeUnmount(() => {
 
 .request-link {
   @apply inline-flex w-fit rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs text-amber-900 hover:bg-amber-100 transition;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-select {
   @apply h-8 rounded-md border border-amber-300 bg-white px-2 text-sm text-amber-900;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-input {
   @apply h-8 rounded-md border border-amber-300 bg-white px-2 text-sm text-amber-900 placeholder:text-amber-500;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-checkbox-list {
@@ -4439,18 +4456,34 @@ onBeforeUnmount(() => {
 
 .plan-card-markdown :deep(.message-code-block) {
   @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950/95 text-slate-100;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .plan-card-markdown :deep(.message-code-language) {
   @apply border-b border-slate-800 bg-slate-900/90 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .plan-card-markdown :deep(.message-code-pre) {
   @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-6;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .plan-card-markdown :deep(.message-inline-code) {
   @apply rounded-md bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-900;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .plan-card-markdown :deep(.message-inline-code-link) {
@@ -4464,6 +4497,21 @@ onBeforeUnmount(() => {
 
 .plan-card-markdown :deep(.message-inline-code-link:hover .message-inline-code) {
   @apply border-sky-300 bg-sky-100 text-slate-900;
+}
+
+.plan-card-markdown :deep(.message-code-pre .hljs),
+.plan-card-markdown :deep(.message-code-pre .hljs *) {
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .plan-card-markdown :deep(.message-code-pre .hljs),
+  .plan-card-markdown :deep(.message-code-pre .hljs *) {
+    font-weight: var(--conversation-code-font-weight) !important;
+    font-synthesis: none;
+  }
 }
 
 .plan-card-markdown :deep(.message-file-link) {
@@ -4643,22 +4691,49 @@ onBeforeUnmount(() => {
 
 .message-inline-code {
   @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .message-code-block {
   @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .message-code-language {
   @apply border-b border-slate-800 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em] text-slate-400;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .message-code-pre {
   @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed font-mono whitespace-pre;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .message-code-pre :deep(.hljs) {
   @apply block bg-transparent p-0 text-inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .message-code-pre :deep(.hljs),
+  .message-code-pre :deep(.hljs *) {
+    font-weight: var(--conversation-code-font-weight) !important;
+    font-synthesis: none;
+  }
 }
 
 .message-text-flow :deep(.katex-display),

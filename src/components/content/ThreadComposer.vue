@@ -82,6 +82,31 @@
         </span>
       </div>
 
+      <div v-if="composerStatusVisible" class="thread-composer-rate-limit">
+        <div class="thread-composer-rate-limit-row">
+          <span
+            v-if="contextUsageSummaryText"
+            class="thread-composer-context-usage-inline"
+            :class="{
+              'is-muted': !contextUsageHasData,
+              'is-warning': contextUsageTone === 'warning',
+              'is-danger': contextUsageTone === 'danger',
+            }"
+            :title="contextUsageTooltipText"
+          >
+            <span class="thread-composer-context-usage-inline-value">
+              {{ t('Context') }} {{ contextUsageSummaryText }}
+            </span>
+            <span v-if="contextUsageView" class="thread-composer-context-usage-inline-bar" aria-hidden="true">
+              <span
+                class="thread-composer-context-usage-inline-bar-fill"
+                :style="{ width: `${contextUsageUsedPercent}%` }"
+              />
+            </span>
+          </span>
+        </div>
+      </div>
+
       <div
         class="thread-composer-input-wrap"
         :class="{
@@ -747,10 +772,16 @@ const quotaSummaryText = computed(() => buildQuotaSummaryText(props.codexQuota ?
 const quotaWeeklyRefreshText = computed(() => '')
 const quotaTooltipText = computed(() => buildQuotaTooltipText(props.codexQuota ?? null))
 const contextUsageView = computed(() => buildContextUsageView(props.threadTokenUsage ?? null))
-const contextUsageSummaryText = computed(() => contextUsageView.value?.summaryText ?? '')
-const contextUsageTooltipText = computed(() => contextUsageView.value?.tooltipText ?? '')
-const contextUsageRemainingPercent = computed(() => contextUsageView.value?.percentRemaining ?? 0)
+const contextUsageSummaryText = computed(() =>
+  contextUsageView.value?.summaryText ?? t('Awaiting data'),
+)
+const contextUsageTooltipText = computed(() =>
+  contextUsageView.value?.tooltipText ?? t('Updates after the next token usage event'),
+)
+const contextUsageUsedPercent = computed(() => contextUsageView.value?.percentUsed ?? 0)
 const contextUsageTone = computed(() => contextUsageView.value?.tone ?? 'healthy')
+const contextUsageHasData = computed(() => contextUsageView.value !== null)
+const composerStatusVisible = computed(() => Boolean(props.activeThreadId))
 
 function formatPlanType(planType: string | null | undefined): string {
   if (!planType || planType === 'unknown') return ''
@@ -937,7 +968,7 @@ function buildContextUsageView(
 ): {
     summaryText: string
     tooltipText: string
-    percentRemaining: number
+    percentUsed: number
     tone: 'healthy' | 'warning' | 'danger'
   } | null {
   if (!usage) return null
@@ -955,14 +986,14 @@ function buildContextUsageView(
       : 'healthy'
 
   return {
-    summaryText: `${percentRemaining}% · ${formatCompactTokenCount(tokensInContext)} / ${formatCompactTokenCount(contextWindow)}`,
+    summaryText: `${percentUsed}% ${t('used')} · ${formatCompactTokenCount(tokensInContext)} / ${formatCompactTokenCount(contextWindow)}`,
     tooltipText: [
       `Context window: ${percentRemaining}% left (${percentUsed}% used)`,
       `In context: ${tokensInContext.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`,
       `Last turn: ${formatBreakdownSummary(usage.last)}`,
       `Session total: ${formatBreakdownSummary(usage.total)}`,
     ].join('\n'),
-    percentRemaining,
+    percentUsed,
     tone,
   }
 }
@@ -2022,7 +2053,7 @@ watch(
 }
 
 .thread-composer-rate-limit-row {
-  @apply flex min-w-0 items-center gap-x-1.5 gap-y-1;
+  @apply flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1;
 }
 
 .thread-composer-rate-limit-value {
@@ -2032,6 +2063,10 @@ watch(
 .thread-composer-context-usage-inline {
   --context-usage-accent: rgb(34 197 94);
   @apply ml-auto inline-flex min-w-0 max-w-[56%] items-center gap-2 text-right;
+}
+
+.thread-composer-context-usage-inline.is-muted {
+  --context-usage-accent: rgb(113 113 122);
 }
 
 .thread-composer-context-usage-inline.is-warning {

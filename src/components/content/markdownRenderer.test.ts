@@ -92,6 +92,14 @@ const answer = 42
     expect(html).toContain('hosting_manager.py')
   })
 
+  it('preserves line ranges in local markdown links', () => {
+    const html = render('MARK [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py:3-7)')
+
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/hosting_manager.py?line=3-7"')
+    expect(html).toContain('title="/home/ubuntu/Documents/New Project (2)/hosting_manager.py:3-7"')
+    expect(html).toContain('hosting_manager.py')
+  })
+
   it('renders local markdown images through the local image route', () => {
     const html = render('![diagram](/home/ubuntu/Documents/New Project (2)/diagram.png)')
 

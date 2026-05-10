@@ -171,6 +171,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
     const newProjectName = typeof req.query.newProjectName === 'string' ? req.query.newProjectName : ''
+    const lineRange = typeof req.query.line === 'string' ? req.query.line : ''
     if (!localPath || !isAbsolute(localPath)) {
       res.status(400).json({ error: 'Expected absolute local file path.' })
       return
@@ -186,7 +187,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       }
 
       if (await isTextEditableFile(localPath)) {
-        res.redirect(302, toEditHref(localPath, newProjectName))
+        res.redirect(302, toEditHref(localPath, newProjectName, lineRange))
         return
       }
 

@@ -157,15 +157,34 @@ function normalizeNewProjectName(value: string): string {
   return value.trim().replace(/[\\/]+/gu, '').trim()
 }
 
-function toBrowseHref(pathValue: string, newProjectName = ''): string {
+export function normalizeLineRangeQuery(value: string): string {
+  const match = value.trim().match(/^(\d+)(?:-(\d+))?$/u)
+  if (!match) return ''
+  const startLine = Number(match[1])
+  const endLine = Number(match[2] ?? match[1])
+  if (!Number.isFinite(startLine) || !Number.isFinite(endLine) || startLine < 1 || endLine < 1) return ''
+  const firstLine = Math.min(Math.floor(startLine), Math.floor(endLine))
+  const lastLine = Math.max(Math.floor(startLine), Math.floor(endLine))
+  return firstLine === lastLine ? String(firstLine) : `${firstLine}-${lastLine}`
+}
+
+function buildLocalRouteQuery(newProjectName = '', lineRange = ''): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
-  const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
+  const normalizedLineRange = normalizeLineRangeQuery(lineRange)
+  const params = new URLSearchParams()
+  if (normalizedName) params.set('newProjectName', normalizedName)
+  if (normalizedLineRange) params.set('line', normalizedLineRange)
+  const queryString = params.toString()
+  return queryString ? `?${queryString}` : ''
+}
+
+function toBrowseHref(pathValue: string, newProjectName = '', lineRange = ''): string {
+  const query = buildLocalRouteQuery(newProjectName, lineRange)
   return `/codex-local-browse${encodeURI(pathValue)}${query}`
 }
 
-export function toEditHref(pathValue: string, newProjectName = ''): string {
-  const normalizedName = normalizeNewProjectName(newProjectName)
-  const query = normalizedName ? `?newProjectName=${encodeURIComponent(normalizedName)}` : ''
+export function toEditHref(pathValue: string, newProjectName = '', lineRange = ''): string {
+  const query = buildLocalRouteQuery(newProjectName, lineRange)
   return `/codex-local-edit${encodeURI(pathValue)}${query}`
 }
 
@@ -912,6 +931,44 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       behavioursEnabled: true,
     });
     editor.resize();
+
+    const parseRequestedLineRange = () => {
+      const raw = new URLSearchParams(location.search).get('line') || '';
+      const match = raw.trim().match(/^(\\d+)(?:-(\\d+))?$/);
+      if (!match) return null;
+      const startLine = Number.parseInt(match[1], 10);
+      const endLine = Number.parseInt(match[2] || match[1], 10);
+      if (!Number.isFinite(startLine) || !Number.isFinite(endLine) || startLine < 1 || endLine < 1) return null;
+      return {
+        startLine: Math.min(startLine, endLine),
+        endLine: Math.max(startLine, endLine),
+      };
+    };
+
+    const jumpToRequestedLineRange = () => {
+      const requestedRange = parseRequestedLineRange();
+      if (!requestedRange) return;
+      const lineCount = editor.session.getLength();
+      const startLine = Math.min(Math.max(requestedRange.startLine, 1), lineCount);
+      const endLine = Math.min(Math.max(requestedRange.endLine, startLine), lineCount);
+      editor.gotoLine(startLine, 0, true);
+      editor.scrollToLine(startLine, true, true, () => {});
+      if (endLine > startLine) {
+        try {
+          const Range = ace.require('ace/range').Range;
+          const endColumn = editor.session.getLine(endLine - 1).length;
+          editor.selection.setRange(new Range(startLine - 1, 0, endLine - 1, endColumn), false);
+        } catch {
+          editor.moveCursorTo(startLine - 1, 0);
+        }
+      } else {
+        editor.moveCursorTo(startLine - 1, 0);
+        editor.clearSelection();
+      }
+      editor.focus();
+    };
+
+    window.requestAnimationFrame(jumpToRequestedLineRange);
 
     let statusTimer = 0;
     let previewVisible = false;

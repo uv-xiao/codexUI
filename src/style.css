@@ -1,6 +1,120 @@
 @import "tailwindcss";
 @import "highlight.js/styles/github-dark.css";
 
+@font-face {
+  font-family: "CodexLocalCodeLatin";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
+  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
+}
+
+@font-face {
+  font-family: "CodexLocalCodeLatin";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
+  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
+}
+
+@font-face {
+  font-family: "CodexLocalCodeLatin";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
+  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
+}
+
+@font-face {
+  font-family: "CodexLocalCodeLatin";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
+  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
+}
+
+@font-face {
+  font-family: "CodexLocalMathSymbols";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.ttf") format("truetype");
+  unicode-range: U+00AC, U+2190-22FF, U+27C0-27EF, U+2980-2BFF;
+}
+
+@font-face {
+  font-family: "CodexLocalMathSymbols";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.ttf") format("truetype");
+  unicode-range: U+00AC, U+2190-22FF, U+27C0-27EF, U+2980-2BFF;
+}
+
+@font-face {
+  font-family: "CodexLocalMathSymbols";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.ttf") format("truetype");
+  unicode-range: U+00AC, U+2190-22FF, U+27C0-27EF, U+2980-2BFF;
+}
+
+@font-face {
+  font-family: "CodexLocalMathSymbols";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Main-Regular.ttf") format("truetype");
+  unicode-range: U+00AC, U+2190-22FF, U+27C0-27EF, U+2980-2BFF;
+}
+
+@font-face {
+  font-family: "CodexLocalMathGreek";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.ttf") format("truetype");
+  unicode-range: U+03B1-03C9, U+03D1, U+03D5-03D6, U+03F0-03F1, U+03F4-03F5;
+}
+
+@font-face {
+  font-family: "CodexLocalMathGreek";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.ttf") format("truetype");
+  unicode-range: U+03B1-03C9, U+03D1, U+03D5-03D6, U+03F0-03F1, U+03F4-03F5;
+}
+
+@font-face {
+  font-family: "CodexLocalMathGreek";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.ttf") format("truetype");
+  unicode-range: U+03B1-03C9, U+03D1, U+03D5-03D6, U+03F0-03F1, U+03F4-03F5;
+}
+
+@font-face {
+  font-family: "CodexLocalMathGreek";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff2") format("woff2"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.woff") format("woff"), url("/codex-local-katex/fonts/KaTeX_Math-Italic.ttf") format("truetype");
+  unicode-range: U+03B1-03C9, U+03D1, U+03D5-03D6, U+03F0-03F1, U+03F4-03F5;
+}
+
+:root {
+  --codex-code-font-family: "CodexLocalCodeLatin", "CodexLocalMathSymbols", "CodexLocalMathGreek", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --codex-ui-symbol-font-family: "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --codex-code-font-weight: 400;
+}
+
 :root.dark {
   color-scheme: dark;
 }
@@ -824,6 +938,11 @@
 
 .message-inline-code {
   @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
+  font-family: var(--codex-code-font-family);
+  font-weight: var(--codex-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .message-inline-code-link {
@@ -842,18 +961,46 @@
 
 .message-code-block {
   @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  font-family: var(--codex-code-font-family);
+  font-weight: var(--codex-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .message-code-language {
   @apply border-b border-slate-800 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em] text-slate-400;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .message-code-pre {
   @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed font-mono whitespace-pre;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .message-code-pre .hljs {
   @apply block bg-transparent p-0 text-inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+.message-code-pre .hljs * {
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .message-code-pre .hljs,
+  .message-code-pre .hljs * {
+    font-weight: var(--codex-code-font-weight) !important;
+    font-synthesis: none;
+  }
 }
 
 .message-file-link {
@@ -2120,6 +2267,7 @@
   .sidebar-search-input,
   .project-menu-input,
   .rename-thread-input,
+  .request-select,
   .request-input {
     font-size: 16px !important;
   }

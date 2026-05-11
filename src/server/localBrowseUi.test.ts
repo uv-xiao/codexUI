@@ -91,6 +91,10 @@ describe('local browse markdown preview', () => {
       '',
       '[Docs](./docs/readme.md)',
       '',
+      '$$',
+      'L_0',
+      '$$',
+      '',
       '![Diagram](./assets/diagram.png)',
       '',
       '```ts',
@@ -105,6 +109,9 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('src="/codex-local-image?path=%2Ftmp%2Fpreview%20space%2Fassets%2Fdiagram.png"')
     expect(html).toContain('message-code-block')
     expect(html).toContain('language-ts')
+    expect(html).toContain('message-math-source-display')
+    expect(html).toContain('data-source-line="5"')
+    expect(html).toContain('target.nodeType === Node.TEXT_NODE')
     expect(html).toContain('data-source-line=')
     expect(html).toContain('data-source-end-line=')
     expect(html).toContain('codex-local-markdown-preview-jump')

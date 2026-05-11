@@ -4879,11 +4879,13 @@ Markdown files opened through the local editor expose a preview button that rend
 1. Open a markdown file through `/codex-local-edit/...`.
 2. Click `Preview` to show the rendered pane.
 3. Double-click a rendered heading, paragraph, list item, or code block in the preview.
-4. Confirm the editor caret jumps to the matching source line.
-5. Repeat the check after editing the file so the preview rerenders.
+4. Double-click rendered inline math and display math in the preview.
+5. Confirm the editor caret jumps to the matching source line.
+6. Repeat the check after editing the file so the preview rerenders.
 
 #### Expected Results
 - Double-clicking rendered markdown in the preview moves the editor to the corresponding source line.
+- Double-clicking formula text also moves the editor to the corresponding source line.
 - The preview keeps working after rerendering.
 - Link clicks still behave like normal links when they are not double-clicked.
 

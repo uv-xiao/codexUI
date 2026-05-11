@@ -81,6 +81,22 @@ const answer = 42
     expect(html).toContain('data-source-end-line="9"')
   })
 
+  it('wraps math nodes with source metadata for preview jumps', () => {
+    const html = render([
+      'Inline $L_0$ text',
+      '',
+      '$$',
+      'L_1',
+      '$$',
+    ].join('\n'))
+
+    expect(html).toContain('message-math-source-inline')
+    expect(html).toContain('message-math-source-display')
+    expect(html).toContain('data-source-line="1"')
+    expect(html).toContain('data-source-line="3"')
+    expect(html).toContain('katex-display')
+  })
+
   it('wraps tight list item inline content in a single text block', () => {
     const html = render('- `repos/codexUI`：`origin/crz/dev` → `18dd52c`')
 

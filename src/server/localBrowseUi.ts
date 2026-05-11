@@ -992,6 +992,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let previewController = null;
     let previewStatusTimer = 0;
     let previewDragCleanup = null;
+    let previewLoadToken = 0;
     const previewSplitStorageKeyHorizontal = 'codex.localBrowse.previewEditorRatio.horizontal.v1';
     const previewSplitStorageKeyVertical = 'codex.localBrowse.previewEditorRatio.vertical.v1';
     const defaultPreviewEditorRatio = 0.48;
@@ -1259,6 +1260,51 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:22px;font:14px system-ui;color:#b91c1c;background:#fff1f2}@media(prefers-color-scheme:dark){body{color:#fecdd3;background:#2a0f18}}</style></head><body>' + escaped + '</body></html>';
     };
 
+    const getPreviewScrollRoot = () => {
+      if (!previewFrame) return null;
+      const frameWindow = previewFrame.contentWindow;
+      const frameDocument = previewFrame.contentDocument;
+      if (!frameWindow || !frameDocument) return null;
+      const scrollingElement = frameDocument.scrollingElement || frameDocument.documentElement || frameDocument.body;
+      if (!scrollingElement) return null;
+      return { frameWindow, scrollingElement };
+    };
+
+    const capturePreviewScrollState = () => {
+      const root = getPreviewScrollRoot();
+      if (!root) return null;
+      return {
+        left: root.frameWindow.scrollX || root.scrollingElement.scrollLeft || 0,
+        top: root.frameWindow.scrollY || root.scrollingElement.scrollTop || 0,
+      };
+    };
+
+    const restorePreviewScrollState = (state) => {
+      if (!state || !previewVisible) return;
+      const root = getPreviewScrollRoot();
+      if (!root) return;
+      const maxLeft = Math.max(0, root.scrollingElement.scrollWidth - root.scrollingElement.clientWidth);
+      const maxTop = Math.max(0, root.scrollingElement.scrollHeight - root.scrollingElement.clientHeight);
+      const nextLeft = Math.min(maxLeft, Math.max(0, Number(state.left) || 0));
+      const nextTop = Math.min(maxTop, Math.max(0, Number(state.top) || 0));
+      root.frameWindow.scrollTo(nextLeft, nextTop);
+    };
+
+    const setPreviewFrameHtml = (html, preserveScroll) => {
+      const scrollState = preserveScroll ? capturePreviewScrollState() : null;
+      const loadToken = ++previewLoadToken;
+      if (scrollState) {
+        previewFrame.addEventListener('load', () => {
+          if (loadToken !== previewLoadToken) return;
+          window.requestAnimationFrame(() => {
+            if (loadToken !== previewLoadToken) return;
+            restorePreviewScrollState(scrollState);
+          });
+        }, { once: true });
+      }
+      previewFrame.srcdoc = html;
+    };
+
     const renderPreview = async () => {
       if (!supportsMarkdownPreview || !previewVisible || !previewFrame) return;
       const endpoint = previewEndpoint();
@@ -1279,12 +1325,12 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         if (!response.ok) throw new Error('Preview failed');
         const html = await response.text();
         if (revision !== previewRevision) return;
-        previewFrame.srcdoc = html;
+        setPreviewFrameHtml(html, true);
         setPreviewStatus('Preview updated');
       } catch (error) {
         if (error && error.name === 'AbortError') return;
         if (revision !== previewRevision) return;
-        previewFrame.srcdoc = previewErrorHtml('Preview failed');
+        setPreviewFrameHtml(previewErrorHtml('Preview failed'), false);
         setPreviewStatus('Preview failed');
       }
     };
@@ -1311,6 +1357,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (visible) {
         syncPreviewEditorRatio(false);
       } else {
+        previewLoadToken += 1;
         stopPreviewDrag();
       }
       window.requestAnimationFrame(() => editor.resize());

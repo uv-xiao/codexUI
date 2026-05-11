@@ -69,6 +69,22 @@ describe('local browse markdown preview', () => {
     expect(editorHtml).toContain('· rust')
   })
 
+  it('binds Ctrl+S to saving in the local editor page', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-save-shortcut-'))
+    const textPath = join(tempDir, 'note.txt')
+    await writeFile(textPath, 'hello\n', 'utf8')
+
+    const editorHtml = await createTextEditorHtml(textPath)
+
+    expect(editorHtml).toContain('const saveEditorContent = async () =>')
+    expect(editorHtml).toContain('const isEditorSaveShortcut = (event) =>')
+    expect(editorHtml).toContain("window.addEventListener('keydown'")
+    expect(editorHtml).toContain('event.preventDefault()')
+    expect(editorHtml).toContain('event.stopPropagation()')
+    expect(editorHtml).toContain('capture: true')
+    expect(editorHtml).toContain('saveEditorContent();')
+  })
+
   it('renders markdown preview HTML with local links, images, and code blocks', () => {
     const html = createMarkdownPreviewHtml('/tmp/preview space/note.md', [
       '# Preview Title',

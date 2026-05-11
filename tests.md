@@ -4862,6 +4862,27 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Revert any disposable file edits made during validation.
 
+### Feature: Local markdown preview synchronizes editor and preview scroll
+
+#### Prerequisites
+- App server is running from this repository.
+- A `.md` or `.markdown` file with enough content to scroll is available.
+
+#### Steps
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Click `Preview` to show the rendered pane.
+3. Scroll the editor and confirm the preview follows the matching section.
+4. Scroll the preview and confirm the editor follows the corresponding source lines.
+5. Edit the file while the preview is open and confirm the preview stays on the same approximate section instead of jumping back to the top.
+
+#### Expected Results
+- Scrolling the editor keeps the preview aligned to the same content region.
+- Scrolling the preview keeps the editor aligned to the corresponding source lines.
+- Preview updates after edits keep the current position stable.
+
+#### Rollback/Cleanup
+- Revert any disposable file edits made during validation.
+
 ### Feature: Resizable markdown preview split
 
 #### Prerequisites

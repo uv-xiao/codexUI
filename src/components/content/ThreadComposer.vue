@@ -124,7 +124,7 @@
               v-for="(item, index) in fileMentionSuggestions"
               :key="item.path"
               class="thread-composer-file-mention-row"
-              :class="{ 'is-active': index === fileMentionHighlightedIndex }"
+              :class="{ 'is-active': index === mentionHighlightedIndex }"
               type="button"
               @mousedown.prevent="applyFileMention(item)"
             >
@@ -153,6 +153,32 @@
             </button>
           </template>
           <div v-else class="thread-composer-file-mention-empty">{{ t('No matching paths') }}</div>
+        </div>
+        <div v-if="isSkillMentionOpen" class="thread-composer-file-mentions thread-composer-skill-mentions">
+          <template v-if="skillMentionSuggestions.length > 0">
+            <button
+              v-for="(item, index) in skillMentionSuggestions"
+              :key="item.path"
+              class="thread-composer-file-mention-row thread-composer-skill-mention-row"
+              :class="{ 'is-active': index === mentionHighlightedIndex }"
+              type="button"
+              @mousedown.prevent="applySkillMention(item)"
+            >
+              <span
+                class="thread-composer-skill-mention-badge"
+                :class="`is-${skillSourceBadge(item).badgeTone}`"
+                :title="skillSourceBadge(item).badgeLabel"
+                aria-hidden="true"
+              >
+                {{ skillSourceBadge(item).badge }}
+              </span>
+              <span class="thread-composer-skill-mention-copy">
+                <span class="thread-composer-skill-mention-name">{{ item.displayName || item.name }}</span>
+                <span v-if="item.description" class="thread-composer-skill-mention-desc">{{ item.description }}</span>
+              </span>
+            </button>
+          </template>
+          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching skills') }}</div>
         </div>
         <textarea
           ref="inputRef"
@@ -458,6 +484,11 @@ import {
   insertComposerFileMentionText,
   toComposerFileMentionSearchQuery,
 } from './composerFileMentions'
+import {
+  extractComposerSkillMentionSelections,
+  filterComposerSkillMentionSuggestions,
+  insertComposerSkillMentionText,
+} from './composerSkillMentions'
 import { renderMarkdownContent } from './markdownRenderer'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
@@ -614,11 +645,12 @@ const folderPickerInputRef = ref<HTMLInputElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const { isMobile } = useMobile()
 const isAttachMenuOpen = ref(false)
+const activeMentionKind = ref<'file' | 'skill' | null>(null)
 const mentionStartIndex = ref<number | null>(null)
 const mentionQuery = ref('')
 const fileMentionSuggestions = ref<ComposerFileSuggestion[]>([])
-const isFileMentionOpen = ref(false)
-const fileMentionHighlightedIndex = ref(0)
+const skillMentionSuggestions = ref<SkillItem[]>([])
+const mentionHighlightedIndex = ref(0)
 const draftGeneration = ref(0)
 let fileMentionSearchToken = 0
 let fileMentionDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -651,6 +683,8 @@ const isPlanModeWaitingForModel = computed(() =>
 )
 
 const selectedSkillPaths = computed(() => selectedSkills.value.map((s) => s.path))
+const isFileMentionOpen = computed(() => activeMentionKind.value === 'file')
+const isSkillMentionOpen = computed(() => activeMentionKind.value === 'skill')
 const skillDropdownOptions = computed(() =>
   [
     ...(props.skills ?? []).map((s) => {
@@ -763,7 +797,7 @@ const placeholderText = computed(() =>
     ? t('Select a thread to send a message')
     : isPlanModeWaitingForModel.value
       ? t('Loading models for plan mode...')
-      : t('Type a message... (@ for paths)'),
+      : t('Type a message... (@ for paths, $ for skills)'),
 )
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
@@ -1012,11 +1046,15 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   const text = draft.value.trim()
   if (!canSubmit.value) return
   const inlineFileAttachments = extractComposerFileMentionAttachments(text, props.cwd ?? '')
+  const inlineSkillSelections = extractComposerSkillMentionSelections(text, props.skills ?? [])
   emit('submit', {
     text,
     imageUrls: selectedImages.value.map((image) => image.url),
     fileAttachments: dedupeFileAttachments([...fileAttachments.value, ...inlineFileAttachments]),
-    skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
+    skills: dedupeSkillSelections([...selectedSkills.value, ...inlineSkillSelections]).map((skill) => ({
+      name: skill.name,
+      path: skill.path,
+    })),
     mode,
   })
   clearPersistedDraftForThread(props.activeThreadId)
@@ -1286,6 +1324,18 @@ function dedupeFileAttachments(attachments: FileAttachment[]): FileAttachment[] 
     if (!key || seen.has(key)) continue
     seen.add(key)
     next.push(attachment)
+  }
+  return next
+}
+
+function dedupeSkillSelections(skills: SkillItem[]): SkillItem[] {
+  const seen = new Set<string>()
+  const next: SkillItem[] = []
+  for (const skill of skills) {
+    const key = skill.path.trim()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    next.push(skill)
   }
   return next
 }
@@ -1595,39 +1645,43 @@ function onInputChange(): void {
   if (dictationFeedback.value) {
     dictationFeedback.value = ''
   }
-  updateFileMentionState()
+  updateInlineMentionState()
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
-  if (isFileMentionOpen.value) {
+  if (isFileMentionOpen.value || isSkillMentionOpen.value) {
+    const suggestions = isFileMentionOpen.value ? fileMentionSuggestions.value : skillMentionSuggestions.value
     if (event.key === 'Escape') {
       event.preventDefault()
-      closeFileMention()
+      closeInlineMention()
       return
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      if (fileMentionSuggestions.value.length > 0) {
-        fileMentionHighlightedIndex.value =
-          (fileMentionHighlightedIndex.value + 1) % fileMentionSuggestions.value.length
+      if (suggestions.length > 0) {
+        mentionHighlightedIndex.value = (mentionHighlightedIndex.value + 1) % suggestions.length
       }
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      if (fileMentionSuggestions.value.length > 0) {
-        const size = fileMentionSuggestions.value.length
-        fileMentionHighlightedIndex.value = (fileMentionHighlightedIndex.value + size - 1) % size
+      if (suggestions.length > 0) {
+        const size = suggestions.length
+        mentionHighlightedIndex.value = (mentionHighlightedIndex.value + size - 1) % size
       }
       return
     }
     if (event.key === 'Enter' || event.key === 'Tab') {
       event.preventDefault()
-      const selected = fileMentionSuggestions.value[fileMentionHighlightedIndex.value]
+      const selected = suggestions[mentionHighlightedIndex.value]
       if (selected) {
-        applyFileMention(selected)
+        if (isFileMentionOpen.value) {
+          applyFileMention(selected as ComposerFileSuggestion)
+        } else {
+          applySkillMention(selected as SkillItem)
+        }
       } else {
-        closeFileMention()
+        closeInlineMention()
       }
       return
     }
@@ -1643,35 +1697,50 @@ function onInputKeydown(event: KeyboardEvent): void {
   }
 }
 
-function closeFileMention(): void {
-  isFileMentionOpen.value = false
+function closeInlineMention(): void {
+  activeMentionKind.value = null
   mentionStartIndex.value = null
   mentionQuery.value = ''
   fileMentionSuggestions.value = []
-  fileMentionHighlightedIndex.value = 0
+  skillMentionSuggestions.value = []
+  mentionHighlightedIndex.value = 0
 }
 
-function updateFileMentionState(): void {
+function closeFileMention(): void {
+  closeInlineMention()
+}
+
+function updateInlineMentionState(): void {
   const input = inputRef.value
   if (!input) {
-    closeFileMention()
+    closeInlineMention()
     return
   }
   const cursor = input.selectionStart ?? draft.value.length
   const beforeCursor = draft.value.slice(0, cursor)
-  const match = beforeCursor.match(/(^|\s)(@[^\s@]*)$/)
+  const match = beforeCursor.match(/(^|\s)([@$][^\s@$]*)$/u)
   if (!match) {
-    closeFileMention()
+    closeInlineMention()
     return
   }
 
   const mentionToken = match[2] ?? ''
   const mentionOffset = mentionToken.length
   const startIndex = cursor - mentionOffset
+  const mentionKind = mentionToken.startsWith('$') ? 'skill' : 'file'
   mentionStartIndex.value = startIndex
   mentionQuery.value = mentionToken.slice(1)
-  isFileMentionOpen.value = true
-  void queueFileMentionSearch()
+  activeMentionKind.value = mentionKind
+  mentionHighlightedIndex.value = 0
+
+  if (mentionKind === 'file') {
+    skillMentionSuggestions.value = []
+    void queueFileMentionSearch()
+    return
+  }
+
+  fileMentionSuggestions.value = []
+  skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
 }
 
 async function queueFileMentionSearch(): Promise<void> {
@@ -1690,7 +1759,7 @@ async function queueFileMentionSearch(): Promise<void> {
       const rows = await searchComposerFiles(cwd, toComposerFileMentionSearchQuery(mentionQuery.value), 20)
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = rows
-      fileMentionHighlightedIndex.value = 0
+      mentionHighlightedIndex.value = 0
     } catch {
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = []
@@ -1710,7 +1779,26 @@ function applyFileMention(suggestion: ComposerFileSuggestion): void {
   }
 
   draft.value = insertion.text
-  closeFileMention()
+  closeInlineMention()
+  nextTick(() => {
+    input?.focus()
+    input?.setSelectionRange(insertion.selectionIndex, insertion.selectionIndex)
+  })
+}
+
+function applySkillMention(suggestion: SkillItem): void {
+  const input = inputRef.value
+  const start = mentionStartIndex.value
+  const cursor = input?.selectionStart ?? draft.value.length
+  const insertion = insertComposerSkillMentionText(draft.value, suggestion.name, start, cursor)
+  if (!insertion) {
+    closeInlineMention()
+    nextTick(() => input?.focus())
+    return
+  }
+
+  draft.value = insertion.text
+  closeInlineMention()
   nextTick(() => {
     input?.focus()
     input?.setSelectionRange(insertion.selectionIndex, insertion.selectionIndex)
@@ -1914,6 +2002,16 @@ watch(
       void queueFileMentionSearch()
     }
   },
+)
+
+watch(
+  () => props.skills,
+  () => {
+    if (!isSkillMentionOpen.value) return
+    skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
+    mentionHighlightedIndex.value = 0
+  },
+  { deep: true },
 )
 
 watch(isInteractionDisabled, (disabled) => {
@@ -2144,6 +2242,50 @@ watch(
 
 .thread-composer-file-mention-empty {
   @apply px-2 py-1.5 text-xs text-zinc-500;
+}
+
+.thread-composer-skill-mentions {
+  @apply pb-1;
+}
+
+.thread-composer-skill-mention-row {
+  @apply items-start;
+}
+
+.thread-composer-skill-mention-badge {
+  @apply inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[9px] font-semibold leading-none;
+}
+
+.thread-composer-skill-mention-badge.is-repo {
+  @apply bg-sky-50 text-sky-700;
+}
+
+.thread-composer-skill-mention-badge.is-system {
+  @apply bg-zinc-100 text-zinc-700;
+}
+
+.thread-composer-skill-mention-badge.is-plugin {
+  @apply bg-amber-50 text-amber-700;
+}
+
+.thread-composer-skill-mention-badge.is-user {
+  @apply bg-emerald-50 text-emerald-700;
+}
+
+.thread-composer-skill-mention-badge.is-prompt {
+  @apply bg-violet-50 text-violet-700;
+}
+
+.thread-composer-skill-mention-copy {
+  @apply min-w-0 flex flex-col overflow-hidden;
+}
+
+.thread-composer-skill-mention-name {
+  @apply truncate text-zinc-900;
+}
+
+.thread-composer-skill-mention-desc {
+  @apply mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-zinc-500;
 }
 
 .thread-composer-input {

@@ -634,6 +634,11 @@
   @apply text-zinc-300 hover:bg-zinc-700;
 }
 
+:root.dark .thread-composer-file-mention-row.is-active,
+:root.dark .thread-composer-skill-mention-row.is-active {
+  @apply bg-zinc-700;
+}
+
 :root.dark .thread-composer-file-mention-icon-badge {
   @apply bg-zinc-600 text-zinc-100;
 }
@@ -658,6 +663,38 @@
 
 :root.dark .thread-composer-file-mention-empty {
   @apply text-zinc-500;
+}
+
+:root.dark .thread-composer-skill-mention-badge {
+  @apply bg-zinc-600 text-zinc-100;
+}
+
+:root.dark .thread-composer-skill-mention-badge.is-repo {
+  @apply bg-sky-950 text-sky-300;
+}
+
+:root.dark .thread-composer-skill-mention-badge.is-system {
+  @apply bg-zinc-800 text-zinc-300;
+}
+
+:root.dark .thread-composer-skill-mention-badge.is-plugin {
+  @apply bg-amber-950 text-amber-300;
+}
+
+:root.dark .thread-composer-skill-mention-badge.is-user {
+  @apply bg-emerald-950 text-emerald-300;
+}
+
+:root.dark .thread-composer-skill-mention-badge.is-prompt {
+  @apply bg-violet-950 text-violet-300;
+}
+
+:root.dark .thread-composer-skill-mention-name {
+  @apply text-zinc-100;
+}
+
+:root.dark .thread-composer-skill-mention-desc {
+  @apply text-zinc-400;
 }
 
 :root.dark .thread-composer-file-chip {

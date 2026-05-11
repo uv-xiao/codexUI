@@ -4889,3 +4889,28 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Close the editor or refresh the page to clear any temporary state.
+
+### Feature: Assistant response original text toggle
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread contains an assistant response with markdown formatting such as headings, bold text, links, or fenced code.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Hover the assistant response toolbar and click `Show original`.
+3. Select a partial range inside the displayed raw markdown text.
+4. Click `Hide original` and confirm the raw text panel closes.
+5. Confirm the existing `Copy` button still copies the full response.
+6. Switch to dark theme and repeat steps 2-4.
+
+#### Expected Results
+- The raw markdown source appears below the rendered response without replacing the rendered view.
+- The raw source preserves markdown markers and line breaks and can be partially selected for manual copy.
+- The toggle label changes between `Show original` and `Hide original`.
+- The existing full-response copy behavior is unchanged.
+- Light and dark theme raw source panels and toolbar buttons remain readable.
+
+#### Rollback/Cleanup
+- No cleanup is required.

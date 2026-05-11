@@ -341,6 +341,13 @@
                 ></div>
               </article>
 
+              <pre
+                v-if="showResponseSourceButton(message) && isResponseSourceVisible(message)"
+                :id="`message-source-${message.id}`"
+                class="message-source-text"
+                v-text="getResponseSourceText(message)"
+              ></pre>
+
               <section v-if="readAnchoredFileChangeSummary(message)" class="file-change-summary-block file-change-summary-block-inline">
                 <button
                   type="button"
@@ -409,7 +416,7 @@
               </section>
 
               <div
-                v-if="showCopyResponseButton(message) || showEditMessageButton(message)"
+                v-if="showCopyResponseButton(message) || showResponseSourceButton(message) || showEditMessageButton(message)"
                 class="message-toolbar"
                 :data-role="message.role"
               >
@@ -434,6 +441,19 @@
                 >
                   <IconTablerGitFork class="icon-svg message-fork-icon" />
                   <span class="message-fork-label">Fork</span>
+                </button>
+                <button
+                  v-if="showResponseSourceButton(message)"
+                  type="button"
+                  class="message-source-button"
+                  :data-open="isResponseSourceVisible(message) ? 'true' : 'false'"
+                  :aria-expanded="isResponseSourceVisible(message)"
+                  :aria-controls="`message-source-${message.id}`"
+                  :aria-label="isResponseSourceVisible(message) ? t('Hide original') : t('Show original')"
+                  :title="isResponseSourceVisible(message) ? t('Hide original') : t('Show original')"
+                  @click="toggleResponseSource(message.id)"
+                >
+                  <span class="message-source-label">{{ isResponseSourceVisible(message) ? t('Hide original') : t('Show original') }}</span>
                 </button>
                 <button
                   v-if="showCopyResponseButton(message)"
@@ -638,6 +658,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
 import { useMobile } from '../../composables/useMobile'
+import { useUiLanguage } from '../../composables/useUiLanguage'
 import { clearMarkdownRendererCache, renderMarkdownContent } from './markdownRenderer'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 
@@ -654,6 +675,7 @@ const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
+const expandedResponseSourceIds = ref<Set<string>>(new Set())
 const activeDiffViewerSummary = ref<TurnFileChangeSummary | null>(null)
 const activeDiffViewerChangeKey = ref('')
 const isDiffViewerFileListOpen = ref(false)
@@ -664,6 +686,7 @@ const fileLinkContextMenuY = ref(0)
 const fileLinkContextBrowseUrl = ref('')
 const fileLinkContextEditUrl = ref('')
 const { isMobile } = useMobile()
+const { t } = useUiLanguage()
 
 function parsePlanFromMessageText(text: string): { explanation: string; steps: UiPlanStep[] } | null {
   const normalized = text.replace(/\r\n/g, '\n').trim()
@@ -1568,6 +1591,27 @@ const forkableTurnIndexByAnchorId = computed<Record<string, number>>(() => {
 
 function showCopyResponseButton(message: UiMessage): boolean {
   return typeof copyableResponseContentByAnchorId.value[message.id] === 'string'
+}
+
+function getResponseSourceText(message: UiMessage): string {
+  return message.text.length > 0
+    ? message.text
+    : copyableResponseContentByAnchorId.value[message.id] ?? ''
+}
+
+function showResponseSourceButton(message: UiMessage): boolean {
+  return showCopyResponseButton(message) && getResponseSourceText(message).length > 0
+}
+
+function isResponseSourceVisible(message: UiMessage): boolean {
+  return expandedResponseSourceIds.value.has(message.id)
+}
+
+function toggleResponseSource(messageId: string): void {
+  const next = new Set(expandedResponseSourceIds.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  expandedResponseSourceIds.value = next
 }
 
 function showForkResponseButton(message: UiMessage): boolean {
@@ -3994,6 +4038,10 @@ watch(
         ...Object.keys(standaloneFileChangeSummaryByMessageId.value),
       ]),
     )
+    expandedResponseSourceIds.value = pruneCommandIdSet(
+      expandedResponseSourceIds.value,
+      new Set(Object.keys(copyableResponseContentByAnchorId.value)),
+    )
 
     // Keep renderWindowStart in bounds whenever the message list changes length.
     // Following output: always pin the window to the last RENDER_WINDOW_SIZE messages so
@@ -4066,6 +4114,7 @@ watch(
     autoFollowOutput.value = true
     modalImageUrl.value = ''
     isLoadingMore.value = false
+    expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
     renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
     await scheduleConversationScroll()
@@ -4338,7 +4387,7 @@ onBeforeUnmount(() => {
 }
 
 .message-toolbar {
-  @apply mt-1 self-start flex items-center gap-1 opacity-[0.01] transition-opacity duration-200;
+  @apply mt-1 self-start flex max-w-full flex-wrap items-center gap-1 opacity-[0.01] transition-opacity duration-200;
 }
 
 .message-row:hover .message-toolbar {
@@ -4347,6 +4396,14 @@ onBeforeUnmount(() => {
 
 .message-copy-button {
   @apply inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/90 px-1.25 py-0.5 text-[9px] font-medium leading-none text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900;
+}
+
+.message-source-button {
+  @apply inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/90 px-1.25 py-0.5 text-[9px] font-medium leading-none text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900;
+}
+
+.message-source-button[data-open='true'] {
+  @apply border-sky-200 bg-sky-50 text-sky-700;
 }
 
 .message-fork-button {
@@ -4370,6 +4427,7 @@ onBeforeUnmount(() => {
 
 .message-fork-label,
 .message-copy-label,
+.message-source-label,
 .message-edit-label {
   @apply leading-none;
 }
@@ -4424,6 +4482,29 @@ onBeforeUnmount(() => {
 
 .message-text-flow {
   @apply flex flex-col gap-2;
+}
+
+.message-source-text {
+  @apply mt-2 max-h-80 w-full max-w-[min(var(--chat-card-max,76ch),100%)] select-text overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[12px] leading-5 text-slate-700 whitespace-pre-wrap;
+  font-family: var(--conversation-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--conversation-code-font-weight);
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+:global(:root.dark) .message-source-button,
+:global(.dark) .message-source-button {
+  @apply border-zinc-700 bg-zinc-800/90 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100;
+}
+
+:global(:root.dark) .message-source-button[data-open='true'],
+:global(.dark) .message-source-button[data-open='true'] {
+  @apply border-sky-500/40 bg-sky-500/10 text-sky-200;
+}
+
+:global(:root.dark) .message-source-text,
+:global(.dark) .message-source-text {
+  @apply border-zinc-700 bg-zinc-950 text-zinc-200;
 }
 
 .plan-card {

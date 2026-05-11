@@ -131,6 +131,8 @@ const zhCN: Record<string, string> = {
   'Fork': '分叉',
   'Response copied': '回复已复制',
   'Copy response': '复制回复',
+  'Show original': '显示原文',
+  'Hide original': '隐藏原文',
   'Jump to latest': '跳转到最新',
   'Jump to latest output': '跳转到最新输出',
   'Close image preview': '关闭图片预览',

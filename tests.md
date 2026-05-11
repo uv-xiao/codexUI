@@ -5006,3 +5006,30 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No cleanup is required.
+
+### Feature: Local markdown editor LaTeX suite shortcuts
+
+#### Prerequisites
+- App server is running from this repository.
+- A writable `.md` or `.markdown` file is available.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the markdown file through `/codex-local-edit/...` in light theme.
+2. Type `mk` in normal markdown text and confirm it expands to inline math with the caret between the dollar signs.
+3. Inside math, type `@t`, `sr`, `rd`, `_`, `sq`, and `//` to confirm the core snippets expand.
+4. Inside math, type `x/`, enter a denominator, then press `Tab` to leave the fraction.
+5. Type `x/y` inside math and press `Tab` to confirm slash-form fractions are converted when auto-fraction was not already triggered.
+6. Type `dm` in normal markdown text and confirm it expands to a display math block.
+7. Open a non-markdown local text file through `/codex-local-edit/...` and confirm ordinary typing and Tab indentation are unchanged.
+8. Switch to dark theme and repeat steps 2-6.
+
+#### Expected Results
+- LaTeX suite shortcuts are active only for markdown editor pages.
+- Text-mode triggers create inline or display math blocks outside existing math.
+- Math-mode triggers expand only inside `$...$` or `$$...$$`.
+- `Tab` advances through snippet insertion points or exits nearby LaTeX brackets/fractions without breaking normal non-markdown editing.
+- Light and dark theme editor surfaces remain readable; the shortcut behavior is theme-independent.
+
+#### Rollback/Cleanup
+- Revert any disposable edits made to the test markdown file.

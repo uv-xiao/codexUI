@@ -4890,6 +4890,28 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Close the editor or refresh the page to clear any temporary state.
 
+### Feature: Composer markdown preview
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread composer is visible and editable.
+
+#### Steps
+1. Type a markdown-rich draft into the message input.
+2. Click the preview toggle button in the composer controls.
+3. Confirm headings, lists, links, code blocks, and math render in place.
+4. Toggle the preview off and on again after editing the draft.
+5. Repeat at a narrow mobile viewport and in dark theme.
+
+#### Expected Results
+- The composer shows a rendered markdown preview for the current draft.
+- The preview updates as the draft changes.
+- The toggle does not affect the draft content or attachments.
+- The preview and toggle remain readable in light and dark themes.
+
+#### Rollback/Cleanup
+- Close the thread or refresh the page to clear temporary state.
+
 ### Feature: Assistant response original text toggle
 
 #### Prerequisites

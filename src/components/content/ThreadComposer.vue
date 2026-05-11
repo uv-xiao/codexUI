@@ -167,6 +167,15 @@
       </div>
 
       <div
+        v-if="isMarkdownPreviewVisible"
+        class="thread-composer-preview"
+        role="region"
+        :aria-label="t('Markdown preview')"
+      >
+        <article class="thread-composer-preview-content message-text-flow" v-html="draftPreviewHtml"></article>
+      </div>
+
+      <div
         class="thread-composer-controls"
         :class="{ 'thread-composer-controls--recording': isDictationRecording }"
       >
@@ -274,6 +283,18 @@
             </button>
           </div>
         </div>
+
+        <button
+          class="thread-composer-preview-toggle"
+          type="button"
+          :aria-pressed="isMarkdownPreviewVisible"
+          :aria-label="isMarkdownPreviewVisible ? t('Hide preview') : t('Preview markdown')"
+          :title="isMarkdownPreviewVisible ? t('Hide preview') : t('Preview markdown')"
+          :disabled="isInteractionDisabled"
+          @click="toggleMarkdownPreview"
+        >
+          <IconTablerEye class="thread-composer-preview-toggle-icon" />
+        </button>
 
         <template v-if="!isDictationRecording">
           <ComposerDropdown
@@ -437,8 +458,10 @@ import {
   insertComposerFileMentionText,
   toComposerFileMentionSearchQuery,
 } from './composerFileMentions'
+import { renderMarkdownContent } from './markdownRenderer'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
+import IconTablerEye from '../icons/IconTablerEye.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
 import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
@@ -539,6 +562,7 @@ const PASTED_TEXT_FILE_THRESHOLD = 2000
 const PROMPT_OPTION_PREFIX = 'prompt:'
 
 const draft = ref('')
+const isMarkdownPreviewVisible = ref(false)
 const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
 const savedPrompts = ref<ComposerPromptInfo[]>([])
@@ -744,6 +768,16 @@ const placeholderText = computed(() =>
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
 )
+const draftPreviewHtml = computed(() => {
+  const rendered = renderMarkdownContent(draft.value, {
+    cwd: props.cwd ?? '',
+    kind: 'message',
+    highlightVersion: 0,
+  }).html
+  return rendered.trim()
+    ? rendered
+    : `<p class="thread-composer-preview-empty">${t('Nothing to preview.')}</p>`
+})
 const quotaSummaryText = computed(() => buildQuotaSummaryText(props.codexQuota ?? null))
 const quotaWeeklyRefreshText = computed(() => '')
 const quotaTooltipText = computed(() => buildQuotaTooltipText(props.codexQuota ?? null))
@@ -987,6 +1021,7 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   })
   clearPersistedDraftForThread(props.activeThreadId)
   clearDraftState()
+  isMarkdownPreviewVisible.value = false
   folderUploadGroups.value = []
   isAttachMenuOpen.value = false
   closeFileMention()
@@ -999,6 +1034,11 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
 
 function setActiveInProgressMode(mode: 'steer' | 'queue'): void {
   activeInProgressMode.value = mode
+}
+
+function toggleMarkdownPreview(): void {
+  if (isInteractionDisabled.value) return
+  isMarkdownPreviewVisible.value = !isMarkdownPreviewVisible.value
 }
 
 function replaceDraftState(payload: ComposerDraftPayload): void {
@@ -1851,6 +1891,7 @@ watch(
       persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
     }
     clearDraftState()
+    isMarkdownPreviewVisible.value = false
     const restored = loadPersistedDraftForThread(nextThreadId)
     if (restored) {
       replaceDraftState(restored)
@@ -1874,6 +1915,12 @@ watch(
     }
   },
 )
+
+watch(isInteractionDisabled, (disabled) => {
+  if (disabled) {
+    isMarkdownPreviewVisible.value = false
+  }
+})
 
 watch(
   inProgressMode,
@@ -2115,6 +2162,208 @@ watch(
   @apply bg-zinc-100 text-zinc-500 cursor-not-allowed;
 }
 
+.thread-composer-preview {
+  --thread-composer-code-font-family: var(--codex-code-font-family);
+  --thread-composer-code-font-weight: var(--codex-code-font-weight);
+  @apply mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white px-3 py-3;
+}
+
+.thread-composer-preview-content {
+  @apply flex max-h-64 min-w-0 flex-col gap-2 overflow-y-auto pr-1;
+}
+
+.thread-composer-preview-empty {
+  @apply m-0 text-sm leading-relaxed text-zinc-500;
+}
+
+.thread-composer-preview :deep(.message-text),
+.thread-composer-preview :deep(.message-heading),
+.thread-composer-preview :deep(.message-blockquote),
+.thread-composer-preview :deep(.message-list),
+.thread-composer-preview :deep(.message-table-wrap),
+.thread-composer-preview :deep(.message-code-block),
+.thread-composer-preview :deep(.message-divider) {
+  @apply m-0;
+}
+
+.thread-composer-preview :deep(.message-text) {
+  @apply text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-800;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-heading) {
+  @apply text-slate-900 tracking-tight;
+}
+
+.thread-composer-preview :deep(.message-heading-h1) {
+  @apply text-xl font-semibold leading-tight;
+}
+
+.thread-composer-preview :deep(.message-heading-h2) {
+  @apply text-lg font-semibold leading-tight;
+}
+
+.thread-composer-preview :deep(.message-heading-h3) {
+  @apply text-base font-semibold leading-snug;
+}
+
+.thread-composer-preview :deep(.message-heading-h4) {
+  @apply text-sm font-semibold leading-snug;
+}
+
+.thread-composer-preview :deep(.message-heading-h5) {
+  @apply text-xs font-semibold leading-snug uppercase tracking-[0.02em];
+}
+
+.thread-composer-preview :deep(.message-heading-h6) {
+  @apply text-xs font-semibold leading-snug uppercase tracking-[0.04em] text-slate-600;
+}
+
+.thread-composer-preview :deep(.message-blockquote) {
+  @apply border-l-4 border-slate-300 bg-slate-50/70 py-1 pl-4 text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-700 rounded-r-lg;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-list) {
+  @apply flex flex-col gap-1.5 pl-5 text-sm leading-relaxed text-slate-800;
+}
+
+.thread-composer-preview :deep(.message-list-unordered) {
+  @apply list-disc;
+}
+
+.thread-composer-preview :deep(.message-list-ordered) {
+  @apply list-decimal;
+}
+
+.thread-composer-preview :deep(.message-list-item) {
+  @apply pl-1;
+}
+
+.thread-composer-preview :deep(.message-list-item-content) {
+  @apply flex flex-col gap-1.5;
+}
+
+.thread-composer-preview :deep(.message-list-item-text) {
+  @apply whitespace-pre-wrap break-words;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-task-list) {
+  @apply list-none pl-0;
+}
+
+.thread-composer-preview :deep(.message-task-item) {
+  @apply flex items-start gap-2;
+}
+
+.thread-composer-preview :deep(.message-task-checkbox) {
+  @apply mt-0.5 text-sm leading-none text-slate-500 select-none;
+}
+
+.thread-composer-preview :deep(.message-table-wrap) {
+  @apply w-full overflow-x-auto;
+}
+
+.thread-composer-preview :deep(.message-table) {
+  @apply min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm text-slate-800;
+}
+
+.thread-composer-preview :deep(.message-table-head-cell),
+.thread-composer-preview :deep(.message-table-cell) {
+  @apply border-b border-l border-slate-200 px-3 py-2 align-top whitespace-pre-wrap break-words;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-table-head-cell:first-child),
+.thread-composer-preview :deep(.message-table-cell:first-child) {
+  @apply border-l-0;
+}
+
+.thread-composer-preview :deep(.message-table-head-cell) {
+  @apply bg-slate-100 font-semibold text-slate-900;
+}
+
+.thread-composer-preview :deep(.message-table-body-row:last-child .message-table-cell) {
+  @apply border-b-0;
+}
+
+.thread-composer-preview :deep(.message-bold-text) {
+  @apply font-semibold text-slate-900;
+}
+
+.thread-composer-preview :deep(.message-italic-text) {
+  @apply italic;
+}
+
+.thread-composer-preview :deep(.message-strikethrough-text) {
+  @apply line-through text-slate-500;
+}
+
+.thread-composer-preview :deep(.message-divider) {
+  @apply h-px border-0 bg-slate-200;
+}
+
+.thread-composer-preview :deep(.message-markdown-image) {
+  @apply h-auto max-h-72 w-auto max-w-full object-contain rounded-lg bg-white;
+}
+
+.thread-composer-preview :deep(.message-inline-code) {
+  @apply rounded-md border border-slate-200 bg-slate-100/70 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900;
+  font-family: var(--thread-composer-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--thread-composer-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.thread-composer-preview :deep(.message-code-block) {
+  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  font-family: var(--thread-composer-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--thread-composer-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.thread-composer-preview :deep(.message-code-language) {
+  @apply border-b border-slate-800 px-3 py-2 text-[11px] uppercase tracking-[0.08em] text-slate-400;
+  font-family: inherit;
+}
+
+.thread-composer-preview :deep(.message-code-pre) {
+  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed whitespace-pre;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+.thread-composer-preview :deep(.message-code-pre .hljs) {
+  @apply block bg-transparent p-0 text-inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+.thread-composer-preview :deep(.message-code-pre .hljs *) {
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+.thread-composer-preview :deep(.message-text-flow .katex-display),
+.thread-composer-preview :deep(.katex-display) {
+  @apply my-2 overflow-x-auto overflow-y-hidden;
+}
+
+.thread-composer-preview :deep(.katex) {
+  @apply max-w-full;
+}
+
+.thread-composer-preview :deep(.message-file-link) {
+  @apply text-sm leading-relaxed text-[#0969da] no-underline underline-offset-2 hover:text-[#1f6feb] hover:underline;
+}
+
 .thread-composer-controls {
   @apply relative mt-2 sm:mt-3 flex items-center gap-2 sm:gap-4 overflow-visible pb-px;
 }
@@ -2202,6 +2451,18 @@ watch(
 
 .thread-composer-attach-switch.is-disabled {
   @apply opacity-50;
+}
+
+.thread-composer-preview-toggle {
+  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-zinc-100 text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-400;
+}
+
+.thread-composer-preview-toggle[aria-pressed='true'] {
+  @apply bg-sky-100 text-sky-700 hover:bg-sky-200 hover:text-sky-800;
+}
+
+.thread-composer-preview-toggle-icon {
+  @apply h-5 w-5;
 }
 
 .thread-composer-control {

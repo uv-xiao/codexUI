@@ -79,8 +79,16 @@ function readUnquotedMentionPath(text: string, startIndex: number): { path: stri
 }
 
 function readMentionPathAt(text: string, atIndex: number): { path: string; endIndex: number } | null {
-  if (text[atIndex] !== '@' || !hasMentionBoundary(text, atIndex)) return null
-  const startIndex = atIndex + 1
+  if (!hasMentionBoundary(text, atIndex)) return null
+
+  let startIndex = -1
+  if (text[atIndex] === '@') {
+    startIndex = atIndex + 1
+  } else if (text[atIndex] === '.' && text[atIndex + 1] === '/') {
+    startIndex = atIndex + 2
+  }
+  if (startIndex < 0) return null
+
   const marker = text[startIndex]
   if (!marker || /\s/u.test(marker) || marker === '@') return null
   if (marker === '"' || marker === "'" || marker === '`') {
@@ -149,7 +157,7 @@ export function resolveComposerFileMentionFsPath(pathValue: string, cwd: string)
 
 export function formatComposerFileMention(pathValue: string): string {
   const normalizedPath = normalizeMentionPath(pathValue)
-  return normalizedPath ? `@${quoteMentionPathIfNeeded(normalizedPath)}` : ''
+  return normalizedPath ? `./${quoteMentionPathIfNeeded(normalizedPath)}` : ''
 }
 
 export function insertComposerFileMentionText(
@@ -198,11 +206,16 @@ export function extractComposerFileMentionAttachments(text: string, cwd = ''): C
 
   while (index < text.length) {
     const atIndex = text.indexOf('@', index)
-    if (atIndex < 0) break
+    const dotIndex = text.indexOf('./', index)
+    const nextIndex =
+      atIndex < 0 ? dotIndex
+        : dotIndex < 0 ? atIndex
+          : Math.min(atIndex, dotIndex)
+    if (nextIndex < 0) break
 
-    const mention = readMentionPathAt(text, atIndex)
+    const mention = readMentionPathAt(text, nextIndex)
     if (!mention) {
-      index = atIndex + 1
+      index = nextIndex + 1
       continue
     }
 
@@ -211,7 +224,7 @@ export function extractComposerFileMentionAttachments(text: string, cwd = ''): C
       seen.add(attachment.fsPath)
       attachments.push(attachment)
     }
-    index = Math.max(mention.endIndex, atIndex + 1)
+    index = Math.max(mention.endIndex, nextIndex + 1)
   }
 
   return attachments

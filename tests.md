@@ -251,6 +251,32 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Clear the draft or switch threads if you do not want to keep the test message.
 
+### Feature: Composer path autocomplete inserts ./
+
+#### Prerequisites
+- App is running from this repository.
+- At least one installed skill is available.
+- A thread composer is visible and editable.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open an existing thread in light theme.
+2. Click into the composer input and type `@` followed by part of an existing file path.
+3. Confirm the file suggestion popup appears under the input.
+4. Pick a suggestion with Enter, Tab, or mouse click.
+5. Confirm the chosen path is inserted as `./...` in the input, not `@...`.
+6. Submit the message and confirm the file attachment is still recognized.
+7. Switch to dark theme and repeat steps 2 through 6.
+
+#### Expected Results
+- Typing `@` still opens the file suggestion list.
+- Selecting a path replaces the trigger with `./` in the draft text.
+- The submitted turn still treats the inline path as a file attachment.
+- Light and dark autocomplete surfaces remain readable and the active row highlight is visible in both themes.
+
+#### Rollback/Cleanup
+- Clear the draft or switch threads if you do not want to keep the test message.
+
 ### Feature: Skills Hub local-only installed skills
 
 #### Prerequisites

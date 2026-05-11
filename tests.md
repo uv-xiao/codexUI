@@ -225,6 +225,32 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Remove the selected skill chip(s) before leaving the thread, if needed.
 
+### Feature: Composer $ skill autocomplete
+
+#### Prerequisites
+- App is running from this repository.
+- At least one installed skill is available.
+- A thread composer is visible and editable.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open an existing thread in light theme.
+2. Click into the composer input and type `$` followed by part of an installed skill name.
+3. Confirm the skill suggestion popup appears under the input.
+4. Use Arrow keys or click a suggestion.
+5. Confirm the chosen skill token is inserted directly into the input, with the cursor placed after it, like `@` path completion.
+6. Submit the message and confirm the turn starts normally.
+7. Switch to dark theme and repeat steps 2 through 6.
+
+#### Expected Results
+- Typing `$` opens a skill suggestion list filtered from the installed skills.
+- Selecting a skill writes the chosen `$skill` text back into the composer instead of only setting footer state.
+- The inserted skill token stays in the draft until the user edits it or sends the message.
+- Light and dark autocomplete surfaces remain readable and the active row highlight is visible in both themes.
+
+#### Rollback/Cleanup
+- Clear the draft or switch threads if you do not want to keep the test message.
+
 ### Feature: Skills Hub local-only installed skills
 
 #### Prerequisites

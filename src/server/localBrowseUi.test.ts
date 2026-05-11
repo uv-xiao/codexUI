@@ -45,6 +45,8 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain("const shrinkKey = stacked ? 'ArrowUp' : 'ArrowLeft'")
     expect(markdownEditorHtml).toContain('capturePreviewScrollState')
     expect(markdownEditorHtml).toContain('restorePreviewScrollState')
+    expect(markdownEditorHtml).toContain('suppressPreviewScrollSync')
+    expect(markdownEditorHtml).toContain('isPreviewScrollSyncSuppressed')
     expect(markdownEditorHtml).toContain('previewScrollAnchorSelector')
     expect(markdownEditorHtml).toContain('bindPreviewScrollSync')
     expect(markdownEditorHtml).toContain('schedulePreviewScrollSyncFromEditor')

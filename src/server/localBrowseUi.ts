@@ -1378,14 +1378,39 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       });
     }
 
-    saveBtn.addEventListener('click', async () => {
+    const saveEditorContent = async () => {
       setStatus('Saving...');
-      const response = await fetch(location.pathname, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-        body: editor.getValue(),
-      });
-      setStatus(response.ok ? 'Saved' : 'Save failed');
+      try {
+        const response = await fetch(location.pathname, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          body: editor.getValue(),
+        });
+        setStatus(response.ok ? 'Saved' : 'Save failed');
+      } catch {
+        setStatus('Save failed');
+      }
+    };
+
+    const isEditorSaveShortcut = (event) => {
+      if (event.defaultPrevented) return false;
+      if (!(event.ctrlKey || event.metaKey)) return false;
+      if (event.altKey || event.shiftKey) return false;
+      const key = String(event.key || '').toLowerCase();
+      return key === 's' || event.code === 'KeyS';
+    };
+
+    window.addEventListener('keydown', (event) => {
+      if (!isEditorSaveShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) {
+        saveEditorContent();
+      }
+    }, { capture: true });
+
+    saveBtn.addEventListener('click', () => {
+      saveEditorContent();
     });
   </script>
 </body>

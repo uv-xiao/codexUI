@@ -687,9 +687,14 @@ function markdownPreviewScript(localPath: string): string {
       const sourcePath = ${safePathLiteral};
       const interactiveSelector = 'a[href], button, input, textarea, select, label, summary';
       const sourceElementForTarget = (target) => {
-        if (!(target instanceof Element)) return null;
-        if (target.closest(interactiveSelector)) return null;
-        return target.closest('[data-source-line]');
+        const targetElement = target instanceof Element
+          ? target
+          : target && target.nodeType === Node.TEXT_NODE
+            ? target.parentElement
+            : null;
+        if (!targetElement) return null;
+        if (targetElement.closest(interactiveSelector)) return null;
+        return targetElement.closest('[data-source-line]');
       };
 
       document.addEventListener('dblclick', (event) => {

@@ -151,6 +151,9 @@ export function createMarkdownProcessor(context: MarkdownRenderContext) {
         ],
       },
     })
+    .use(() => (tree) => {
+      wrapMathSourceElements(tree as MarkdownNode)
+    })
     .use(rehypeKatex)
     .use(rehypeHighlight, {
       aliases: HIGHLIGHT_LANGUAGE_ALIASES,
@@ -245,6 +248,58 @@ function readSourceLocation(position: MarkdownSourcePosition | undefined): { sta
   return {
     startLine: Math.min(startLine, endLine),
     endLine: Math.max(startLine, endLine),
+  }
+}
+
+function isMathCodeElement(node: MarkdownElement): boolean {
+  if (node.tagName !== 'code') return false
+  const classNames = getClassList(node)
+  return classNames.includes('language-math') || classNames.includes('math-inline') || classNames.includes('math-display')
+}
+
+function isMathDisplayPre(node: MarkdownElement): boolean {
+  if (node.tagName !== 'pre') return false
+  return node.children.some((child) => isElement(child) && isMathCodeElement(child))
+}
+
+function createMathSourceWrapper(
+  child: MarkdownElement,
+  tagName: 'div' | 'span',
+  className: string,
+): MarkdownElement {
+  return {
+    type: 'element',
+    tagName,
+    position: child.position,
+    properties: {
+      className: ['message-math-source', className],
+    },
+    children: [child],
+  }
+}
+
+function wrapMathSourceElements(node: MarkdownNode): void {
+  if (!Array.isArray(node.children)) return
+
+  for (let index = 0; index < node.children.length; index += 1) {
+    const child = node.children[index]
+    if (!isElement(child)) {
+      continue
+    }
+
+    if (isMathDisplayPre(child) && readSourceLocation(child.position)) {
+      const wrapper = createMathSourceWrapper(child, 'div', 'message-math-source-display')
+      node.children.splice(index, 1, wrapper)
+      continue
+    }
+
+    if (isMathCodeElement(child) && readSourceLocation(child.position)) {
+      const wrapper = createMathSourceWrapper(child, 'span', 'message-math-source-inline')
+      node.children.splice(index, 1, wrapper)
+      continue
+    }
+
+    wrapMathSourceElements(child)
   }
 }
 

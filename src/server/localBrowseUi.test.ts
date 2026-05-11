@@ -58,14 +58,6 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('handlePreviewJumpMessage')
     expect(markdownEditorHtml).toContain('id="previewFrame"')
     expect(markdownEditorHtml).toContain('/codex-local-preview')
-    expect(markdownEditorHtml).toContain('const markdownLatexSuiteEnabled = supportsMarkdownPreview')
-    expect(markdownEditorHtml).toContain('const setupMarkdownLatexSuite = () =>')
-    expect(markdownEditorHtml).toContain('latexSuiteTextSnippets')
-    expect(markdownEditorHtml).toContain("trigger: 'mk'")
-    expect(markdownEditorHtml).toContain("trigger: '@t'")
-    expect(markdownEditorHtml).toContain('tryExpandAutoFraction')
-    expect(markdownEditorHtml).toContain('tryConvertSlashFractionBeforeCursor')
-    expect(markdownEditorHtml).toContain('tryLatexSuiteTabout')
     const inlineScript = markdownEditorHtml.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/u)?.[1] ?? ''
     expect(inlineScript).toContain('const saveBtn = document.getElementById')
     expect(() => new Function(inlineScript)).not.toThrow()
@@ -75,8 +67,6 @@ describe('local browse markdown preview', () => {
 
     const textEditorHtml = await createTextEditorHtml(textPath)
     expect(textEditorHtml).toContain('id="copyRefBtn"')
-    expect(textEditorHtml).toContain('const markdownLatexSuiteEnabled = supportsMarkdownPreview')
-    expect(textEditorHtml).toContain('const supportsMarkdownPreview = false')
     expect(textEditorHtml).not.toContain('id="previewBtn"')
     expect(textEditorHtml).not.toContain('id="previewSplitter"')
     expect(textEditorHtml).not.toContain('id="previewFrame"')

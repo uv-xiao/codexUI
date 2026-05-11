@@ -272,7 +272,7 @@ function createMathSourceWrapper(
     tagName,
     position: child.position,
     properties: {
-      className: ['message-math-source', className],
+      className: ['message-math-source', 'message-scroll-anchor', className],
     },
     children: [child],
   }
@@ -409,15 +409,18 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
 
   if (/^h[1-6]$/u.test(tagName)) {
     addClass(node, 'message-heading')
+    addClass(node, 'message-scroll-anchor')
     addClass(node, `message-heading-${tagName}`)
   } else if (tagName === 'p') {
     addClass(node, 'message-text')
+    addClass(node, 'message-scroll-anchor')
     if (parentTagName === 'li') {
       addClass(node, 'message-list-item-text')
       addClass(node, 'message-list-item-paragraph')
     }
   } else if (tagName === 'blockquote') {
     addClass(node, 'message-blockquote')
+    addClass(node, 'message-scroll-anchor')
   } else if (tagName === 'ul') {
     addClass(node, 'message-list')
     addClass(node, getClassList(node).includes('contains-task-list') ? 'message-task-list' : 'message-list-unordered')
@@ -426,6 +429,7 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
     addClass(node, 'message-list-ordered')
   } else if (tagName === 'li') {
     addClass(node, 'message-list-item')
+    addClass(node, 'message-scroll-anchor')
     if (isTaskListItem(node)) {
       addClass(node, 'message-task-item')
     }
@@ -441,8 +445,10 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
     enhanceImage(node, context.cwd)
   } else if (tagName === 'hr') {
     addClass(node, 'message-divider')
+    addClass(node, 'message-scroll-anchor')
   } else if (tagName === 'table') {
     addClass(node, 'message-table')
+    addClass(node, 'message-scroll-anchor')
     wrapTable(node, parent, index)
     return
   } else if (tagName === 'th' || tagName === 'td') {
@@ -605,7 +611,7 @@ function wrapTable(node: MarkdownElement, parent: MarkdownNode, index: number): 
     tagName: 'div',
     position: node.position,
     properties: {
-      className: ['message-table-wrap'],
+      className: ['message-table-wrap', 'message-scroll-anchor'],
     },
     children: [node],
   }
@@ -639,7 +645,7 @@ function wrapCodeBlock(node: MarkdownElement, parent: MarkdownNode, index: numbe
     tagName: 'div',
     position: node.position,
     properties: {
-      className: ['message-code-block'],
+      className: ['message-code-block', 'message-scroll-anchor'],
     },
     children: wrapperChildren,
   }

@@ -956,12 +956,14 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const jumpEditorToLineRange = (rawStartLine, rawEndLine = rawStartLine, preserveSelection = false) => {
+    const jumpEditorToLineRange = (rawStartLine, rawEndLine = rawStartLine, preserveSelection = false, onScrollComplete = () => {}) => {
       const lineCount = editor.session.getLength();
       const startLine = Math.min(Math.max(Number.parseInt(String(rawStartLine), 10) || 1, 1), lineCount);
       const endLine = Math.min(Math.max(Number.parseInt(String(rawEndLine), 10) || startLine, startLine), lineCount);
       editor.gotoLine(startLine, 0, true);
-      editor.scrollToLine(startLine, true, true, () => {});
+      editor.scrollToLine(startLine, true, true, () => {
+        onScrollComplete();
+      });
       if (preserveSelection && endLine > startLine) {
         try {
           const Range = ace.require('ace/range').Range;
@@ -993,6 +995,16 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let previewStatusTimer = 0;
     let previewDragCleanup = null;
     let previewLoadToken = 0;
+    let previewScrollSyncCleanup = null;
+    let editorScrollSyncFrame = 0;
+    let previewScrollSyncFrame = 0;
+    let isApplyingEditorScrollFromPreview = false;
+    let isApplyingPreviewScrollFromEditor = false;
+    let pendingPreviewEditorSync = false;
+    let lastPreviewScrollState = null;
+    let lastEditorSyncedLine = 0;
+    let lastPreviewSyncedLine = 0;
+    const previewScrollAnchorSelector = '.message-scroll-anchor[data-source-line]';
     const previewSplitStorageKeyHorizontal = 'codex.localBrowse.previewEditorRatio.horizontal.v1';
     const previewSplitStorageKeyVertical = 'codex.localBrowse.previewEditorRatio.vertical.v1';
     const defaultPreviewEditorRatio = 0.48;
@@ -1240,7 +1252,27 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       const sourceLine = Number.parseInt(String(data.line), 10);
       if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
       const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
-      jumpEditorToLineRange(sourceLine, Number.isFinite(sourceEndLine) ? sourceEndLine : sourceLine, false);
+      let releaseTimer = 0;
+      let released = false;
+      const releaseEditorScrollSync = () => {
+        if (released) return;
+        released = true;
+        isApplyingEditorScrollFromPreview = false;
+        if (releaseTimer) {
+          window.clearTimeout(releaseTimer);
+          releaseTimer = 0;
+        }
+      };
+      isApplyingEditorScrollFromPreview = true;
+      lastEditorSyncedLine = sourceLine;
+      lastPreviewSyncedLine = sourceLine;
+      releaseTimer = window.setTimeout(releaseEditorScrollSync, 800);
+      jumpEditorToLineRange(
+        sourceLine,
+        Number.isFinite(sourceEndLine) ? sourceEndLine : sourceLine,
+        false,
+        releaseEditorScrollSync,
+      );
     };
 
     window.addEventListener('message', handlePreviewJumpMessage);
@@ -1290,15 +1322,233 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       root.frameWindow.scrollTo(nextLeft, nextTop);
     };
 
+    const detachPreviewScrollSync = () => {
+      if (previewScrollSyncCleanup) {
+        previewScrollSyncCleanup();
+        previewScrollSyncCleanup = null;
+      }
+    };
+
+    const cancelPreviewScrollSyncFrames = () => {
+      if (editorScrollSyncFrame) {
+        window.cancelAnimationFrame(editorScrollSyncFrame);
+        editorScrollSyncFrame = 0;
+      }
+      if (previewScrollSyncFrame) {
+        window.cancelAnimationFrame(previewScrollSyncFrame);
+        previewScrollSyncFrame = 0;
+      }
+    };
+
+    const parsePreviewAnchorLine = (anchor) => {
+      const sourceLine = Number.parseInt(anchor.getAttribute('data-source-line') || '', 10);
+      if (!Number.isFinite(sourceLine) || sourceLine < 1) {
+        return null;
+      }
+      const sourceEndLine = Number.parseInt(anchor.getAttribute('data-source-end-line') || '', 10);
+      return {
+        line: sourceLine,
+        endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+      };
+    };
+
+    const getPreviewAnchorElements = () => {
+      const root = getPreviewScrollRoot();
+      if (!root) return [];
+      return Array.from(root.scrollingElement.querySelectorAll(previewScrollAnchorSelector));
+    };
+
+    const findPreviewAnchorForSourceLine = (targetLine) => {
+      const anchors = getPreviewAnchorElements();
+      if (anchors.length === 0) return null;
+
+      let floorAnchor = null;
+      let ceilAnchor = null;
+
+      for (const anchor of anchors) {
+        const sourceRange = parsePreviewAnchorLine(anchor);
+        if (!sourceRange) continue;
+
+        if (sourceRange.line <= targetLine && sourceRange.endLine >= targetLine) {
+          return anchor;
+        }
+
+        if (sourceRange.line <= targetLine) {
+          if (!floorAnchor || sourceRange.line > floorAnchor.line) {
+            floorAnchor = { anchor, line: sourceRange.line };
+          }
+          continue;
+        }
+
+        if (!ceilAnchor || sourceRange.line < ceilAnchor.line) {
+          ceilAnchor = { anchor, line: sourceRange.line };
+        }
+      }
+
+      return floorAnchor?.anchor ?? ceilAnchor?.anchor ?? null;
+    };
+
+    const getEditorVisibleSourceLine = () => {
+      const renderer = editor.renderer;
+      if (!renderer || typeof renderer.getFirstVisibleRow !== 'function' || typeof renderer.getLastVisibleRow !== 'function') {
+        return 0;
+      }
+
+      const firstVisibleRow = Number(renderer.getFirstVisibleRow());
+      const lastVisibleRow = Number(renderer.getLastVisibleRow());
+      if (!Number.isFinite(firstVisibleRow) || !Number.isFinite(lastVisibleRow)) return 0;
+
+      const lineCount = editor.session.getLength();
+      const centerRow = Math.floor((Math.min(firstVisibleRow, lastVisibleRow) + Math.max(firstVisibleRow, lastVisibleRow)) / 2);
+      const centerLine = centerRow + 1;
+      if (!Number.isFinite(centerLine) || centerLine < 1) return 0;
+      return lineCount > 0 ? Math.min(lineCount, centerLine) : centerLine;
+    };
+
+    const getPreviewVisibleSourceLine = () => {
+      const root = getPreviewScrollRoot();
+      if (!root) return 0;
+
+      const viewportHeight = root.frameWindow.innerHeight || root.scrollingElement.clientHeight || 0;
+      if (!viewportHeight) return 0;
+
+      const anchors = getPreviewAnchorElements();
+      if (anchors.length === 0) return 0;
+
+      let bestAnchor = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (const anchor of anchors) {
+        const sourceRange = parsePreviewAnchorLine(anchor);
+        if (!sourceRange) continue;
+
+        const rect = anchor.getBoundingClientRect();
+        if (rect.bottom <= 0 || rect.top >= viewportHeight) continue;
+
+        const anchorCenter = (rect.top + rect.bottom) / 2;
+        const distance = Math.abs(anchorCenter - (viewportHeight / 2));
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestAnchor = sourceRange.line;
+        }
+      }
+
+      return bestAnchor || 0;
+    };
+
+    const syncPreviewScrollFromEditor = (force = false) => {
+      if (!supportsMarkdownPreview || !previewVisible || isApplyingPreviewScrollFromEditor || isApplyingEditorScrollFromPreview) return;
+
+      const targetLine = getEditorVisibleSourceLine();
+      if (!targetLine) return;
+      if (!force && targetLine === lastEditorSyncedLine) return;
+
+      const anchor = findPreviewAnchorForSourceLine(targetLine);
+      if (!anchor) return;
+
+      isApplyingPreviewScrollFromEditor = true;
+      lastEditorSyncedLine = targetLine;
+      lastPreviewSyncedLine = targetLine;
+
+      try {
+        anchor.scrollIntoView({ block: 'start', inline: 'nearest' });
+        const scrollState = capturePreviewScrollState();
+        if (scrollState) {
+          lastPreviewScrollState = scrollState;
+        }
+      } finally {
+        window.requestAnimationFrame(() => {
+          isApplyingPreviewScrollFromEditor = false;
+        });
+      }
+    };
+
+    const syncEditorScrollFromPreview = (force = false) => {
+      if (!supportsMarkdownPreview || !previewVisible || isApplyingEditorScrollFromPreview || isApplyingPreviewScrollFromEditor) return;
+
+      const targetLine = getPreviewVisibleSourceLine();
+      if (!targetLine) return;
+      if (!force && targetLine === lastPreviewSyncedLine) return;
+
+      isApplyingEditorScrollFromPreview = true;
+      lastPreviewSyncedLine = targetLine;
+      lastEditorSyncedLine = targetLine;
+
+      try {
+        editor.scrollToLine(targetLine, true, false, () => {});
+      } finally {
+        window.requestAnimationFrame(() => {
+          isApplyingEditorScrollFromPreview = false;
+        });
+      }
+    };
+
+    const schedulePreviewScrollSyncFromEditor = (force = false) => {
+      if (!supportsMarkdownPreview || !previewVisible || previewScrollSyncFrame || isApplyingEditorScrollFromPreview) return;
+      previewScrollSyncFrame = window.requestAnimationFrame(() => {
+        previewScrollSyncFrame = 0;
+        if (!supportsMarkdownPreview || !previewVisible || isApplyingEditorScrollFromPreview) return;
+        syncPreviewScrollFromEditor(force);
+      });
+    };
+
+    const scheduleEditorScrollSyncFromPreview = (force = false) => {
+      if (!supportsMarkdownPreview || !previewVisible || editorScrollSyncFrame || isApplyingPreviewScrollFromEditor) return;
+      editorScrollSyncFrame = window.requestAnimationFrame(() => {
+        editorScrollSyncFrame = 0;
+        if (!supportsMarkdownPreview || !previewVisible || isApplyingPreviewScrollFromEditor) return;
+        syncEditorScrollFromPreview(force);
+      });
+    };
+
+    const bindPreviewScrollSync = () => {
+      detachPreviewScrollSync();
+      const root = getPreviewScrollRoot();
+      if (!root) return;
+
+      const handlePreviewScroll = () => {
+        if (!supportsMarkdownPreview || !previewVisible || isApplyingPreviewScrollFromEditor) return;
+        const scrollState = capturePreviewScrollState();
+        if (scrollState) {
+          lastPreviewScrollState = scrollState;
+        }
+        scheduleEditorScrollSyncFromPreview();
+      };
+
+      root.frameWindow.addEventListener('scroll', handlePreviewScroll, { passive: true });
+      previewScrollSyncCleanup = () => {
+        root.frameWindow.removeEventListener('scroll', handlePreviewScroll);
+      };
+      const scrollState = capturePreviewScrollState();
+      if (scrollState) {
+        lastPreviewScrollState = scrollState;
+      }
+    };
+
     const setPreviewFrameHtml = (html, preserveScroll) => {
       const scrollState = preserveScroll ? capturePreviewScrollState() : null;
       const loadToken = ++previewLoadToken;
+      detachPreviewScrollSync();
       if (scrollState) {
         previewFrame.addEventListener('load', () => {
-          if (loadToken !== previewLoadToken) return;
+          if (loadToken !== previewLoadToken || !previewVisible) return;
           window.requestAnimationFrame(() => {
-            if (loadToken !== previewLoadToken) return;
+            if (loadToken !== previewLoadToken || !previewVisible) return;
             restorePreviewScrollState(scrollState);
+            lastPreviewScrollState = scrollState;
+            bindPreviewScrollSync();
+          });
+        }, { once: true });
+      } else {
+        previewFrame.addEventListener('load', () => {
+          if (loadToken !== previewLoadToken || !previewVisible) return;
+          window.requestAnimationFrame(() => {
+            if (loadToken !== previewLoadToken || !previewVisible) return;
+            if (pendingPreviewEditorSync) {
+              pendingPreviewEditorSync = false;
+              syncPreviewScrollFromEditor(true);
+            }
+            bindPreviewScrollSync();
           });
         }, { once: true });
       }
@@ -1324,12 +1574,12 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         });
         if (!response.ok) throw new Error('Preview failed');
         const html = await response.text();
-        if (revision !== previewRevision) return;
-        setPreviewFrameHtml(html, true);
+        if (revision !== previewRevision || !previewVisible) return;
+        setPreviewFrameHtml(html, !pendingPreviewEditorSync);
         setPreviewStatus('Preview updated');
       } catch (error) {
         if (error && error.name === 'AbortError') return;
-        if (revision !== previewRevision) return;
+        if (revision !== previewRevision || !previewVisible) return;
         setPreviewFrameHtml(previewErrorHtml('Preview failed'), false);
         setPreviewStatus('Preview failed');
       }
@@ -1355,10 +1605,14 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       previewBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
       previewBtn.textContent = visible ? 'Hide Preview' : 'Preview';
       if (visible) {
+        pendingPreviewEditorSync = true;
         syncPreviewEditorRatio(false);
       } else {
         previewLoadToken += 1;
         stopPreviewDrag();
+        detachPreviewScrollSync();
+        cancelPreviewScrollSyncFrames();
+        pendingPreviewEditorSync = false;
       }
       window.requestAnimationFrame(() => editor.resize());
       if (visible) {
@@ -1374,6 +1628,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       });
       editor.session.on('change', () => {
         schedulePreview();
+      });
+      editor.session.on('changeScrollTop', () => {
+        if (!supportsMarkdownPreview || !previewVisible || isApplyingEditorScrollFromPreview) return;
+        schedulePreviewScrollSyncFromEditor();
       });
     }
 

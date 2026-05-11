@@ -4874,11 +4874,13 @@ Markdown files opened through the local editor expose a preview button that rend
 3. Scroll the editor and confirm the preview follows the matching section.
 4. Scroll the preview and confirm the editor follows the corresponding source lines.
 5. Edit the file while the preview is open and confirm the preview stays on the same approximate section instead of jumping back to the top.
+6. Type several characters in the editor with preview open and confirm the editor viewport does not jump upward after the preview refreshes.
 
 #### Expected Results
 - Scrolling the editor keeps the preview aligned to the same content region.
 - Scrolling the preview keeps the editor aligned to the corresponding source lines.
 - Preview updates after edits keep the current position stable.
+- Typing in the editor does not trigger a reverse preview-to-editor scroll jump.
 
 #### Rollback/Cleanup
 - Revert any disposable file edits made during validation.

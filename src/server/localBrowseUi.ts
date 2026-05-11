@@ -1005,6 +1005,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let lastEditorSyncedLine = 0;
     let lastPreviewSyncedLine = 0;
     const previewScrollAnchorSelector = '.message-scroll-anchor[data-source-line]';
+    let previewScrollSyncSuppressedUntil = 0;
     const previewSplitStorageKeyHorizontal = 'codex.localBrowse.previewEditorRatio.horizontal.v1';
     const previewSplitStorageKeyVertical = 'codex.localBrowse.previewEditorRatio.vertical.v1';
     const defaultPreviewEditorRatio = 0.48;
@@ -1322,6 +1323,17 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       root.frameWindow.scrollTo(nextLeft, nextTop);
     };
 
+    const suppressPreviewScrollSync = (durationMs = 180) => {
+      previewScrollSyncSuppressedUntil = Math.max(
+        previewScrollSyncSuppressedUntil,
+        window.performance.now() + durationMs,
+      );
+    };
+
+    const isPreviewScrollSyncSuppressed = () => (
+      window.performance.now() < previewScrollSyncSuppressedUntil
+    );
+
     const detachPreviewScrollSync = () => {
       if (previewScrollSyncCleanup) {
         previewScrollSyncCleanup();
@@ -1447,6 +1459,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (!anchor) return;
 
       isApplyingPreviewScrollFromEditor = true;
+      suppressPreviewScrollSync();
       lastEditorSyncedLine = targetLine;
       lastPreviewSyncedLine = targetLine;
 
@@ -1493,10 +1506,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     };
 
     const scheduleEditorScrollSyncFromPreview = (force = false) => {
-      if (!supportsMarkdownPreview || !previewVisible || editorScrollSyncFrame || isApplyingPreviewScrollFromEditor) return;
+      if (!supportsMarkdownPreview || !previewVisible || editorScrollSyncFrame || isApplyingPreviewScrollFromEditor || isPreviewScrollSyncSuppressed()) return;
       editorScrollSyncFrame = window.requestAnimationFrame(() => {
         editorScrollSyncFrame = 0;
-        if (!supportsMarkdownPreview || !previewVisible || isApplyingPreviewScrollFromEditor) return;
+        if (!supportsMarkdownPreview || !previewVisible || isApplyingPreviewScrollFromEditor || isPreviewScrollSyncSuppressed()) return;
         syncEditorScrollFromPreview(force);
       });
     };
@@ -1507,7 +1520,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (!root) return;
 
       const handlePreviewScroll = () => {
-        if (!supportsMarkdownPreview || !previewVisible || isApplyingPreviewScrollFromEditor) return;
+        if (!supportsMarkdownPreview || !previewVisible || isApplyingPreviewScrollFromEditor || isPreviewScrollSyncSuppressed()) return;
         const scrollState = capturePreviewScrollState();
         if (scrollState) {
           lastPreviewScrollState = scrollState;
@@ -1534,9 +1547,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           if (loadToken !== previewLoadToken || !previewVisible) return;
           window.requestAnimationFrame(() => {
             if (loadToken !== previewLoadToken || !previewVisible) return;
+            suppressPreviewScrollSync();
             restorePreviewScrollState(scrollState);
             lastPreviewScrollState = scrollState;
             bindPreviewScrollSync();
+            suppressPreviewScrollSync();
           });
         }, { once: true });
       } else {
@@ -1546,9 +1561,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
             if (loadToken !== previewLoadToken || !previewVisible) return;
             if (pendingPreviewEditorSync) {
               pendingPreviewEditorSync = false;
+              suppressPreviewScrollSync();
               syncPreviewScrollFromEditor(true);
             }
             bindPreviewScrollSync();
+            suppressPreviewScrollSync();
           });
         }, { once: true });
       }

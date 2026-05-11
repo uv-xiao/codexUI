@@ -7,25 +7,25 @@ import {
 } from './composerFileMentions'
 
 describe('composerFileMentions', () => {
-  it('formats plain relative paths as inline @ mentions', () => {
-    expect(formatComposerFileMention('repos/codexUI')).toBe('@repos/codexUI')
+  it('formats plain relative paths as inline ./ mentions', () => {
+    expect(formatComposerFileMention('repos/codexUI')).toBe('./repos/codexUI')
   })
 
   it('quotes paths with spaces so the mention remains parseable', () => {
-    expect(formatComposerFileMention('New Project/app file.ts')).toBe('@"New Project/app file.ts"')
+    expect(formatComposerFileMention('New Project/app file.ts')).toBe('./"New Project/app file.ts"')
   })
 
   it('inserts a trailing space after inline mentions', () => {
     expect(insertComposerFileMentionText('', 'repos/codexUI', 0)).toEqual({
-      text: '@repos/codexUI ',
-      selectionIndex: 15,
+      text: './repos/codexUI ',
+      selectionIndex: 16,
     })
   })
 
   it('keeps the cursor after existing whitespace when replacing a mention', () => {
     expect(insertComposerFileMentionText('Read @instalconf now', 'install-configs.py', 5, 16)).toEqual({
-      text: 'Read @install-configs.py now',
-      selectionIndex: 25,
+      text: 'Read ./install-configs.py now',
+      selectionIndex: 26,
     })
   })
 
@@ -35,9 +35,9 @@ describe('composerFileMentions', () => {
     expect(toComposerFileMentionSearchQuery('src/App')).toBe('src/App')
   })
 
-  it('extracts inline @ mentions as file attachments', () => {
+  it('extracts inline ./ mentions as file attachments', () => {
     const attachments = extractComposerFileMentionAttachments(
-      'Read @repos/codexUI and @"New Project/app file.ts", then ignore user@example.com.',
+      'Read ./repos/codexUI and ./"New Project/app file.ts", then ignore user@example.com.',
       '/root/work/project',
     )
 

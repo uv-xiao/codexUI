@@ -1,15 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FREE_MODE_DEFAULT_MODEL,
   OPENCODE_ZEN_DEFAULT_MODEL,
+  createDefaultFreeModeState,
   createDefaultOpenCodeZenFreeModeState,
   filterOpenCodeZenModelsForAuthState,
   getFreeModeConfigArgs,
+  getMoonBridgeModels,
   getProviderCompatibilityConfigArgs,
   shouldMarkOpenRouterKeyAsCustom,
   shouldCreateDefaultFreeModeStateForMissingAuth,
   shouldSuppressCommunityFreeModeForCodexAuth,
 } from './freeMode'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('unauthenticated free mode defaults', () => {
   it('builds an enabled OpenCode Zen runtime fallback for unauthenticated startup', () => {
@@ -188,5 +197,39 @@ describe('unauthenticated free mode defaults', () => {
   it('uses the runtime default only when state is absent and Codex auth is missing', () => {
     expect(shouldCreateDefaultFreeModeStateForMissingAuth(null, false)).toBe(true)
     expect(shouldCreateDefaultFreeModeStateForMissingAuth(null, true)).toBe(false)
+  })
+})
+
+describe('Moon Bridge catalog loading', () => {
+  it('defaults external provider state to disabled', () => {
+    expect(createDefaultFreeModeState()).toEqual({
+      enabled: false,
+      apiKey: null,
+      model: 'openrouter/free',
+    })
+  })
+
+  it('reads model slugs from the generated catalog', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-moonbridge-'))
+    const catalogPath = join(tempDir, 'models_catalog.json')
+    try {
+      await writeFile(
+        catalogPath,
+        JSON.stringify({
+          models: [
+            { slug: 'deepseek-v4-pro' },
+            { slug: 'deepseek-v4-flash' },
+            { slug: 'deepseek-v4-pro' },
+          ],
+        }),
+        'utf8',
+      )
+
+      vi.stubEnv('CODEXUI_MOONBRIDGE_MODEL_CATALOG', catalogPath)
+
+      expect(getMoonBridgeModels()).toEqual(['deepseek-v4-pro', 'deepseek-v4-flash'])
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })

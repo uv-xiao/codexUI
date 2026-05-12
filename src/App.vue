@@ -1441,6 +1441,7 @@ const {
   availableModelIds,
   selectedCollaborationMode,
   selectedModelId,
+  selectedProvider,
   selectedReasoningEffort,
   selectedSpeedMode,
   codexCliMissingError,
@@ -1460,6 +1461,7 @@ const {
   refreshAll,
   refreshSkills,
   selectThread,
+  loadMessages,
   ensureThreadMessagesLoaded,
   loadOlderMessages,
   setThreadTerminalOpen,
@@ -1478,7 +1480,7 @@ const {
   setSelectedCollaborationMode,
   readModelIdForThread,
   setSelectedModelIdForThread,
-
+  refreshAncillaryState,
   setSelectedReasoningEffort,
   updateSelectedSpeedMode,
   respondToPendingServerRequest,
@@ -1490,6 +1492,7 @@ const {
   stopPolling,
   primeSelectedThread,
   rollbackSelectedThread,
+  setSelectedProvider,
 } = useDesktopState()
 
 const route = useRoute()
@@ -1667,11 +1670,11 @@ const freeModeHasCustomKey = ref(false)
 const freeModeCustomKeyMasked = ref<string | null>(null)
 const freeModeCustomKeySaving = ref(false)
 const providerError = ref('')
-const selectedProvider = ref<'codex' | 'openrouter' | 'opencode-zen' | 'custom'>('codex')
 const providerDropdownOptions = computed(() => [
   { value: 'codex', label: t('Codex') },
   { value: 'openrouter', label: t('OpenRouter') },
   { value: 'opencode-zen', label: t('OpenCode Zen') },
+  { value: 'moon', label: t('Moon Bridge') },
   { value: 'custom', label: t('Custom endpoint') },
 ])
 const customEndpointUrl = ref('')
@@ -2226,7 +2229,6 @@ onMounted(() => {
   void refreshDefaultProjectName()
   void refreshTelegramConfig()
   void refreshTelegramStatus()
-  void loadFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
 })
@@ -4422,17 +4424,53 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
+type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
 
-async function onProviderChange(provider: string): Promise<void> {
-  if (freeModeLoading.value) return
-  freeModeLoading.value = true
+function normalizeProviderSelection(provider: string): ProviderSelection {
+  if (
+    provider === 'openrouter'
+    || provider === 'opencode-zen'
+    || provider === 'custom'
+    || provider === 'moon'
+  ) {
+    return provider
+  }
+  return 'codex'
+}
+
+function buildProviderStateSignature(provider: ProviderSelection = selectedProvider.value): string {
+  if (provider === 'openrouter') {
+    return `${provider}|${openRouterWireApi.value}`
+  }
+  if (provider === 'opencode-zen') {
+    return `${provider}|${opencodeZenKey.value.trim()}`
+  }
+  if (provider === 'custom') {
+    return `${provider}|${customEndpointUrl.value.trim()}|${customEndpointKey.value.trim()}|${customEndpointWireApi.value}`
+  }
+  return provider
+}
+
+let lastAppliedProviderStateSignature = ''
+
+async function applySelectedProviderState(
+  options: { force?: boolean; refreshAncillary?: boolean } = {},
+): Promise<void> {
+  const provider = selectedProvider.value
+  const signature = buildProviderStateSignature(provider)
+  if (!options.force && signature === lastAppliedProviderStateSignature) {
+    return
+  }
+
+  if (provider === 'custom' && !customEndpointUrl.value.trim()) {
+    return
+  }
+
   try {
     if (provider === 'codex') {
-      selectedProvider.value = 'codex'
       const result = await setFreeMode(false)
       freeModeEnabled.value = result.enabled
     } else if (provider === 'openrouter') {
-      selectedProvider.value = 'openrouter'
       const result = await setFreeMode(true)
       freeModeEnabled.value = result.enabled
       await setCustomProvider('', '', {
@@ -4440,23 +4478,46 @@ async function onProviderChange(provider: string): Promise<void> {
         provider: 'openrouter',
       })
     } else if (provider === 'opencode-zen') {
-      selectedProvider.value = 'opencode-zen'
       await setCustomProvider('', opencodeZenKey.value.trim(), {
         wireApi: 'responses',
         provider: 'opencode-zen',
       })
       freeModeEnabled.value = true
-    } else if (provider === 'custom') {
-      selectedProvider.value = 'custom'
-      if (customEndpointUrl.value.trim() && customEndpointKey.value.trim()) {
-        await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
-          wireApi: customEndpointWireApi.value,
-        })
-        freeModeEnabled.value = true
-      }
+    } else if (provider === 'moon') {
+      await setCustomProvider('', '', {
+        wireApi: 'responses',
+        provider: 'moon',
+      })
+      freeModeEnabled.value = true
+    } else {
+      await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
+        wireApi: customEndpointWireApi.value,
+      })
+      freeModeEnabled.value = true
     }
+
+    lastAppliedProviderStateSignature = signature
     providerError.value = ''
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    await loadFreeModeStatus()
+    if (options.refreshAncillary !== false) {
+      await refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
+    }
+  } catch (err) {
+    providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
+    throw err
+  }
+}
+
+async function onProviderChange(provider: string): Promise<void> {
+  if (freeModeLoading.value) return
+  freeModeLoading.value = true
+  const previousThreadId = selectedThreadId.value.trim()
+  try {
+    setSelectedProvider(normalizeProviderSelection(provider))
+    await applySelectedProviderState()
+    if (previousThreadId) {
+      await loadMessages(previousThreadId, { silent: true, force: true })
+    }
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
   } finally {
@@ -4471,11 +4532,8 @@ async function saveCustomEndpoint(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider(url, customEndpointKey.value.trim(), {
-      wireApi: customEndpointWireApi.value,
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('custom')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save custom endpoint'
   } finally {
@@ -4491,12 +4549,8 @@ async function setOpenRouterWireApi(nextWireApi: 'responses' | 'chat'): Promise<
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', '', {
-      wireApi: nextWireApi,
-      provider: 'openrouter',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('openrouter')
+    await applySelectedProviderState()
   } catch (err) {
     openRouterWireApi.value = previousWireApi
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenRouter API format'
@@ -4512,12 +4566,8 @@ async function saveOpencodeZen(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', key, {
-      wireApi: 'responses',
-      provider: 'opencode-zen',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('opencode-zen')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenCode Zen config'
   } finally {
@@ -4563,19 +4613,11 @@ async function loadFreeModeStatus(): Promise<void> {
     freeModeEnabled.value = status.enabled
     freeModeHasCustomKey.value = status.customKey ?? false
     freeModeCustomKeyMasked.value = status.maskedKey ?? null
-    if (status.enabled) {
-      if (status.provider === 'opencode-zen') {
-        selectedProvider.value = 'opencode-zen'
-      } else if (status.provider === 'custom') {
-        selectedProvider.value = 'custom'
-        customEndpointUrl.value = status.customBaseUrl ?? ''
-        customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      } else {
-        selectedProvider.value = 'openrouter'
-        openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      }
-    } else {
-      selectedProvider.value = 'codex'
+    if (status.provider === 'custom') {
+      customEndpointUrl.value = status.customBaseUrl ?? ''
+      customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
+    } else if (status.provider === 'openrouter') {
+      openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     }
     externalCodexAuthAvailable = status.hasCodexAuth === true
     if (!externalCodexAuthAvailable) {
@@ -4723,6 +4765,8 @@ async function initialize(): Promise<void> {
     primeSelectedThread('', { persist: false })
   }
 
+  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
+
   await refreshAll({
     includeSelectedThreadMessages: route.name === 'thread',
   })
@@ -4747,6 +4791,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
       if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
+          await applySelectedProviderState().catch(() => {})
         }
         continue
       }
@@ -4760,6 +4805,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
           if (result === 'not-found') {
             continue
           }
+          await applySelectedProviderState().catch(() => {})
         } else {
           void ensureThreadMessagesLoaded(threadId, { silent: true }).catch(() => {
             // The conversation overlay receives the error from useDesktopState.
@@ -4814,18 +4860,18 @@ watch(
   () => selectedThreadId.value,
   async (threadId) => {
     if (!hasInitialized.value) return
-    if (isRouteSyncInProgress.value) return
-    if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value) return
-
-    if (!threadId) {
-      if (route.name !== 'home') {
-        await router.replace({ name: 'home' })
+    if (!isRouteSyncInProgress.value && !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value) {
+      if (!threadId) {
+        if (route.name !== 'home') {
+          await router.replace({ name: 'home' })
+        }
+      } else if (!(route.name === 'thread' && routeThreadId.value === threadId)) {
+        await router.replace({ name: 'thread', params: { threadId } })
       }
-      return
     }
 
-    if (route.name === 'thread' && routeThreadId.value === threadId) return
-    await router.replace({ name: 'thread', params: { threadId } })
+    if (isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
   },
 )
 

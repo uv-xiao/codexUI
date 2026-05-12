@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 const ENCRYPTED_KEYS: string[] = [
   "FhkYWwEZE0MYBhAGUEADDBYFBEoDBxIHVUpUVRIMVUYDAkEHVRYNAxABUUAEAUMDV0pUDEQAU0ZTDEQCVERQVkoBVhAEBBBXAQ==",
   "FhkYWwEZE0MYVkIGUkNUUkpVXUsBBUUAVEYHUEIMBhQCVxZWBBcHVkoNUENRAxAMA0MHARBXBkVUAUVQXBAFAUVXVxFWBUtWBw==",
@@ -94,6 +98,9 @@ export function getFreeKeyCount(): number {
 export const FREE_MODE_PROVIDER_ID = 'openrouter-free'
 export const FREE_MODE_BASE_URL = 'https://openrouter.ai/api/v1'
 const FREE_MODE_RUNTIME_PROVIDER_ID = 'openrouter_free'
+export const MOONBRIDGE_PROVIDER_ID = 'moon'
+export const MOONBRIDGE_PROVIDER_NAME = 'Moon Bridge'
+export const MOONBRIDGE_MODEL_CATALOG_FILE = 'models_catalog.json'
 
 const FALLBACK_FREE_MODELS = [
   'openrouter/free',
@@ -157,6 +164,50 @@ const OPENCODE_ZEN_RUNTIME_PROVIDER_ID = 'opencode_zen'
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1'
 export const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
 
+function getMoonBridgeDataHomeDir(): string {
+  const explicit = process.env.XDG_DATA_HOME?.trim()
+  return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
+}
+
+export function getMoonBridgeModelCatalogPath(): string {
+  const explicit = process.env.CODEXUI_MOONBRIDGE_MODEL_CATALOG?.trim()
+    || process.env.CODEX_MOON_MODEL_CATALOG?.trim()
+  if (explicit && explicit.length > 0) return explicit
+  return join(getMoonBridgeDataHomeDir(), 'my-agent-configs', 'moonbridge', 'codex', MOONBRIDGE_MODEL_CATALOG_FILE)
+}
+
+export function getMoonBridgeModels(): string[] {
+  try {
+    const raw = JSON.parse(readFileSync(getMoonBridgeModelCatalogPath(), 'utf8')) as unknown
+    const rows = Array.isArray(raw)
+      ? raw
+      : (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray((raw as Record<string, unknown>).models))
+        ? (raw as Record<string, unknown>).models as unknown[]
+        : []
+    const models: string[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+      const record = row as Record<string, unknown>
+      const candidate = typeof record.slug === 'string' && record.slug.trim().length > 0
+        ? record.slug.trim()
+        : typeof record.display_name === 'string' && record.display_name.trim().length > 0
+          ? record.display_name.trim()
+          : typeof record.id === 'string' && record.id.trim().length > 0
+            ? record.id.trim()
+            : typeof record.model === 'string' && record.model.trim().length > 0
+              ? record.model.trim()
+              : typeof record.name === 'string' && record.name.trim().length > 0
+                ? record.name.trim()
+                : ''
+      if (!candidate || models.includes(candidate)) continue
+      models.push(candidate)
+    }
+    return models
+  } catch {
+    return []
+  }
+}
+
 export type WireApi = 'responses' | 'chat'
 
 export interface FreeModeState {
@@ -164,10 +215,18 @@ export interface FreeModeState {
   apiKey: string | null
   model: string
   customKey?: boolean
-  provider?: 'openrouter' | 'custom' | 'opencode-zen'
+  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon'
   customBaseUrl?: string
   wireApi?: WireApi
   providerKeys?: Record<string, string>
+}
+
+export function createDefaultFreeModeState(): FreeModeState {
+  return {
+    enabled: false,
+    apiKey: null,
+    model: FREE_MODE_DEFAULT_MODEL,
+  }
 }
 
 export function createDefaultOpenRouterFreeModeState(): FreeModeState | null {

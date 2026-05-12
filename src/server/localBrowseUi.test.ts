@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createEditorReferenceText, createMarkdownPreviewHtml, createTextEditorHtml, isMarkdownPath } from './localBrowseUi'
+import { createDirectoryListingHtml, createEditorReferenceText, createMarkdownPreviewHtml, createTextEditorHtml, isMarkdownPath } from './localBrowseUi'
 import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
@@ -131,6 +131,26 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('data-source-end-line=')
     expect(html).toContain('codex-local-markdown-preview-jump')
     expect(html).toContain('data-source-line="1"')
+  })
+
+  it('renders file add and delete controls in directory listings', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-browse-listing-'))
+    const filePath = join(tempDir, 'note.txt')
+    const folderPath = join(tempDir, 'docs')
+    await writeFile(filePath, 'hello\n', 'utf8')
+    await mkdir(folderPath)
+    await writeFile(join(folderPath, '.keep'), 'x\n', 'utf8')
+
+    const html = await createDirectoryListingHtml(tempDir)
+
+    expect(html).toContain('id="newFileForm"')
+    expect(html).toContain('id="newFileName"')
+    expect(html).toContain('id="createFileBtn"')
+    expect(html).toContain('class="icon-btn danger delete-file-btn"')
+    expect(html).toContain('data-name="note.txt"')
+    expect(html).toContain('Delete note.txt')
+    expect((html.match(/class="icon-btn danger delete-file-btn"/gu) ?? []).length).toBe(1)
+    expect(html).toContain('docs/')
   })
 
   it('links KaTeX assets in standalone markdown preview', () => {

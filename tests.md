@@ -4870,6 +4870,36 @@ Plain Chinese prose containing `/`, such as `系统浅/深色主题`, is not spl
 
 ---
 
+### Local browse file create and delete actions
+
+#### Feature/Change Name
+`/codex-local-browse/...` directory pages can create a new file in the current folder and delete listed files from the same page.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A disposable writable folder exists, for example `tmp/local-browse-file-actions`
+3. Browser or device appearance can be switched between light and dark
+
+#### Steps
+1. In light appearance, open the disposable folder through `/codex-local-browse/...`.
+2. Enter `draft.md` in the new-file input and click `Create file`.
+3. Confirm the page opens `/codex-local-edit/.../draft.md` and the file exists on disk.
+4. Return to the directory browse page.
+5. Click the delete button for `draft.md`, confirm the browser prompt, and verify the row disappears after refresh.
+6. Switch to dark appearance and reload the same directory browse page.
+7. Repeat create/delete with `dark-draft.md`.
+
+#### Expected Results
+- New files are created in the currently browsed folder only.
+- Newly created text files open in the local editor after creation.
+- Delete removes the selected file after confirmation and refreshes the listing.
+- The new input, create button, status text, and delete buttons remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Remove the disposable folder, for example `rm -rf tmp/local-browse-file-actions`.
+
+---
+
 ### Local markdown preview uses browse routes and system theme
 
 #### Feature/Change Name

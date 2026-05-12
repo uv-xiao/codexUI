@@ -1,5 +1,5 @@
-import { dirname, extname, join } from 'node:path'
-import { open, readFile, readdir, stat } from 'node:fs/promises'
+import { basename, dirname, extname, join } from 'node:path'
+import { open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { renderMarkdownContent } from '../components/content/markdownRenderer.js'
 import { KATEX_STYLESHEET_HREF } from './katexAssets.js'
 import { getEditorModeForPath } from '../utils/codeLanguage.js'
@@ -131,6 +131,75 @@ function normalizeNewProjectName(value: string): string {
   return value.trim().replace(/[\\/]+/gu, '').trim()
 }
 
+function normalizeLocalEntryName(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed === '.' || trimmed === '..' || /[\\/]/u.test(trimmed)) return ''
+  return trimmed
+}
+
+export function resolveLocalEntryPath(parentPath: string, rawName: string): string {
+  const normalizedName = normalizeLocalEntryName(rawName)
+  if (!normalizedName) return ''
+  return join(parentPath, basename(normalizedName))
+}
+
+export class LocalBrowseMutationError extends Error {
+  statusCode: number
+
+  constructor(statusCode: number, message: string) {
+    super(message)
+    this.name = 'LocalBrowseMutationError'
+    this.statusCode = statusCode
+  }
+}
+
+function fileSystemErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object' || !('code' in error)) return ''
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' ? code : ''
+}
+
+export async function createLocalBrowseFile(parentPath: string, rawName: string): Promise<string> {
+  const targetPath = resolveLocalEntryPath(parentPath, rawName)
+  if (!targetPath) throw new LocalBrowseMutationError(400, 'Missing file name.')
+
+  try {
+    const parentStat = await stat(parentPath)
+    if (!parentStat.isDirectory()) throw new LocalBrowseMutationError(400, 'Expected directory path.')
+  } catch (error) {
+    if (error instanceof LocalBrowseMutationError) throw error
+    throw new LocalBrowseMutationError(404, 'Directory not found.')
+  }
+
+  try {
+    await writeFile(targetPath, '', { encoding: 'utf8', flag: 'wx' })
+    return targetPath
+  } catch (error) {
+    const code = fileSystemErrorCode(error)
+    if (code === 'EEXIST') throw new LocalBrowseMutationError(409, 'File already exists.')
+    if (code === 'EACCES' || code === 'EPERM') throw new LocalBrowseMutationError(403, 'Permission denied.')
+    throw new LocalBrowseMutationError(500, 'Create file failed.')
+  }
+}
+
+export async function deleteLocalBrowseFile(localPath: string): Promise<void> {
+  try {
+    const fileStat = await stat(localPath)
+    if (!fileStat.isFile()) throw new LocalBrowseMutationError(400, 'Expected file path.')
+  } catch (error) {
+    if (error instanceof LocalBrowseMutationError) throw error
+    throw new LocalBrowseMutationError(404, 'File not found.')
+  }
+
+  try {
+    await rm(localPath)
+  } catch (error) {
+    const code = fileSystemErrorCode(error)
+    if (code === 'EACCES' || code === 'EPERM') throw new LocalBrowseMutationError(403, 'Permission denied.')
+    throw new LocalBrowseMutationError(500, 'Delete file failed.')
+  }
+}
+
 export function normalizeLineRangeQuery(value: string): string {
   const match = value.trim().match(/^(\d+)(?:-(\d+))?$/u)
   if (!match) return ''
@@ -223,6 +292,10 @@ function failureStatusText(newProjectName: string): string {
     : 'Failed to open folder.'
 }
 
+function deleteFileIconHtml(): string {
+  return '<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /></svg>'
+}
+
 function actionButtonsHtml(localPath: string, newProjectName: string): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   const createTargetPath = projectCreationTargetPath(localPath, normalizedName)
@@ -269,7 +342,10 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       const editAction = item.editable
         ? ` <a class="icon-btn" aria-label="Edit ${escapeHtml(item.name)}" href="${escapeHtml(toEditHref(item.path, newProjectName))}" title="Edit">✏️</a>`
         : ''
-      return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${editAction}</span></li>`
+      const deleteAction = item.isDirectory
+        ? ''
+        : ` <button class="icon-btn danger delete-file-btn" type="button" aria-label="Delete ${escapeHtml(item.name)}" title="Delete ${escapeHtml(item.name)}" data-path="${escapeHtml(item.path)}" data-name="${escapeHtml(item.name)}">${deleteFileIconHtml()}</button>`
+      return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${editAction}${deleteAction}</span></li>`
     })
     .join('\n')
 
@@ -279,6 +355,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   const pickerSummary = newProjectName
     ? `<p class="picker-summary">Browse to the parent folder where you want to create <strong>${escapeHtml(newProjectName)}</strong>, or open the current folder directly.</p>`
     : ''
+  const createFileForm = '<form id="newFileForm" class="header-create-form"><input id="newFileName" class="header-file-input" type="text" autocomplete="off" spellcheck="false" aria-label="New file name" placeholder="New file name" /><button id="createFileBtn" class="header-open-btn create-file-btn" type="submit">Create file</button></form>'
   const actionButtons = actionButtonsHtml(localPath, newProjectName)
 
   return `<!doctype html>
@@ -312,6 +389,15 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       --icon-fg: #0f172a;
       --summary-fg: #475569;
       --status-fg: #2563eb;
+      --field-bg: #ffffff;
+      --field-border: #cbd5e1;
+      --field-fg: #0f172a;
+      --field-placeholder: #64748b;
+      --danger-bg: #fff1f2;
+      --danger-border: #fda4af;
+      --danger-fg: #be123c;
+      --danger-hover-bg: #ffe4e6;
+      --focus-ring: rgba(61, 140, 255, 0.28);
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -337,6 +423,15 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
         --icon-fg: #dbe6ff;
         --summary-fg: #b8d5ff;
         --status-fg: #8cc2ff;
+        --field-bg: #0f1b33;
+        --field-border: #2a4569;
+        --field-fg: #dbe6ff;
+        --field-placeholder: #9ca3af;
+        --danger-bg: rgba(127, 29, 29, 0.18);
+        --danger-border: rgba(248, 113, 113, 0.35);
+        --danger-fg: #fecaca;
+        --danger-hover-bg: rgba(127, 29, 29, 0.3);
+        --focus-ring: rgba(140, 194, 255, 0.32);
       }
     }
     html, body { width: 100%; min-height: 100%; margin: 0; }
@@ -349,6 +444,30 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 10px; background: var(--row-bg); box-shadow: 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
     .file-link:hover { background: var(--row-hover-bg); text-decoration: none; }
     .header-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .header-create-form {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      flex: 1 1 18rem;
+      min-width: min(100%, 18rem);
+    }
+    .header-file-input {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 42px;
+      padding: 0 12px;
+      border: 1px solid var(--field-border);
+      border-radius: 10px;
+      background: var(--field-bg);
+      color: var(--field-fg);
+      font: inherit;
+      box-sizing: border-box;
+    }
+    .header-file-input::placeholder { color: var(--field-placeholder); }
+    .header-file-input:focus {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
     .header-parent-link { color: var(--header-link-fg); font-size: 14px; padding: 8px 10px; border: 1px solid var(--header-link-border); border-radius: 10px; background: var(--header-link-bg); }
     .header-parent-link:hover { text-decoration: none; filter: brightness(1.08); }
     .header-open-btn {
@@ -365,15 +484,26 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     }
     .header-open-btn:hover { filter: brightness(1.08); }
     .header-open-btn:disabled { opacity: 0.6; cursor: default; }
+    .header-actions .create-file-btn { flex: 0 0 auto; min-width: 7.8rem; }
     .picker-summary { margin: 10px 0 0; color: var(--summary-fg); max-width: 60rem; line-height: 1.45; }
     .row-actions { display: inline-flex; align-items: center; gap: 8px; min-width: 42px; justify-content: flex-end; }
     .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid var(--icon-border); border-radius: 10px; background: var(--icon-bg); color: var(--icon-fg); text-decoration: none; cursor: pointer; }
     .icon-btn:hover { filter: brightness(1.08); text-decoration: none; }
+    .icon-btn svg { width: 16px; height: 16px; }
+    .icon-btn.danger {
+      background: var(--danger-bg);
+      border-color: var(--danger-border);
+      color: var(--danger-fg);
+    }
+    .icon-btn.danger:hover { background: var(--danger-hover-bg); }
     .status { margin: 10px 0 0; color: var(--status-fg); min-height: 1.25em; }
     @media (max-width: 640px) {
       body { padding: 12px; }
       .file-row { gap: 8px; }
       .file-link { font-size: 15px; padding: 12px; }
+      .header-create-form { width: 100%; }
+      .header-file-input { width: 100%; }
+      .header-actions .create-file-btn { min-width: 0; }
       .icon-btn { width: 44px; height: 44px; }
     }
   </style>
@@ -383,15 +513,101 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   ${pickerSummary}
   <div class="header-actions">
     ${parentLink}
+    ${createFileForm}
     ${actionButtons}
   </div>
   <p id="status" class="status"></p>
   <ul>${rows}</ul>
   <script>
     const status = document.getElementById('status');
+    const newFileForm = document.getElementById('newFileForm');
+    const newFileNameInput = document.getElementById('newFileName');
+    const createFileBtn = document.getElementById('createFileBtn');
+    const setStatus = (message) => {
+      status.textContent = message;
+    };
+    const readJsonPayload = async (response) => {
+      try {
+        return await response.json();
+      } catch {
+        return null;
+      }
+    };
+    const normalizeEntryName = (value) => {
+      const trimmed = String(value || '').trim();
+      if (!trimmed || trimmed === '.' || trimmed === '..' || /[\\\\/]/.test(trimmed)) return '';
+      return trimmed;
+    };
+    const createLocalFile = async () => {
+      if (!(newFileNameInput instanceof HTMLInputElement)) return;
+      const fileName = normalizeEntryName(newFileNameInput.value);
+      if (!fileName) {
+        setStatus('Enter a file name without path separators.');
+        newFileNameInput.focus();
+        return;
+      }
+      if (createFileBtn instanceof HTMLButtonElement) createFileBtn.disabled = true;
+      setStatus('Creating ' + fileName + '...');
+      try {
+        const response = await fetch(location.pathname, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: fileName }),
+        });
+        const payload = await readJsonPayload(response);
+        if (!response.ok) {
+          setStatus(payload && payload.error ? String(payload.error) : 'Create file failed.');
+          return;
+        }
+        const createdPath = payload && payload.data && typeof payload.data.path === 'string'
+          ? payload.data.path
+          : '';
+        if (!createdPath) {
+          setStatus('File created, but the editor path is missing.');
+          return;
+        }
+        setStatus('File created. Opening editor...');
+        window.location.assign('/codex-local-edit' + encodeURI(createdPath));
+      } catch {
+        setStatus('Create file failed.');
+      } finally {
+        if (createFileBtn instanceof HTMLButtonElement) createFileBtn.disabled = false;
+      }
+    };
+    if (newFileForm instanceof HTMLFormElement) {
+      newFileForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        createLocalFile();
+      });
+    }
     document.addEventListener('click', async (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const deleteButton = target.closest('.delete-file-btn');
+      if (deleteButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        const filePath = deleteButton.getAttribute('data-path') || '';
+        const fileName = deleteButton.getAttribute('data-name') || 'file';
+        if (!filePath) return;
+        if (!window.confirm('Delete ' + fileName + '?')) return;
+        deleteButton.disabled = true;
+        setStatus('Deleting ' + fileName + '...');
+        try {
+          const response = await fetch('/codex-local-browse' + encodeURI(filePath), { method: 'DELETE' });
+          const payload = await readJsonPayload(response);
+          if (!response.ok) {
+            setStatus(payload && payload.error ? String(payload.error) : 'Delete file failed.');
+            deleteButton.disabled = false;
+            return;
+          }
+          setStatus('Deleted ' + fileName + '. Refreshing...');
+          window.location.reload();
+        } catch {
+          setStatus('Delete file failed.');
+          deleteButton.disabled = false;
+        }
+        return;
+      }
       const button = target.closest('.open-folder-btn, .create-project-btn');
       if (!(button instanceof HTMLButtonElement)) return;
 
@@ -401,7 +617,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       const errorText = button.getAttribute('data-error') || 'Failed to open folder.';
       if (!path) return;
       button.disabled = true;
-      status.textContent = statusText;
+      setStatus(statusText);
       try {
         const response = await fetch('/codex-api/project-root', {
           method: 'POST',
@@ -413,15 +629,15 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
           }),
         });
         if (!response.ok) {
-          status.textContent = errorText;
+          setStatus(errorText);
           button.disabled = false;
           return;
         }
-        status.textContent = 'Folder opened. Returning to Codex...';
+        setStatus('Folder opened. Returning to Codex...');
         const nextUrl = '/?openProjectPath=' + encodeURIComponent(path) + '#/';
         window.location.assign(nextUrl);
       } catch {
-        status.textContent = errorText;
+        setStatus(errorText);
         button.disabled = false;
       }
     });

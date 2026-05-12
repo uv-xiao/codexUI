@@ -6,7 +6,7 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
-import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
@@ -197,6 +197,43 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       })
     } catch {
       res.status(404).json({ error: 'File not found.' })
+    }
+  })
+
+  app.post('/codex-local-browse/*path', express.json({ type: '*/*', limit: '1mb' }), async (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const localPath = decodeBrowsePath(`/${rawPath}`)
+    if (!localPath || !isAbsolute(localPath)) {
+      res.status(400).json({ error: 'Expected absolute local file path.' })
+      return
+    }
+
+    const record = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : null
+    const name = typeof record?.name === 'string' ? record.name : ''
+
+    try {
+      const filePath = await createLocalBrowseFile(localPath, name)
+      res.status(201).json({ data: { path: filePath } })
+    } catch (error) {
+      const mutationError = error instanceof LocalBrowseMutationError ? error : null
+      res.status(mutationError?.statusCode ?? 500).json({ error: mutationError?.message ?? 'Create file failed.' })
+    }
+  })
+
+  app.delete('/codex-local-browse/*path', async (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const localPath = decodeBrowsePath(`/${rawPath}`)
+    if (!localPath || !isAbsolute(localPath)) {
+      res.status(400).json({ error: 'Expected absolute local file path.' })
+      return
+    }
+
+    try {
+      await deleteLocalBrowseFile(localPath)
+      res.status(200).json({ ok: true })
+    } catch (error) {
+      const mutationError = error instanceof LocalBrowseMutationError ? error : null
+      res.status(mutationError?.statusCode ?? 500).json({ error: mutationError?.message ?? 'Delete file failed.' })
     }
   })
 

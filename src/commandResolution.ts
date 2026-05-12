@@ -133,6 +133,23 @@ export function resolveCodexCommand(): string | null {
   return null
 }
 
+function getPotentialCodexMoonCommands(): string[] {
+  return uniqueStrings([
+    process.env.CODEXUI_CODEX_MOON_COMMAND?.trim(),
+    process.env.CODEX_MOON_COMMAND?.trim(),
+    'codex-moon',
+  ])
+}
+
+export function resolveCodexMoonCommand(): string | null {
+  for (const candidate of getPotentialCodexMoonCommands()) {
+    if (isRunnableCommand(candidate, ['--version'])) {
+      return candidate
+    }
+  }
+  return null
+}
+
 export function resolveRipgrepCommand(): string | null {
   const explicit = process.env.CODEXUI_RG_COMMAND?.trim()
   const packageCandidates = getPotentialNpmPrefixes().flatMap(getPotentialRipgrepExecutables)

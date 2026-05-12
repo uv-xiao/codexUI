@@ -2691,7 +2691,7 @@ stays at `source: "NoValues"` permanently. Feature gate `505458` (worktree) retu
 ### Free Mode (OpenRouter)
 
 #### Feature
-Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI API key. Uses XOR-encrypted community keys that rotate randomly per request. Default model is `openrouter/free` — OpenRouter's meta-model that auto-routes to the least-loaded free model, avoiding per-model rate limits. Model selector shows only free models when free mode is on. Config is isolated from `~/.codex/config.toml` — state stored in `~/.codex/webui-free-mode.json` and passed to app-server via `-c` CLI args.
+Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI API key. Uses XOR-encrypted community keys that rotate randomly per request. Default model is `openrouter/free` — OpenRouter's meta-model that auto-routes to the least-loaded free model, avoiding per-model rate limits. Model selector shows only free models when free mode is on. Config stays inside the running codexUI session and is passed to app-server via `-c` CLI args.
 
 #### Prerequisites
 - Project built: `pnpm run build`.
@@ -2705,7 +2705,7 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 5. Verify the toggle turns on and model dropdown changes to `openrouter/free`.
 6. Click the model dropdown — verify it shows **only** free models (gemma, llama, qwen, etc.) and no GPT/OpenAI default models.
 7. Verify `~/.codex/config.toml` was NOT modified (no `model_provider` or `model` entries added).
-8. Verify `~/.codex/webui-free-mode.json` exists and contains `{"enabled":true,"apiKey":"sk-or-v1-...","model":"openrouter/free"}`.
+8. Verify the active app-server session is using the free-mode provider and that a restart resets the provider back to Codex defaults.
 9. Open a new thread and send a message (e.g. "Say hello").
 10. Verify a response comes back from a free OpenRouter model (may be rate-limited during high demand).
 11. Toggle **Free mode (OpenRouter)** OFF.
@@ -2746,7 +2746,7 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 
 #### Rollback/Cleanup
 - Remove `src/server/freeMode.ts`, revert changes in `codexAppServerBridge.ts`, `codexGateway.ts`, and `App.vue`.
-- Delete `~/.codex/webui-free-mode.json` to clear free mode state.
+- Restart codexUI to clear session-local free mode state.
 
 ### Feature: Codex.app Thread Provider Filter Patch (fix-codex-thread-filter.sh)
 
@@ -2975,12 +2975,12 @@ OpenCode Zen as built-in provider + API format selector for custom endpoints
 - OpenCode Zen appears in provider dropdown alongside Codex/OpenRouter/Custom
 - OpenCode Zen defaults to `wire_api = "chat"` (Chat Completions API)
 - Custom endpoints show an API format selector; default is "Responses API"
-- Provider selection and wireApi are persisted in `~/.codex/webui-free-mode.json`
+- Provider selection and wireApi stay inside the running codexUI session
 - Model list for OpenCode Zen is fetched from `https://opencode.ai/zen/v1/models`
 
 #### Rollback/Cleanup
 - Switch provider back to "Codex" to disable free mode
-- No config files outside the project are modified (state stored in `~/.codex/webui-free-mode.json`)
+- No config files outside the project are modified (state stays in process memory)
 
 ### env_key Authentication for Custom Providers (codex CLI v0.93.0)
 
@@ -3250,6 +3250,64 @@ Model defaults are stored per provider (no cross-provider leakage), and OpenRout
 
 #### Rollback/Cleanup
 - Set provider/model/api format back to preferred defaults
+
+### Moon Bridge provider switch and model catalog
+
+#### Feature/Change Name
+Moon Bridge appears as a provider option and uses only the locally generated Moon Bridge model catalog.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Moon Bridge catalog generated at `~/.local/share/my-agent-configs/moonbridge/codex/models_catalog.json` or pointed to by `CODEXUI_MOONBRIDGE_MODEL_CATALOG`
+3. At least one existing thread to resume after switching providers
+
+#### Step-by-Step Actions
+1. Switch the UI to light theme.
+2. Open Settings and select `Moon Bridge` from the provider dropdown.
+3. Verify the provider-specific model dropdown shows only Moon Bridge catalog models, not OpenRouter or OpenCode Zen models.
+4. Start or reopen a thread under Codex, note the session/thread id, then switch to `Moon Bridge`.
+5. Verify the app restarts the backend and the same thread can be resumed after the switch.
+6. Switch the UI to dark theme and repeat the Settings check to confirm the provider row stays readable.
+
+#### Expected Results
+- `Moon Bridge` is available alongside `Codex`, `OpenRouter`, `OpenCode Zen`, and `Custom endpoint`.
+- The model list comes from the Moon Bridge catalog only.
+- Switching providers preserves the thread/session id so the conversation can be resumed after the backend restarts, while provider state itself stays session-local.
+- The provider row and dropdown remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Switch provider back to `Codex`.
+- Remove or ignore the Moon Bridge catalog file if it was created just for testing.
+
+### Session-local provider selection
+
+#### Feature/Change Name
+Provider selection follows the current thread/session instead of staying global across the whole app.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. At least two threads or sessions available in the sidebar
+3. Moon Bridge catalog available if one of the test sessions uses `Moon Bridge`
+4. Light and dark themes available from Settings
+
+#### Step-by-Step Actions
+1. Open the app in light theme.
+2. Select thread/session A and set Provider to `Moon Bridge`.
+3. Confirm the model dropdown only shows Moon Bridge catalog models.
+4. Switch to thread/session B that was not configured for Moon Bridge.
+5. Confirm Provider switches back to `Codex` for that session and the model dropdown shows Codex models.
+6. Switch back to session A and confirm `Moon Bridge` is restored.
+7. Switch to dark theme and repeat steps 2-6 once more.
+
+#### Expected Results
+- Provider selection is stored per session/thread, not as a single global UI preference.
+- Switching sessions restores the provider that belongs to that session.
+- Unconfigured sessions default to `Codex`.
+- The model list follows the active session provider instead of leaking the previous session's provider models.
+- Light and dark settings surfaces remain readable while switching providers and sessions.
+
+#### Rollback/Cleanup
+- Switch any test sessions back to `Codex` before leaving them, or close the test threads if they were created only for verification.
 
 ---
 

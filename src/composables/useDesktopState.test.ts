@@ -5,6 +5,9 @@ import {
   filterGroupsByWorkspaceRoots,
   findAdjacentThreadId,
   isThreadUnreadByLastRead,
+  normalizeProviderId,
+  readSelectedProvider,
+  writeSelectedProviderForContext,
 } from './useDesktopState'
 import type { UiProjectGroup } from '../types/codex'
 import type { WorkspaceRootsState } from '../api/codexGateway'
@@ -257,6 +260,20 @@ describe('workspace roots project persistence helpers', () => {
       active: ['/tmp/local-project'],
       projectOrder: ['remote-project-id', '/tmp/local-project'],
     })
+  })
+})
+
+describe('provider session helpers', () => {
+  it('defaults provider selections to Codex', () => {
+    expect(normalizeProviderId('')).toBe('codex')
+    expect(readSelectedProvider({}, '')).toBe('codex')
+  })
+
+  it('stores provider selections by session context', () => {
+    const next = writeSelectedProviderForContext({}, 'thread-a', 'moon')
+
+    expect(readSelectedProvider(next, 'thread-a')).toBe('moon')
+    expect(readSelectedProvider(next, 'thread-b')).toBe('codex')
   })
 })
 

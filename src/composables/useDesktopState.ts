@@ -81,7 +81,9 @@ const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode-by-context.v1'
 const LEGACY_COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode.v1'
+const SELECTED_PROVIDER_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.provider-by-context.v1'
 const NEW_THREAD_COLLABORATION_MODE_CONTEXT = '__new-thread__'
+const NEW_THREAD_PROVIDER_CONTEXT = '__new-thread-provider__'
 const NEW_THREAD_PROVIDER_MODEL_CONTEXT_PREFIX = '__new-thread-provider__::'
 const EVENT_SYNC_DEBOUNCE_MS = 220
 const BACKGROUND_THREAD_PAGINATION_DELAY_MS = 10_000
@@ -91,6 +93,8 @@ const RECENT_THREAD_MESSAGE_LOAD_REUSE_MS = 2000
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
+
+export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
 
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -153,6 +157,18 @@ function normalizeStoredModelId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+export function normalizeProviderId(value: unknown): ProviderId {
+  if (
+    value === 'openrouter'
+    || value === 'opencode-zen'
+    || value === 'custom'
+    || value === 'moon'
+  ) {
+    return value
+  }
+  return 'codex'
+}
+
 function createStringKeyedRecord<T>(): Record<string, T> {
   return Object.create(null) as Record<string, T>
 }
@@ -185,6 +201,7 @@ function pruneThreadContextStateMap<T>(
   for (const [contextId, value] of Object.entries(stateMap)) {
     if (
       contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
+      || contextId === NEW_THREAD_PROVIDER_CONTEXT
       || contextId.startsWith(NEW_THREAD_PROVIDER_MODEL_CONTEXT_PREFIX)
       || threadIds.has(contextId)
     ) {
@@ -210,6 +227,11 @@ function toProviderModelContextId(providerId: string): string {
 function toThreadContextId(threadId: string): string {
   const normalizedThreadId = threadId.trim()
   return normalizedThreadId || NEW_THREAD_COLLABORATION_MODE_CONTEXT
+}
+
+function toProviderSelectionContextId(threadId: string): string {
+  const normalizedThreadId = threadId.trim()
+  return normalizedThreadId || NEW_THREAD_PROVIDER_CONTEXT
 }
 
 function loadSelectedModelMap(): Record<string, string> {
@@ -264,6 +286,69 @@ function saveSelectedModelMap(state: Record<string, string>): void {
     window.localStorage.removeItem(LEGACY_SELECTED_MODEL_STORAGE_KEY)
   } catch {
     // Keep in-memory selection working even if localStorage writes fail.
+  }
+}
+
+function loadSelectedProviderMap(): Record<string, ProviderId> {
+  if (typeof window === 'undefined') return createStringKeyedRecord<ProviderId>()
+
+  try {
+    const raw = window.localStorage.getItem(SELECTED_PROVIDER_BY_CONTEXT_STORAGE_KEY)
+    if (!raw) return createStringKeyedRecord<ProviderId>()
+
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return createStringKeyedRecord<ProviderId>()
+    }
+
+    const next = createStringKeyedRecord<ProviderId>()
+    for (const [contextId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof contextId !== 'string' || contextId.length === 0) continue
+      const normalizedProvider = normalizeProviderId(value)
+      if (normalizedProvider !== 'codex') {
+        next[contextId] = normalizedProvider
+      }
+    }
+    return next
+  } catch {
+    return createStringKeyedRecord<ProviderId>()
+  }
+}
+
+export function readSelectedProvider(
+  state: Record<string, ProviderId>,
+  threadId: string,
+): ProviderId {
+  const contextId = toProviderSelectionContextId(threadId)
+  return normalizeProviderId(state[contextId])
+}
+
+export function writeSelectedProviderForContext(
+  state: Record<string, ProviderId>,
+  threadId: string,
+  provider: ProviderId,
+): Record<string, ProviderId> {
+  const contextId = toProviderSelectionContextId(threadId)
+  const normalizedProvider = normalizeProviderId(provider)
+  if (normalizedProvider === 'codex') {
+    return omitStringKeyedRecordKey(state, contextId)
+  }
+
+  const next = cloneStringKeyedRecord(state)
+  next[contextId] = normalizedProvider
+  return next
+}
+
+function saveSelectedProviderMap(state: Record<string, ProviderId>): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (Object.keys(state).length === 0) {
+      window.localStorage.removeItem(SELECTED_PROVIDER_BY_CONTEXT_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(SELECTED_PROVIDER_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
+    }
+  } catch {
+    // Keep in-memory provider selection working even if localStorage writes fail.
   }
 }
 
@@ -1356,10 +1441,12 @@ export function useDesktopState() {
     loadSelectedCollaborationModeMap(),
   )
   const selectedModelIdByContext = ref<Record<string, string>>(loadSelectedModelMap())
+  const selectedProviderByContext = ref<Record<string, ProviderId>>(loadSelectedProviderMap())
   const selectedCollaborationMode = ref<CollaborationModeKind>(
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
   )
   const selectedModelId = ref(readSelectedModel(selectedModelIdByContext.value, selectedThreadId.value))
+  const selectedProvider = ref<ProviderId>(readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value))
   const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
   const selectedSpeedMode = ref<SpeedMode>('standard')
   const activeProviderId = ref('')
@@ -1553,6 +1640,7 @@ export function useDesktopState() {
       selectedCollaborationModeByContext.value,
       nextThreadId,
     )
+    selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, nextThreadId)
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
   }
@@ -1592,6 +1680,27 @@ export function useDesktopState() {
     setSelectedModelIdForThread(selectedThreadId.value, modelId)
   }
 
+  function setSelectedProviderForThread(threadId: string, providerId: ProviderId): void {
+    const normalizedProvider = normalizeProviderId(providerId)
+    const contextId = toProviderSelectionContextId(threadId)
+    if (normalizedProvider !== 'codex') {
+      const nextProviderMap = cloneStringKeyedRecord(selectedProviderByContext.value)
+      nextProviderMap[contextId] = normalizedProvider
+      selectedProviderByContext.value = nextProviderMap
+    } else {
+      selectedProviderByContext.value = omitStringKeyedRecordKey(selectedProviderByContext.value, contextId)
+    }
+
+    if (contextId === toProviderSelectionContextId(selectedThreadId.value)) {
+      selectedProvider.value = normalizedProvider
+    }
+    saveSelectedProviderMap(selectedProviderByContext.value)
+  }
+
+  function setSelectedProvider(providerId: ProviderId): void {
+    setSelectedProviderForThread(selectedThreadId.value, providerId)
+  }
+
   function setThreadModelId(threadId: string, modelId: string): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
@@ -1609,6 +1718,13 @@ export function useDesktopState() {
       selectedModelId.value = readModelIdForThread(selectedThreadId.value)
     }
     saveSelectedModelMap(selectedModelIdByContext.value)
+  }
+
+  function setThreadProviderId(threadId: string, providerId: ProviderId): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+
+    setSelectedProviderForThread(normalizedThreadId, providerId)
   }
 
   function setThreadTokenUsage(threadId: string, usage: UiThreadTokenUsage | null): void {
@@ -2040,6 +2156,15 @@ export function useDesktopState() {
       selectedModelId.value = readModelIdForThread(selectedThreadId.value)
       ensureAvailableModelIds(selectedModelId.value)
       saveSelectedModelMap(nextSelectedModelMap)
+    }
+    const nextSelectedProviderMap = pruneThreadContextStateMap(
+      selectedProviderByContext.value,
+      activeThreadIds,
+    )
+    if (nextSelectedProviderMap !== selectedProviderByContext.value) {
+      selectedProviderByContext.value = nextSelectedProviderMap
+      selectedProvider.value = readSelectedProvider(nextSelectedProviderMap, selectedThreadId.value)
+      saveSelectedProviderMap(nextSelectedProviderMap)
     }
     const nextSelectedCollaborationModeMap = pruneThreadContextStateMap(
       selectedCollaborationModeByContext.value,
@@ -4117,7 +4242,7 @@ export function useDesktopState() {
     await loadThreadsPromise
   }
 
-  async function loadMessages(threadId: string, options: { silent?: boolean } = {}) {
+  async function loadMessages(threadId: string, options: { silent?: boolean; force?: boolean } = {}) {
     if (!threadId) {
       return
     }
@@ -4130,6 +4255,7 @@ export function useDesktopState() {
 
     const alreadyLoaded = loadedMessagesByThreadId.value[threadId] === true
     const shouldShowLoading = options.silent !== true && !alreadyLoaded
+    const forceReload = options.force === true
     if (shouldShowLoading) {
       isLoadingMessages.value = true
     }
@@ -4141,6 +4267,7 @@ export function useDesktopState() {
       const loadedRecently =
         Date.now() - (lastMessageLoadAtByThreadId.get(threadId) ?? 0) < RECENT_THREAD_MESSAGE_LOAD_REUSE_MS
       const canReuseLoadedMessages =
+        !forceReload &&
         alreadyLoaded &&
         (
           loadedRecently ||
@@ -4155,7 +4282,7 @@ export function useDesktopState() {
         return
       }
 
-      const needsResume = resumedThreadById.value[threadId] !== true
+      const needsResume = forceReload || resumedThreadById.value[threadId] !== true
       const resumedThread = needsResume ? await resumeThread(threadId) : null
       const detail = resumedThread ?? await getThreadDetail(threadId)
 
@@ -4367,6 +4494,7 @@ export function useDesktopState() {
     const sourceCwd = sourceThread?.cwd?.trim() ?? ''
     const sourceTitle = sourceThread?.title?.trim() ?? 'Forked chat'
     const selectedModel = readModelIdForThread(sourceThreadId)
+    const sourceProvider = readSelectedProvider(selectedProviderByContext.value, sourceThreadId)
     error.value = ''
 
     try {
@@ -4376,6 +4504,7 @@ export function useDesktopState() {
 
       insertOptimisticThread(nextThreadId, sourceCwd, sourceTitle)
       setThreadModelId(nextThreadId, forkedThread.model)
+      setThreadProviderId(nextThreadId, sourceProvider)
       resumedThreadById.value = {
         ...resumedThreadById.value,
         [nextThreadId]: true,
@@ -4419,6 +4548,7 @@ export function useDesktopState() {
     if (lastTurnIndex >= 0 && turnIndex > lastTurnIndex) return ''
 
     const sourceThread = flattenThreads(sourceGroups.value).find((row) => row.id === normalizedThreadId) ?? null
+    const sourceProvider = readSelectedProvider(selectedProviderByContext.value, normalizedThreadId)
 
     try {
       error.value = ''
@@ -4430,6 +4560,7 @@ export function useDesktopState() {
       const forkedThreadTitle = toForkedThreadTitle(sourceThread?.title || sourceThread?.preview || 'Untitled thread')
       insertOptimisticThread(forkedThreadId, forkedCwd, forkedThreadTitle)
       setThreadModelId(forkedThreadId, forked.model)
+      setThreadProviderId(forkedThreadId, sourceProvider)
       setPersistedMessagesForThread(forkedThreadId, forked.messages)
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
@@ -4619,6 +4750,7 @@ export function useDesktopState() {
       selectedCollaborationModeByContext.value,
       NEW_THREAD_COLLABORATION_MODE_CONTEXT,
     )
+    const selectedProviderForNewThread = selectedProvider.value
     if (!nextText && imageUrls.length === 0 && fileAttachments.length === 0) return ''
 
     isSendingMessage.value = true
@@ -4630,6 +4762,7 @@ export function useDesktopState() {
         const startedThread = await startThread(targetCwd || undefined, selectedModel || undefined)
         threadId = startedThread.threadId
         setThreadModelId(threadId, startedThread.model)
+        setThreadProviderId(threadId, selectedProviderForNewThread)
         setSelectedCollaborationModeForThread(threadId, selectedMode)
       } catch (unknownError) {
         if (selectedModel && selectedModel !== MODEL_FALLBACK_ID && isUnsupportedChatGptModelError(unknownError)) {
@@ -4637,6 +4770,7 @@ export function useDesktopState() {
           const fallbackThread = await startThread(targetCwd || undefined, MODEL_FALLBACK_ID)
           threadId = fallbackThread.threadId
           setThreadModelId(threadId, fallbackThread.model)
+          setThreadProviderId(threadId, selectedProviderForNewThread)
           setSelectedCollaborationModeForThread(threadId, selectedMode)
         } else {
           throw unknownError
@@ -5402,6 +5536,7 @@ export function useDesktopState() {
     availableModelIds,
     selectedCollaborationMode,
     selectedModelId,
+    selectedProvider,
     selectedReasoningEffort,
     selectedSpeedMode,
     installedSkills,
@@ -5417,6 +5552,7 @@ export function useDesktopState() {
     error,
     refreshAll,
     refreshSkills,
+    refreshAncillaryState,
     selectThread,
     loadMessages,
     ensureThreadMessagesLoaded,
@@ -5439,6 +5575,7 @@ export function useDesktopState() {
     readModelIdForThread,
     setSelectedModelIdForThread,
     setSelectedModelId,
+    setSelectedProvider,
 
     setSelectedReasoningEffort,
     updateSelectedSpeedMode,

@@ -1,13 +1,14 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
-import { createDirectoryListingHtml, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from "./src/server/katexAssets";
 import tailwindcss from "@tailwindcss/vite";
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { stat, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute } from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import pkg from "./package.json";
 
@@ -33,6 +34,22 @@ function normalizeLocalImagePath(rawPath: string): string {
     }
   }
   return trimmed;
+}
+
+function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(payload));
+}
+
+async function readJsonRequestBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) return {};
+  return JSON.parse(raw);
 }
 
 function getWorktreeName(): string {
@@ -291,6 +308,45 @@ export default defineConfig({
             res.statusCode = 404;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: "Directory not found." }));
+          }
+        });
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url || (req.method !== "POST" && req.method !== "DELETE")) return next();
+          const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith("/codex-local-browse/")) return next();
+
+          const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-browse".length));
+          if (!localPath || !isAbsolute(localPath)) {
+            sendJson(res, 400, { error: "Expected absolute local file path." });
+            return;
+          }
+
+          if (req.method === "POST") {
+            let payload: unknown;
+            try {
+              payload = await readJsonRequestBody(req);
+            } catch {
+              sendJson(res, 400, { error: "Invalid JSON body." });
+              return;
+            }
+            const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
+            const name = typeof record?.name === "string" ? record.name : "";
+            try {
+              const filePath = await createLocalBrowseFile(localPath, name);
+              sendJson(res, 201, { data: { path: filePath } });
+            } catch (error) {
+              const mutationError = error instanceof LocalBrowseMutationError ? error : null;
+              sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Create file failed." });
+            }
+            return;
+          }
+
+          try {
+            await deleteLocalBrowseFile(localPath);
+            sendJson(res, 200, { ok: true });
+          } catch (error) {
+            const mutationError = error instanceof LocalBrowseMutationError ? error : null;
+            sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Delete file failed." });
           }
         });
         server.middlewares.use(async (req, res, next) => {

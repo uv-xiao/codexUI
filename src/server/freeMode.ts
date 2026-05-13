@@ -101,6 +101,11 @@ export const MOONBRIDGE_PROVIDER_ID = 'moon'
 export const MOONBRIDGE_PROVIDER_NAME = 'Moon Bridge'
 export const MOONBRIDGE_MODEL_CATALOG_FILE = 'models_catalog.json'
 
+export type MoonBridgeModelMetadata = {
+  id: string
+  contextWindow: number | null
+}
+
 const FALLBACK_FREE_MODELS = [
   'openrouter/free',
   'google/gemma-4-26b-a4b-it:free',
@@ -164,36 +169,66 @@ export function getMoonBridgeModelCatalogPath(): string {
   return join(getMoonBridgeDataHomeDir(), 'my-agent-configs', 'moonbridge', 'codex', MOONBRIDGE_MODEL_CATALOG_FILE)
 }
 
-export function getMoonBridgeModels(): string[] {
+function readMoonBridgeModelCatalogRows(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    return Array.isArray(record.models) ? record.models : []
+  }
+  return []
+}
+
+function readMoonBridgeModelId(record: Record<string, unknown>): string {
+  for (const key of ['slug', 'display_name', 'id', 'model', 'name']) {
+    const value = record[key]
+    if (typeof value !== 'string') continue
+    const candidate = value.trim()
+    if (candidate.length > 0) return candidate
+  }
+  return ''
+}
+
+function readMoonBridgeTokenCount(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value)
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.trunc(parsed)
+    }
+  }
+  return null
+}
+
+export function getMoonBridgeModelMetadata(): MoonBridgeModelMetadata[] {
   try {
     const raw = JSON.parse(readFileSync(getMoonBridgeModelCatalogPath(), 'utf8')) as unknown
-    const rows = Array.isArray(raw)
-      ? raw
-      : (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray((raw as Record<string, unknown>).models))
-        ? (raw as Record<string, unknown>).models as unknown[]
-        : []
-    const models: string[] = []
+    const rows = readMoonBridgeModelCatalogRows(raw)
+    const models: MoonBridgeModelMetadata[] = []
     for (const row of rows) {
       if (!row || typeof row !== 'object' || Array.isArray(row)) continue
       const record = row as Record<string, unknown>
-      const candidate = typeof record.slug === 'string' && record.slug.trim().length > 0
-        ? record.slug.trim()
-        : typeof record.display_name === 'string' && record.display_name.trim().length > 0
-          ? record.display_name.trim()
-          : typeof record.id === 'string' && record.id.trim().length > 0
-            ? record.id.trim()
-            : typeof record.model === 'string' && record.model.trim().length > 0
-              ? record.model.trim()
-              : typeof record.name === 'string' && record.name.trim().length > 0
-                ? record.name.trim()
-                : ''
-      if (!candidate || models.includes(candidate)) continue
-      models.push(candidate)
+      const id = readMoonBridgeModelId(record)
+      if (!id || models.some((model) => model.id === id)) continue
+      models.push({
+        id,
+        contextWindow: readMoonBridgeTokenCount(
+          record.context_window
+            ?? record.contextWindow
+            ?? record.max_context_window
+            ?? record.maxContextWindow,
+        ),
+      })
     }
     return models
   } catch {
     return []
   }
+}
+
+export function getMoonBridgeModels(): string[] {
+  return getMoonBridgeModelMetadata().map((model) => model.id)
 }
 
 export type WireApi = 'responses' | 'chat'

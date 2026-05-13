@@ -248,6 +248,11 @@ type ProviderModelsResponse = {
   data?: unknown
 }
 
+export type MoonBridgeModelMetadata = {
+  id: string
+  contextWindow: number | null
+}
+
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
 
 type ResolvedCollaborationModeSettings = {
@@ -417,6 +422,19 @@ function readString(value: unknown): string | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readPositiveInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value)
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.trunc(parsed)
+    }
+  }
+  return null
 }
 
 function readBoolean(value: unknown): boolean | null {
@@ -1895,6 +1913,58 @@ export async function getMoonBridgeModelIds(): Promise<string[]> {
       ids.push(normalized)
     }
     return ids
+  } catch {
+    return []
+  }
+}
+
+function normalizeMoonBridgeModelMetadataRow(value: unknown): MoonBridgeModelMetadata | null {
+  if (typeof value === 'string') {
+    const id = value.trim()
+    return id ? { id, contextWindow: null } : null
+  }
+
+  const record = asRecord(value)
+  if (!record) return null
+
+  const id = (
+    readString(record.id)
+    ?? readString(record.slug)
+    ?? readString(record.model)
+    ?? readString(record.name)
+    ?? readString(record.display_name)
+    ?? ''
+  ).trim()
+  if (!id) return null
+
+  return {
+    id,
+    contextWindow: readPositiveInteger(
+      record.contextWindow
+        ?? record.context_window
+        ?? record.maxContextWindow
+        ?? record.max_context_window,
+    ),
+  }
+}
+
+export async function getMoonBridgeModelMetadata(): Promise<MoonBridgeModelMetadata[]> {
+  try {
+    const response = await fetch('/codex-api/moonbridge/model-metadata', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+
+    const payload = (await response.json()) as unknown
+    const record = asRecord(payload)
+    const rows = Array.isArray(record?.data) ? record.data : []
+    const models: MoonBridgeModelMetadata[] = []
+    for (const row of rows) {
+      const model = normalizeMoonBridgeModelMetadataRow(row)
+      if (!model || models.some((existing) => existing.id === model.id)) continue
+      models.push(model)
+    }
+    return models
   } catch {
     return []
   }

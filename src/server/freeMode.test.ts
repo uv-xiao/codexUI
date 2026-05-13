@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createDefaultFreeModeState, getMoonBridgeModels } from './freeMode.js'
+import { createDefaultFreeModeState, getMoonBridgeModelMetadata, getMoonBridgeModels } from './freeMode.js'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -25,9 +25,9 @@ describe('Moon Bridge catalog loading', () => {
         catalogPath,
         JSON.stringify({
           models: [
-            { slug: 'deepseek-v4-pro' },
-            { slug: 'deepseek-v4-flash' },
-            { slug: 'deepseek-v4-pro' },
+            { slug: 'deepseek-v4-pro', context_window: 128000 },
+            { slug: 'deepseek-v4-flash', context_window: '64000' },
+            { slug: 'deepseek-v4-pro', context_window: 32000 },
           ],
         }),
         'utf8',
@@ -36,6 +36,10 @@ describe('Moon Bridge catalog loading', () => {
       vi.stubEnv('CODEXUI_MOONBRIDGE_MODEL_CATALOG', catalogPath)
 
       expect(getMoonBridgeModels()).toEqual(['deepseek-v4-pro', 'deepseek-v4-flash'])
+      expect(getMoonBridgeModelMetadata()).toEqual([
+        { id: 'deepseek-v4-pro', contextWindow: 128000 },
+        { id: 'deepseek-v4-flash', contextWindow: 64000 },
+      ])
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

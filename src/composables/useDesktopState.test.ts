@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   buildWorkspaceRootsProjectOrderState,
   collectWorkspaceRootPathsForProjectRemoval,
+  applyModelContextWindowToThreadTokenUsage,
   filterGroupsByWorkspaceRoots,
   findAdjacentThreadId,
   inferProviderFromModel,
   isThreadUnreadByLastRead,
   normalizeProviderId,
+  useDesktopState,
   readSelectedProvider,
+  readSelectedModelForThreadContext,
   writeSelectedProviderForContext,
 } from './useDesktopState'
 import type { UiProjectGroup } from '../types/codex'
@@ -290,6 +293,55 @@ describe('provider session helpers', () => {
   it('infers Moon Bridge provider from session model catalog entries', () => {
     expect(inferProviderFromModel('glm-5.1', ['glm-5.1', 'kimi-k2.6'])).toBe('moon')
     expect(inferProviderFromModel('gpt-5.4-mini', ['glm-5.1', 'kimi-k2.6'])).toBeNull()
+  })
+
+  it('keeps the new-thread model selection scoped to the active session provider', () => {
+    const state = {
+      '__new-thread__': 'gpt-5.4-mini',
+      '__new-thread-provider__::codex': 'gpt-5.4-mini',
+      '__new-thread-provider__::moon': 'glm-5.1',
+    }
+
+    expect(readSelectedModelForThreadContext(state, '__new-thread__', 'moon')).toBe('glm-5.1')
+    expect(readSelectedModelForThreadContext(state, '', 'codex')).toBe('gpt-5.4-mini')
+  })
+
+  it('updates the current model ref when selecting a model for the new-thread composer', () => {
+    const state = useDesktopState()
+
+    state.setSelectedModelIdForThread('__new-thread__', 'gpt-5.4-mini')
+
+    expect(state.selectedModelId.value).toBe('gpt-5.4-mini')
+  })
+
+  it('recomputes token usage from the selected model context window', () => {
+    const usage = applyModelContextWindowToThreadTokenUsage({
+      total: {
+        totalTokens: 15000,
+        inputTokens: 9000,
+        cachedInputTokens: 0,
+        outputTokens: 6000,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: 15000,
+        inputTokens: 9000,
+        cachedInputTokens: 0,
+        outputTokens: 6000,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 12000,
+      currentContextTokens: 15000,
+      remainingContextTokens: 0,
+      remainingContextPercent: 0,
+    }, 200000)
+
+    expect(usage).toMatchObject({
+      modelContextWindow: 200000,
+      currentContextTokens: 15000,
+      remainingContextTokens: 185000,
+      remainingContextPercent: 93,
+    })
   })
 })
 

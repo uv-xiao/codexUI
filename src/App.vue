@@ -3733,13 +3733,9 @@ async function applySelectedProviderState(
 async function onProviderChange(provider: string): Promise<void> {
   if (freeModeLoading.value) return
   freeModeLoading.value = true
-  const previousThreadId = selectedThreadId.value.trim()
   try {
     setSelectedProvider(normalizeProviderSelection(provider))
     await applySelectedProviderState()
-    if (previousThreadId) {
-      await loadMessages(previousThreadId, { silent: true, force: true })
-    }
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
   } finally {

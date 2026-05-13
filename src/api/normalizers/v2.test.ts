@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeThreadMessagesV2, readThreadInProgressFromResponse } from './v2'
-import type { ThreadReadResponse } from '../appServerDtos'
+import { normalizeThreadGroupsV2, normalizeThreadMessagesV2, readThreadInProgressFromResponse } from './v2'
+import type { ThreadListResponse, ThreadReadResponse } from '../appServerDtos'
 
 function threadReadResponseWithContent(content: ThreadReadResponse['thread']['turns'][number]['items'][number][]): ThreadReadResponse {
   return {
@@ -182,5 +182,33 @@ describe('readThreadInProgressFromResponse', () => {
     ;(response.thread as unknown as { status: { type: string } }).status = { type: 'active' }
 
     expect(readThreadInProgressFromResponse(response)).toBe(true)
+  })
+})
+
+describe('normalizeThreadGroupsV2', () => {
+  it('preserves thread model providers from thread list summaries', () => {
+    const payload: ThreadListResponse = {
+      data: [
+        {
+          id: 'thread-1',
+          preview: 'Moon session',
+          modelProvider: 'moon',
+          createdAt: 1710000000,
+          updatedAt: 1710000300,
+          path: null,
+          cwd: '/tmp/project',
+          cliVersion: '0.130.0',
+          source: 'appServer',
+          gitInfo: null,
+          turns: [],
+        },
+      ],
+      nextCursor: null,
+    }
+
+    const groups = normalizeThreadGroupsV2(payload)
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.threads[0]?.modelProvider).toBe('moon')
   })
 })

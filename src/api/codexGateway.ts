@@ -1512,12 +1512,28 @@ export type ResumedThread = {
 const RESUME_THREAD_COALESCE_TTL_MS = 30_000
 const recentResumeThreadById = new Map<string, Promise<ResumedThread>>()
 
-export async function resumeThread(threadId: string): Promise<ResumedThread> {
-  const existing = recentResumeThreadById.get(threadId)
+export async function resumeThread(
+  threadId: string,
+  model?: string,
+  modelProvider?: string,
+): Promise<ResumedThread> {
+  const resumeKey = JSON.stringify([
+    threadId,
+    typeof model === 'string' ? model.trim() : '',
+    typeof modelProvider === 'string' ? modelProvider.trim() : '',
+  ])
+  const existing = recentResumeThreadById.get(resumeKey)
   if (existing) return existing
 
   const promise = (async () => {
-    const payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
+    const params: Record<string, unknown> = { threadId }
+    if (typeof model === 'string' && model.trim().length > 0) {
+      params.model = model.trim()
+    }
+    if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+      params.modelProvider = modelProvider.trim()
+    }
+    const payload = await callRpc<ThreadResumeResponse>('thread/resume', params)
     const startTurnIndex = readThreadTurnStartIndex(payload)
     const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
     return {
@@ -1531,17 +1547,17 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
     }
   })()
 
-  recentResumeThreadById.set(threadId, promise)
+  recentResumeThreadById.set(resumeKey, promise)
   const hardEvictionTimer = globalThis.setTimeout(() => {
-    if (recentResumeThreadById.get(threadId) === promise) {
-      recentResumeThreadById.delete(threadId)
+    if (recentResumeThreadById.get(resumeKey) === promise) {
+      recentResumeThreadById.delete(resumeKey)
     }
   }, RESUME_THREAD_COALESCE_TTL_MS)
   void promise.finally(() => {
     globalThis.clearTimeout(hardEvictionTimer)
     globalThis.setTimeout(() => {
-      if (recentResumeThreadById.get(threadId) === promise) {
-        recentResumeThreadById.delete(threadId)
+      if (recentResumeThreadById.get(resumeKey) === promise) {
+        recentResumeThreadById.delete(resumeKey)
       }
     }, 2000)
   }).catch(() => undefined)
@@ -1680,7 +1696,7 @@ export type ForkedThread = {
   messages: UiMessage[]
 }
 
-export async function startThread(cwd?: string, model?: string): Promise<StartedThread> {
+export async function startThread(cwd?: string, model?: string, modelProvider?: string): Promise<StartedThread> {
   try {
     const params: Record<string, unknown> = {}
     if (typeof cwd === 'string' && cwd.trim().length > 0) {
@@ -1688,6 +1704,9 @@ export async function startThread(cwd?: string, model?: string): Promise<Started
     }
     if (typeof model === 'string' && model.trim().length > 0) {
       params.model = model.trim()
+    }
+    if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+      params.modelProvider = modelProvider.trim()
     }
     const payload = await callRpc<ThreadStartResponse>('thread/start', params)
     const threadId = normalizeThreadIdFromPayload(payload)
@@ -1708,8 +1727,15 @@ export async function forkThread(threadId: string): Promise<ForkedThread>
 export async function forkThread(threadId: string, cwd: string | undefined, model: string | undefined): Promise<StartedThread>
 export async function forkThread(
   threadId: string,
+  cwd: string | undefined,
+  model: string | undefined,
+  modelProvider: string | undefined,
+): Promise<StartedThread>
+export async function forkThread(
+  threadId: string,
   cwd?: string,
   model?: string,
+  modelProvider?: string,
 ): Promise<StartedThread | ForkedThread> {
   if (arguments.length <= 1) {
     try {
@@ -1746,6 +1772,9 @@ export async function forkThread(
     }
     if (typeof model === 'string' && model.trim().length > 0) {
       params.model = model.trim()
+    }
+    if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+      params.modelProvider = modelProvider.trim()
     }
     const payload = await callRpc<ThreadForkResponse>('thread/fork', params)
     const nextThreadId = normalizeThreadIdFromPayload(payload)

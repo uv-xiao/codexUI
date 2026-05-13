@@ -5700,6 +5700,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/codex-api/moonbridge/models') {
+        setJson(res, 200, { data: getMoonBridgeModels(), source: 'moon' })
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/provider-models') {
         const fmState = appServer.getFreeModeState()
         if (fmState.enabled) {

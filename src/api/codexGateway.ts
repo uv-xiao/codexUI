@@ -1302,6 +1302,7 @@ export async function removeAccount(accountId: string): Promise<AccountsListResu
 
 export type ResumedThread = {
   model: string
+  modelProvider: string
   messages: UiMessage[]
   inProgress: boolean
   activeTurnId: string
@@ -1315,6 +1316,7 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
   })
   return {
     model: normalizeThreadModelFromPayload(payload),
+    modelProvider: normalizeThreadModelProviderFromPayload(payload),
     messages: normalizeThreadMessagesV2(payload),
     inProgress: readThreadInProgressFromResponse(payload),
     activeTurnId: readActiveTurnIdFromResponse(payload),
@@ -1383,15 +1385,37 @@ function normalizeThreadModelFromPayload(payload: unknown): string {
   return typeof model === 'string' ? model.trim() : ''
 }
 
+function normalizeThreadModelProviderFromPayload(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return ''
+  const record = payload as Record<string, unknown>
+  const thread = asRecord(record.thread)
+  const candidates = [
+    record.modelProvider,
+    record.model_provider,
+    thread?.modelProvider,
+    thread?.model_provider,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim()
+    }
+  }
+
+  return ''
+}
+
 export type StartedThread = {
   threadId: string
   model: string
+  modelProvider: string
 }
 
 export type ForkedThread = {
   threadId: string
   cwd: string
   model: string
+  modelProvider: string
   messages: UiMessage[]
 }
 
@@ -1414,6 +1438,7 @@ export async function startThread(cwd?: string, model?: string): Promise<Started
     return {
       threadId,
       model: normalizeThreadModelFromPayload(payload),
+      modelProvider: normalizeThreadModelProviderFromPayload(payload),
     }
   } catch (error) {
     throw normalizeCodexApiError(error, 'Failed to start a new thread', 'thread/start')
@@ -1441,6 +1466,7 @@ export async function forkThread(
         threadId: forkedThreadId,
         cwd: normalizeThreadCwdFromPayload(payload),
         model: normalizeThreadModelFromPayload(payload),
+        modelProvider: normalizeThreadModelProviderFromPayload(payload),
         messages: normalizeThreadMessagesV2(payload),
       }
     } catch (error) {
@@ -1471,6 +1497,7 @@ export async function forkThread(
     return {
       threadId: nextThreadId,
       model: normalizeThreadModelFromPayload(payload),
+      modelProvider: normalizeThreadModelProviderFromPayload(payload),
     }
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to fork thread ${threadId}`, 'thread/fork')
@@ -1824,6 +1851,29 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
   }
 
   return ids
+}
+
+export async function getMoonBridgeModelIds(): Promise<string[]> {
+  try {
+    const response = await fetch('/codex-api/moonbridge/models', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+
+    const payload = (await response.json()) as unknown
+    const record = asRecord(payload)
+    const rows = Array.isArray(record?.data) ? record.data : []
+    const ids: string[] = []
+    for (const row of rows) {
+      if (typeof row !== 'string') continue
+      const normalized = row.trim()
+      if (!normalized || ids.includes(normalized)) continue
+      ids.push(normalized)
+    }
+    return ids
+  } catch {
+    return []
+  }
 }
 
 export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {

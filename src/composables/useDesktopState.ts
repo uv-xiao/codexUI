@@ -19,6 +19,7 @@ import {
   rollbackThread,
   getThreadGroupsPage,
   getThreadQueueState,
+  getMoonBridgeModelIds,
   getWorkspaceRootsState,
   setCodexSpeedMode,
   setThreadQueueState,
@@ -158,13 +159,18 @@ function normalizeStoredModelId(value: unknown): string {
 }
 
 export function normalizeProviderId(value: unknown): ProviderId {
-  if (
-    value === 'openrouter'
-    || value === 'opencode-zen'
-    || value === 'custom'
-    || value === 'moon'
-  ) {
-    return value
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (normalized === 'openrouter' || normalized === 'openrouter-free') {
+    return 'openrouter'
+  }
+  if (normalized === 'opencode-zen') {
+    return 'opencode-zen'
+  }
+  if (normalized === 'custom' || normalized === 'custom-endpoint') {
+    return 'custom'
+  }
+  if (normalized === 'moon') {
+    return 'moon'
   }
   return 'codex'
 }
@@ -214,8 +220,13 @@ function pruneThreadContextStateMap<T>(
 }
 
 function normalizeProviderContextId(providerId: string): string {
-  const normalized = providerId.trim().toLowerCase()
-  return normalized || 'codex'
+  return normalizeProviderId(providerId)
+}
+
+export function inferProviderFromModel(modelId: string, moonBridgeModels: string[]): ProviderId | null {
+  const normalizedModelId = normalizeStoredModelId(modelId)
+  if (!normalizedModelId) return null
+  return moonBridgeModels.includes(normalizedModelId) ? 'moon' : null
 }
 
 function toProviderModelContextId(providerId: string): string {
@@ -1433,6 +1444,7 @@ export function useDesktopState() {
   let hasLoadedPersistedQueueState = false
   const eventUnreadByThreadId = ref<Record<string, boolean>>({})
   const availableModelIds = ref<string[]>([])
+  const moonBridgeModelIds = ref<string[]>([])
   const availableCollaborationModes = ref<CollaborationModeOption[]>([
     { value: 'default', label: 'Default' },
     { value: 'plan', label: 'Plan' },
@@ -1617,6 +1629,48 @@ export function useDesktopState() {
     return readSelectedModel(selectedModelIdByContext.value, threadId).trim()
   }
 
+  function syncThreadProviderFromModel(threadId: string, modelId: string): void {
+    const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
+    const normalizedThreadId = threadId.trim()
+    if (normalizedThreadId) {
+      if (inferredProvider) {
+        setThreadProviderId(normalizedThreadId, inferredProvider)
+        return
+      }
+
+      if (readSelectedProvider(selectedProviderByContext.value, normalizedThreadId) === 'moon') {
+        setThreadProviderId(normalizedThreadId, 'codex')
+      }
+      return
+    }
+
+    if (inferredProvider) {
+      setSelectedProviderForThread('', inferredProvider)
+      return
+    }
+
+    if (readSelectedProvider(selectedProviderByContext.value, '') === 'moon') {
+      setSelectedProviderForThread('', 'codex')
+    }
+  }
+
+  function applyThreadModelState(threadId: string, modelId: string, providerId?: unknown): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+
+    setThreadModelId(normalizedThreadId, modelId)
+
+    const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
+    const normalizedProvider = normalizeProviderId(providerId)
+    if (inferredProvider) {
+      setThreadProviderId(normalizedThreadId, inferredProvider)
+      return
+    }
+    if (normalizedProvider !== 'codex') {
+      setThreadProviderId(normalizedThreadId, normalizedProvider)
+    }
+  }
+
   function ensureAvailableModelIds(...modelIds: string[]): void {
     const nextModelIds = [...availableModelIds.value]
     for (const modelId of modelIds) {
@@ -1640,6 +1694,8 @@ export function useDesktopState() {
       selectedCollaborationModeByContext.value,
       nextThreadId,
     )
+    selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, nextThreadId)
+    syncThreadProviderFromModel(nextThreadId, selectedModelId.value)
     selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, nextThreadId)
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
@@ -1673,6 +1729,7 @@ export function useDesktopState() {
         }
       }
     }
+    syncThreadProviderFromModel(threadId, normalizedModelId)
     saveSelectedModelMap(selectedModelIdByContext.value)
   }
 
@@ -1680,7 +1737,7 @@ export function useDesktopState() {
     setSelectedModelIdForThread(selectedThreadId.value, modelId)
   }
 
-  function setSelectedProviderForThread(threadId: string, providerId: ProviderId): void {
+  function setSelectedProviderForThread(threadId: string, providerId: unknown): void {
     const normalizedProvider = normalizeProviderId(providerId)
     const contextId = toProviderSelectionContextId(threadId)
     if (normalizedProvider !== 'codex') {
@@ -1717,10 +1774,11 @@ export function useDesktopState() {
     if (selectedThreadId.value === normalizedThreadId) {
       selectedModelId.value = readModelIdForThread(selectedThreadId.value)
     }
+    syncThreadProviderFromModel(normalizedThreadId, normalizedModelId)
     saveSelectedModelMap(selectedModelIdByContext.value)
   }
 
-  function setThreadProviderId(threadId: string, providerId: ProviderId): void {
+  function setThreadProviderId(threadId: string, providerId: unknown): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
 
@@ -1838,7 +1896,8 @@ export function useDesktopState() {
       setThreadInProgress(threadId, true)
 
       if (resumedThreadById.value[threadId] !== true) {
-        await resumeThread(threadId)
+        const resumedThread = await resumeThread(threadId)
+        applyThreadModelState(threadId, resumedThread.model, resumedThread.modelProvider)
       }
 
       await startThreadTurn(
@@ -1923,12 +1982,25 @@ export function useDesktopState() {
     return [`Mode: ${modeLabel}`, `Model: ${modelLabel}`, `Thinking: ${effortLabel}`, `Speed: ${speedLabel}`]
   }
 
+  async function refreshMoonBridgeModelIds(): Promise<void> {
+    const ids = await getMoonBridgeModelIds()
+    moonBridgeModelIds.value = ids
+    syncThreadProviderFromModel(selectedThreadId.value, readModelIdForThread(selectedThreadId.value))
+  }
+
+  function invalidateAppServerRuntimeState(): void {
+    resumedThreadById.value = {}
+    activeTurnIdByThreadId.value = {}
+  }
+
   async function refreshModelPreferences(options?: { providerChanged?: boolean; includeProviderModels?: boolean }): Promise<void> {
     try {
-      const [modelIds, currentConfig] = await Promise.all([
+      const [modelIds, currentConfig, moonModels] = await Promise.all([
         getAvailableModelIds({ includeProviderModels: options?.includeProviderModels !== false }),
         getCurrentModelConfig(),
+        moonBridgeModelIds.value.length > 0 ? Promise.resolve(moonBridgeModelIds.value) : getMoonBridgeModelIds(),
       ])
+      moonBridgeModelIds.value = moonModels
 
       const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
       const normalizedConfiguredModelId = currentConfig.model.trim()
@@ -1949,15 +2021,9 @@ export function useDesktopState() {
       availableModelIds.value = nextModelIds
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
-      if (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged) {
-        if (options?.providerChanged && nextModelIds.length > 0) {
-          if (providerScopedModelId && nextModelIds.includes(providerScopedModelId)) {
-            setSelectedModelId(providerScopedModelId)
-          } else if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
-            setSelectedModelId(normalizedConfiguredModelId)
-          } else {
-            setSelectedModelId(nextModelIds[0])
-          }
+      if (!normalizedSelectedModelId || !currentModelInNewList) {
+        if (providerScopedModelId && nextModelIds.includes(providerScopedModelId)) {
+          setSelectedModelId(providerScopedModelId)
         } else if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
           setSelectedModelId(currentConfig.model)
         } else if (nextModelIds.length > 0) {
@@ -4262,87 +4328,87 @@ export function useDesktopState() {
 
     const loadPromise = (async () => {
       try {
-      const version = currentThreadVersion(threadId)
-      const loadedVersion = loadedVersionByThreadId.value[threadId] ?? ''
-      const loadedRecently =
-        Date.now() - (lastMessageLoadAtByThreadId.get(threadId) ?? 0) < RECENT_THREAD_MESSAGE_LOAD_REUSE_MS
-      const canReuseLoadedMessages =
-        !forceReload &&
-        alreadyLoaded &&
-        (
-          loadedRecently ||
+        const version = currentThreadVersion(threadId)
+        const loadedVersion = loadedVersionByThreadId.value[threadId] ?? ''
+        const loadedRecently =
+          Date.now() - (lastMessageLoadAtByThreadId.get(threadId) ?? 0) < RECENT_THREAD_MESSAGE_LOAD_REUSE_MS
+        const canReuseLoadedMessages =
+          !forceReload &&
+          alreadyLoaded &&
           (
-            (version.length === 0 || loadedVersion === version) &&
-            inProgressById.value[threadId] !== true
+            loadedRecently ||
+            (
+              (version.length === 0 || loadedVersion === version) &&
+              inProgressById.value[threadId] !== true
+            )
           )
-        )
 
-      if (canReuseLoadedMessages) {
-        markThreadAsRead(threadId)
-        return
-      }
+        if (canReuseLoadedMessages) {
+          markThreadAsRead(threadId)
+          return
+        }
 
-      const needsResume = forceReload || resumedThreadById.value[threadId] !== true
-      const resumedThread = needsResume ? await resumeThread(threadId) : null
-      const detail = resumedThread ?? await getThreadDetail(threadId)
+        const needsResume = forceReload || resumedThreadById.value[threadId] !== true
+        const resumedThread = needsResume ? await resumeThread(threadId) : null
+        const detail = resumedThread ?? await getThreadDetail(threadId)
 
-      if (resumedThread) {
-        setThreadModelId(threadId, resumedThread.model)
-        resumedThreadById.value = {
-          ...resumedThreadById.value,
+        if (resumedThread) {
+          applyThreadModelState(threadId, resumedThread.model, resumedThread.modelProvider)
+          resumedThreadById.value = {
+            ...resumedThreadById.value,
+            [threadId]: true,
+          }
+        }
+
+        const { messages: nextMessages, inProgress, activeTurnId, turnIndexByTurnId } = detail
+        markThreadMessagesPersisted(threadId, nextMessages)
+        replaceTurnIndexLookupForThread(threadId, turnIndexByTurnId)
+        rebindLiveFileChangeTurnIndices(threadId)
+        const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
+        const mergedMessages = mergeMessages(previousPersisted, nextMessages, {
+          preserveMissing: options.silent === true,
+        })
+        setPersistedMessagesForThread(threadId, mergedMessages)
+
+        const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
+        if (inProgress) {
+          const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
+          setLiveAgentMessagesForThread(threadId, nextLiveAgent)
+        } else {
+          clearLiveAgentMessagesForThread(threadId)
+        }
+        removeLiveCommandsPersistedIn(threadId, nextMessages)
+        removeLiveFileChangesPersistedIn(threadId, nextMessages)
+
+        loadedMessagesByThreadId.value = {
+          ...loadedMessagesByThreadId.value,
           [threadId]: true,
         }
-      }
+        lastMessageLoadAtByThreadId.set(threadId, Date.now())
 
-      const { messages: nextMessages, inProgress, activeTurnId, turnIndexByTurnId } = detail
-      markThreadMessagesPersisted(threadId, nextMessages)
-      replaceTurnIndexLookupForThread(threadId, turnIndexByTurnId)
-      rebindLiveFileChangeTurnIndices(threadId)
-      const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
-      const mergedMessages = mergeMessages(previousPersisted, nextMessages, {
-        preserveMissing: options.silent === true,
-      })
-      setPersistedMessagesForThread(threadId, mergedMessages)
-
-      const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
-      if (inProgress) {
-        const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
-        setLiveAgentMessagesForThread(threadId, nextLiveAgent)
-      } else {
-        clearLiveAgentMessagesForThread(threadId)
-      }
-      removeLiveCommandsPersistedIn(threadId, nextMessages)
-      removeLiveFileChangesPersistedIn(threadId, nextMessages)
-
-      loadedMessagesByThreadId.value = {
-        ...loadedMessagesByThreadId.value,
-        [threadId]: true,
-      }
-      lastMessageLoadAtByThreadId.set(threadId, Date.now())
-
-      if (version) {
-        loadedVersionByThreadId.value = {
-          ...loadedVersionByThreadId.value,
-          [threadId]: version,
+        if (version) {
+          loadedVersionByThreadId.value = {
+            ...loadedVersionByThreadId.value,
+            [threadId]: version,
+          }
         }
-      }
-      setThreadInProgress(threadId, inProgress)
-      if (activeTurnId) {
-        activeTurnIdByThreadId.value = {
-          ...activeTurnIdByThreadId.value,
-          [threadId]: activeTurnId,
+        setThreadInProgress(threadId, inProgress)
+        if (activeTurnId) {
+          activeTurnIdByThreadId.value = {
+            ...activeTurnIdByThreadId.value,
+            [threadId]: activeTurnId,
+          }
+        } else if (activeTurnIdByThreadId.value[threadId]) {
+          activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
         }
-      } else if (activeTurnIdByThreadId.value[threadId]) {
-        activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
-      }
-      if (!inProgress) {
-        clearCompletedTurnLiveState(threadId)
-      }
-      markThreadAsRead(threadId)
+        if (!inProgress) {
+          clearCompletedTurnLiveState(threadId)
+        }
+        markThreadAsRead(threadId)
       } finally {
-      if (shouldShowLoading) {
-        isLoadingMessages.value = false
-      }
+        if (shouldShowLoading) {
+          isLoadingMessages.value = false
+        }
       }
     })().finally(() => {
       loadMessagePromiseByThreadId.delete(threadId)
@@ -4503,8 +4569,7 @@ export function useDesktopState() {
       if (!nextThreadId) return ''
 
       insertOptimisticThread(nextThreadId, sourceCwd, sourceTitle)
-      setThreadModelId(nextThreadId, forkedThread.model)
-      setThreadProviderId(nextThreadId, sourceProvider)
+      applyThreadModelState(nextThreadId, forkedThread.model, forkedThread.modelProvider || sourceProvider)
       resumedThreadById.value = {
         ...resumedThreadById.value,
         [nextThreadId]: true,
@@ -4559,8 +4624,7 @@ export function useDesktopState() {
       const forkedCwd = forked.cwd.trim() || sourceThread?.cwd?.trim() || ''
       const forkedThreadTitle = toForkedThreadTitle(sourceThread?.title || sourceThread?.preview || 'Untitled thread')
       insertOptimisticThread(forkedThreadId, forkedCwd, forkedThreadTitle)
-      setThreadModelId(forkedThreadId, forked.model)
-      setThreadProviderId(forkedThreadId, sourceProvider)
+      applyThreadModelState(forkedThreadId, forked.model, forked.modelProvider || sourceProvider)
       setPersistedMessagesForThread(forkedThreadId, forked.messages)
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
@@ -4761,16 +4825,14 @@ export function useDesktopState() {
       try {
         const startedThread = await startThread(targetCwd || undefined, selectedModel || undefined)
         threadId = startedThread.threadId
-        setThreadModelId(threadId, startedThread.model)
-        setThreadProviderId(threadId, selectedProviderForNewThread)
+        applyThreadModelState(threadId, startedThread.model, startedThread.modelProvider || selectedProviderForNewThread)
         setSelectedCollaborationModeForThread(threadId, selectedMode)
       } catch (unknownError) {
         if (selectedModel && selectedModel !== MODEL_FALLBACK_ID && isUnsupportedChatGptModelError(unknownError)) {
           await applyFallbackModelSelection()
           const fallbackThread = await startThread(targetCwd || undefined, MODEL_FALLBACK_ID)
           threadId = fallbackThread.threadId
-          setThreadModelId(threadId, fallbackThread.model)
-          setThreadProviderId(threadId, selectedProviderForNewThread)
+          applyThreadModelState(threadId, fallbackThread.model, fallbackThread.modelProvider || selectedProviderForNewThread)
           setSelectedCollaborationModeForThread(threadId, selectedMode)
         } else {
           throw unknownError
@@ -4875,7 +4937,7 @@ export function useDesktopState() {
 
     if (resumedThreadById.value[threadId] !== true) {
       const resumedThread = await resumeThread(threadId)
-      setThreadModelId(threadId, resumedThread.model)
+      applyThreadModelState(threadId, resumedThread.model, resumedThread.modelProvider)
     }
 
     const steeredTurnId = await steerThreadTurn(
@@ -4944,7 +5006,7 @@ export function useDesktopState() {
     try {
       if (resumedThreadById.value[threadId] !== true) {
         const resumedThread = await resumeThread(threadId)
-        setThreadModelId(threadId, resumedThread.model)
+        applyThreadModelState(threadId, resumedThread.model, resumedThread.modelProvider)
       }
       const modelId = readModelIdForThread(threadId)
 
@@ -5552,7 +5614,9 @@ export function useDesktopState() {
     error,
     refreshAll,
     refreshSkills,
+    refreshMoonBridgeModelIds,
     refreshAncillaryState,
+    invalidateAppServerRuntimeState,
     selectThread,
     loadMessages,
     ensureThreadMessagesLoaded,

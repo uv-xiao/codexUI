@@ -1764,11 +1764,16 @@ export function useDesktopState() {
   const codexQuota = computed<UiRateLimitSnapshot | null>(() => codexRateLimit.value)
   const selectedThreadTokenUsage = computed<UiThreadTokenUsage | null>(() => {
     const threadId = selectedThreadId.value
-    const modelId = readModelIdForThread(threadId)
-    const modelContextWindow = readMoonBridgeModelContextWindow(modelId)
     if (!threadId) return null
     const usage = threadTokenUsageByThreadId.value[threadId] ?? null
     if (!usage) return null
+
+    // Track model and context-window map changes for reactive recalculation.
+    const ctxMap = moonBridgeModelContextWindowById.value
+    const modelId = selectedModelId.value
+    const modelContextWindow = modelId
+      ? (ctxMap[modelId] ?? null)
+      : null
     return applyModelContextWindowToThreadTokenUsage(usage, modelContextWindow)
   })
   const messages = computed<UiMessage[]>(() => {

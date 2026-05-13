@@ -1670,7 +1670,9 @@ export function useDesktopState() {
     // Track model and context-window map changes for reactive recalculation.
     const ctxMap = moonBridgeModelContextWindowById.value
     const modelId = selectedModelId.value
-    const modelContextWindow = modelId
+    // Only apply moonbridge context window when the provider is moon.
+    // Codex models (e.g. gpt-5.5) may share names with moonbridge route aliases.
+    const modelContextWindow = selectedProvider.value === 'moon' && modelId
       ? (ctxMap[modelId] ?? null)
       : null
     return applyModelContextWindowToThreadTokenUsage(usage, modelContextWindow)

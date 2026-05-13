@@ -1918,16 +1918,6 @@ export function useDesktopState() {
       selectedCollaborationModeByContext.value,
       nextThreadId,
     )
-    // If the stored provider is moon but the thread's model is not a moon model,
-    // this is stale data from a previous version. Clean it up.
-    const storedProvider = readSelectedProvider(selectedProviderByContext.value, nextThreadId)
-    if (storedProvider === 'moon') {
-      const threadModel = selectedModelId.value.trim()
-      const isMoonModel = threadModel.length > 0 && inferProviderFromModel(threadModel, moonBridgeModelIds.value) === 'moon'
-      if (!isMoonModel) {
-        setSelectedProviderForThread(nextThreadId, 'codex')
-      }
-    }
     selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, nextThreadId)
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
@@ -2086,13 +2076,11 @@ export function useDesktopState() {
         changed = true
       }
 
-      // When a thread has no explicit provider (empty modelProvider), it's a codex thread.
-      // Clean up any stale non-codex entry that might have been written by a previous version.
+      // Only clean up stale entries — never write back the backend's modelProvider
+      // (it reflects the last turn's provider, not the user's current preference).
       if (normalizedProvider === 'codex' || !rawProvider) {
         delete nextProviderMap[contextId]
-      } else {
-        nextProviderMap[contextId] = normalizedProvider
-      }
+     }
     }
 
     if (!changed) return

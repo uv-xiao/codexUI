@@ -4,6 +4,7 @@ import {
   collectWorkspaceRootPathsForProjectRemoval,
   filterGroupsByWorkspaceRoots,
   findAdjacentThreadId,
+  inferProviderFromModel,
   removeThreadFromGroups,
   isThreadUnreadByLastRead,
   normalizeProviderId,
@@ -375,6 +376,9 @@ describe('workspace roots project persistence helpers', () => {
 describe('provider session helpers', () => {
   it('defaults provider selections to Codex', () => {
     expect(normalizeProviderId('')).toBe('codex')
+    expect(normalizeProviderId('rustcat')).toBe('codex')
+    expect(normalizeProviderId('openrouter-free')).toBe('openrouter')
+    expect(normalizeProviderId('custom-endpoint')).toBe('custom')
     expect(readSelectedProvider({}, '')).toBe('codex')
   })
 
@@ -383,6 +387,11 @@ describe('provider session helpers', () => {
 
     expect(readSelectedProvider(next, 'thread-a')).toBe('moon')
     expect(readSelectedProvider(next, 'thread-b')).toBe('codex')
+  })
+
+  it('infers Moon Bridge provider from session model catalog entries', () => {
+    expect(inferProviderFromModel('glm-5.1', ['glm-5.1', 'kimi-k2.6'])).toBe('moon')
+    expect(inferProviderFromModel('gpt-5.4-mini', ['glm-5.1', 'kimi-k2.6'])).toBeNull()
   })
 })
 

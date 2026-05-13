@@ -1651,10 +1651,19 @@ function normalizeThreadModelFromPayload(payload: unknown): string {
 function normalizeThreadModelProviderFromPayload(payload: unknown): string {
   const record = asRecord(payload)
   if (!record) return ''
-  const modelProvider = readString(record.modelProvider)?.trim() ?? ''
-  if (modelProvider) return modelProvider
   const thread = asRecord(record.thread)
-  return readString(thread?.modelProvider)?.trim() ?? ''
+  const candidates = [
+    record.modelProvider,
+    record.model_provider,
+    thread?.modelProvider,
+    thread?.model_provider,
+  ]
+
+  for (const candidate of candidates) {
+    const modelProvider = readString(candidate)?.trim() ?? ''
+    if (modelProvider) return modelProvider
+  }
+  return ''
 }
 
 export type StartedThread = {
@@ -1667,6 +1676,7 @@ export type ForkedThread = {
   threadId: string
   cwd: string
   model: string
+  modelProvider: string
   messages: UiMessage[]
 }
 
@@ -1715,6 +1725,7 @@ export async function forkThread(
         threadId: forkedThreadId,
         cwd: normalizeThreadCwdFromPayload(payload),
         model: normalizeThreadModelFromPayload(payload),
+        modelProvider: normalizeThreadModelProviderFromPayload(payload),
         messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
       }
     } catch (error) {
@@ -2112,6 +2123,29 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
     if (!ids.includes(candidate)) ids.push(candidate)
   }
   return ids
+}
+
+export async function getMoonBridgeModelIds(): Promise<string[]> {
+  try {
+    const response = await fetch('/codex-api/moonbridge/models', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+
+    const payload = (await response.json()) as unknown
+    const record = asRecord(payload)
+    const rows = Array.isArray(record?.data) ? record.data : []
+    const ids: string[] = []
+    for (const row of rows) {
+      if (typeof row !== 'string') continue
+      const normalized = row.trim()
+      if (!normalized || ids.includes(normalized)) continue
+      ids.push(normalized)
+    }
+    return ids
+  } catch {
+    return []
+  }
 }
 
 export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {

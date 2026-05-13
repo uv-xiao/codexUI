@@ -1480,7 +1480,9 @@ const {
   setSelectedCollaborationMode,
   readModelIdForThread,
   setSelectedModelIdForThread,
+  refreshMoonBridgeModelIds,
   refreshAncillaryState,
+  invalidateAppServerRuntimeState,
   setSelectedReasoningEffort,
   updateSelectedSpeedMode,
   respondToPendingServerRequest,
@@ -4496,6 +4498,7 @@ async function applySelectedProviderState(
       freeModeEnabled.value = true
     }
 
+    invalidateAppServerRuntimeState()
     lastAppliedProviderStateSignature = signature
     providerError.value = ''
     await loadFreeModeStatus()
@@ -4758,6 +4761,7 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
 
 async function initialize(): Promise<void> {
   await router.isReady()
+  await refreshMoonBridgeModelIds().catch(() => {})
 
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)

@@ -31,6 +31,7 @@ import {
   filterOpenCodeZenModelsForAuthState,
   createDefaultFreeModeState,
   MOONBRIDGE_PROVIDER_ID,
+  getMoonBridgeModelMetadata,
   getMoonBridgeModels,
   getFreeModeConfigArgs,
   getFreeModeEnvVars,
@@ -6442,11 +6443,24 @@ class AppServerProcess {
     }
   }
 
-  setFreeModeState(state: FreeModeState): void {
-    this.freeModeState = {
-      ...state,
-      providerKeys: state.providerKeys ? { ...state.providerKeys } : undefined,
-    }
+ setFreeModeState(state: FreeModeState): void {
+   this.freeModeState = {
+     ...state,
+     providerKeys: state.providerKeys ? { ...state.providerKeys } : undefined,
+   }
+ }
+
+  private hasFreeModeStateChanged(newState: FreeModeState): boolean {
+    const current = this.getFreeModeState()
+    // Compare only fields that matter for codex process configuration.
+    if (current.enabled !== newState.enabled) return true
+    if (current.provider !== newState.provider) return true
+    if (current.model !== newState.model) return true
+    if (current.wireApi !== newState.wireApi) return true
+    if (current.customBaseUrl !== newState.customBaseUrl) return true
+    // moon provider uses codex-moon proxy, so apiKey is null; no comparison needed.
+    if (newState.provider !== 'moon' && current.apiKey !== newState.apiKey) return true
+    return false
   }
 
   private buildAppServerConfig(): { command: string; args: string[]; env: Record<string, string> } {
@@ -7678,34 +7692,38 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
                 providerKeys: prevKeys,
-              }
-              appServer.setFreeModeState(state)
-              appServer.dispose()
-              const freeModels = await getFreeModels()
-              setJson(res, 200, {
-                ok: true,
-                enabled: true,
-                model: FREE_MODE_DEFAULT_MODEL,
-                keyCount: getFreeKeyCount(),
-                models: freeModels,
-              })
-            } else {
-              const prev = readFreeModeState()
-              const prevKeys = prev.providerKeys ?? {}
-              if (prev.provider && prev.apiKey) {
-                prevKeys[prev.provider] = prev.apiKey
-              }
-              const state: FreeModeState = {
-                enabled: false,
-                apiKey: null,
-                model: FREE_MODE_DEFAULT_MODEL,
-                wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
-                providerKeys: prevKeys,
-              }
-              appServer.setFreeModeState(state)
-              appServer.dispose()
-              setJson(res, 200, { ok: true, enabled: false })
             }
+                        if (appServer.hasFreeModeStateChanged(state)) {
+              appServer.setFreeModeState(state)
+              appServer.dispose()
+            }
+            const freeModels = await getFreeModels()
+             setJson(res, 200, {
+               ok: true,
+               enabled: true,
+               model: FREE_MODE_DEFAULT_MODEL,
+               keyCount: getFreeKeyCount(),
+               models: freeModels,
+             })
+           } else {
+             const prev = readFreeModeState()
+             const prevKeys = prev.providerKeys ?? {}
+             if (prev.provider && prev.apiKey) {
+               prevKeys[prev.provider] = prev.apiKey
+             }
+             const state: FreeModeState = {
+               enabled: false,
+               apiKey: null,
+               model: FREE_MODE_DEFAULT_MODEL,
+               wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
+               providerKeys: prevKeys,
+             }
+                         if (appServer.hasFreeModeStateChanged(state)) {
+              appServer.setFreeModeState(state)
+              appServer.dispose()
+            }
+             setJson(res, 200, { ok: true, enabled: false })
+           }
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to toggle free mode') })
           }
@@ -7779,8 +7797,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             }
             const current = readFreeModeState()
             const state: FreeModeState = { ...current, apiKey, customKey: false }
-            appServer.setFreeModeState(state)
-            appServer.dispose()
+
+                        if (appServer.hasFreeModeStateChanged(state)) {
+              appServer.setFreeModeState(state)
+              appServer.dispose()
+            }
             setJson(res, 200, { ok: true })
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to rotate key') })
@@ -7803,8 +7824,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: current.wireApi === 'chat' ? 'chat' : 'responses',
               }
-              appServer.setFreeModeState(state)
-              appServer.dispose()
+                            if (appServer.hasFreeModeStateChanged(state)) {
+                appServer.setFreeModeState(state)
+                appServer.dispose()
+              }
               setJson(res, 200, { ok: true, customKey: true })
             } else {
               const communityKey = getRandomFreeKey()
@@ -7815,8 +7838,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: current.wireApi === 'chat' ? 'chat' : 'responses',
               }
-              appServer.setFreeModeState(state)
-              appServer.dispose()
+                            if (appServer.hasFreeModeStateChanged(state)) {
+                appServer.setFreeModeState(state)
+                appServer.dispose()
+              }
               setJson(res, 200, { ok: true, customKey: false })
             }
           } catch (error) {
@@ -7877,8 +7902,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               wireApi: providerType === 'moon' ? undefined : wireApi,
               providerKeys: prevKeys,
             }
-            appServer.setFreeModeState(state)
-            appServer.dispose()
+                        if (appServer.hasFreeModeStateChanged(state)) {
+              appServer.setFreeModeState(state)
+              appServer.dispose()
+            }
             setJson(res, 200, { ok: true })
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to set custom provider') })
@@ -8521,6 +8548,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
       if (req.method === 'GET' && url.pathname === '/codex-api/moonbridge/models') {
         setJson(res, 200, { data: getMoonBridgeModels(), source: 'moon' })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/moonbridge/model-metadata') {
+        setJson(res, 200, { data: getMoonBridgeModelMetadata(), source: 'moon' })
         return
       }
 

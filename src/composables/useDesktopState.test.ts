@@ -280,6 +280,13 @@ describe('provider session helpers', () => {
     expect(readSelectedProvider(next, 'thread-b')).toBe('codex')
   })
 
+  it('maps the new-thread model context to the new-thread provider context', () => {
+    const next = writeSelectedProviderForContext({}, '__new-thread__', 'moon')
+
+    expect(readSelectedProvider(next, '')).toBe('moon')
+    expect(readSelectedProvider(next, '__new-thread__')).toBe('moon')
+  })
+
   it('infers Moon Bridge provider from session model catalog entries', () => {
     expect(inferProviderFromModel('glm-5.1', ['glm-5.1', 'kimi-k2.6'])).toBe('moon')
     expect(inferProviderFromModel('gpt-5.4-mini', ['glm-5.1', 'kimi-k2.6'])).toBeNull()

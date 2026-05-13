@@ -3961,15 +3961,15 @@ async function initialize(): Promise<void> {
   await router.isReady()
   await refreshMoonBridgeModelIds().catch(() => {})
 
+  await refreshAll({
+    includeSelectedThreadMessages: false,
+  })
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)
+  } else {
+    primeSelectedThread('')
   }
-
-  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
-
-  await refreshAll({
-    includeSelectedThreadMessages: route.name === 'thread',
-  })
+  await applySelectedProviderState().catch(() => {})
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
@@ -4014,11 +4014,10 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
             }
             continue
           }
-          await selectThread(threadId)
-          await applySelectedProviderState().catch(() => {})
-        } else {
-          void ensureThreadMessagesLoaded(threadId, { silent: true })
         }
+        primeSelectedThread(threadId)
+        await applySelectedProviderState().catch(() => {})
+        await selectThread(threadId)
       }
     } while (hasPendingRouteSync)
 
@@ -4063,6 +4062,14 @@ watch(
     }
 
     if (isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
+  },
+)
+
+watch(
+  () => selectedProvider.value,
+  async () => {
+    if (!hasInitialized.value || freeModeLoading.value || isRouteSyncInProgress.value) return
     await applySelectedProviderState().catch(() => {})
   },
 )

@@ -558,6 +558,7 @@ function toUiThread(summary: Thread): UiThread {
     title: toThreadTitle(summary),
     projectName: toProjectName(cwd),
     cwd,
+    modelProvider: typeof rawSummary.modelProvider === 'string' ? rawSummary.modelProvider : '',
     hasWorktree,
     createdAtIso: toIso(summary.createdAt),
     updatedAtIso: toIso(summary.updatedAt),

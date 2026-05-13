@@ -158,6 +158,22 @@ describe('thread history persistence payloads', () => {
     ])
     expect(requests.every((request) => request.params.persistExtendedHistory === true)).toBe(true)
   })
+
+  it('passes explicit model provider overrides to thread lifecycle RPCs', async () => {
+    const { requests } = mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/start') return { ...emptyThreadResult('thread-started'), modelProvider: 'moon' }
+      if (request.method === 'thread/resume') return { ...emptyThreadResult('thread-1'), modelProvider: 'moon' }
+      if (request.method === 'thread/fork') return { ...emptyThreadResult('thread-forked'), modelProvider: 'moon' }
+      return {}
+    })
+
+    await startThread('/tmp/project', 'glm-5.1', 'moon')
+    await resumeThread('thread-1', 'glm-5.1', 'moon')
+    await forkThread('thread-1', '/tmp/project', 'glm-5.1', 'moon')
+
+    expect(requests.map((request) => request.params.modelProvider)).toEqual(['moon', 'moon', 'moon'])
+    expect(requests.map((request) => request.params.model)).toEqual(['glm-5.1', 'glm-5.1', 'glm-5.1'])
+  })
 })
 
 describe('listDirectoryComposioConnectors', () => {

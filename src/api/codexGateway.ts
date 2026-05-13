@@ -1309,11 +1309,22 @@ export type ResumedThread = {
   turnIndexByTurnId: ThreadTurnIndexById
 }
 
-export async function resumeThread(threadId: string): Promise<ResumedThread> {
-  const payload = await callRpc<ThreadResumeResponse>('thread/resume', {
+export async function resumeThread(
+  threadId: string,
+  model?: string,
+  modelProvider?: string,
+): Promise<ResumedThread> {
+  const params: Record<string, unknown> = {
     threadId,
     persistExtendedHistory: true,
-  })
+  }
+  if (typeof model === 'string' && model.trim().length > 0) {
+    params.model = model.trim()
+  }
+  if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+    params.modelProvider = modelProvider.trim()
+  }
+  const payload = await callRpc<ThreadResumeResponse>('thread/resume', params)
   return {
     model: normalizeThreadModelFromPayload(payload),
     modelProvider: normalizeThreadModelProviderFromPayload(payload),
@@ -1419,7 +1430,7 @@ export type ForkedThread = {
   messages: UiMessage[]
 }
 
-export async function startThread(cwd?: string, model?: string): Promise<StartedThread> {
+export async function startThread(cwd?: string, model?: string, modelProvider?: string): Promise<StartedThread> {
   try {
     const params: Record<string, unknown> = {
       persistExtendedHistory: true,
@@ -1429,6 +1440,9 @@ export async function startThread(cwd?: string, model?: string): Promise<Started
     }
     if (typeof model === 'string' && model.trim().length > 0) {
       params.model = model.trim()
+    }
+    if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+      params.modelProvider = modelProvider.trim()
     }
     const payload = await callRpc<ThreadStartResponse>('thread/start', params)
     const threadId = normalizeThreadIdFromPayload(payload)
@@ -1449,8 +1463,15 @@ export async function forkThread(threadId: string): Promise<ForkedThread>
 export async function forkThread(threadId: string, cwd: string | undefined, model: string | undefined): Promise<StartedThread>
 export async function forkThread(
   threadId: string,
+  cwd: string | undefined,
+  model: string | undefined,
+  modelProvider: string | undefined,
+): Promise<StartedThread>
+export async function forkThread(
+  threadId: string,
   cwd?: string,
   model?: string,
+  modelProvider?: string,
 ): Promise<StartedThread | ForkedThread> {
   if (arguments.length <= 1) {
     try {
@@ -1488,6 +1509,9 @@ export async function forkThread(
     }
     if (typeof model === 'string' && model.trim().length > 0) {
       params.model = model.trim()
+    }
+    if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+      params.modelProvider = modelProvider.trim()
     }
     const payload = await callRpc<ThreadForkResponse>('thread/fork', params)
     const nextThreadId = normalizeThreadIdFromPayload(payload)

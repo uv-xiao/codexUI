@@ -5302,6 +5302,7 @@ export function useDesktopState() {
 
     if (isInProgress) {
       console.warn('[DEBUG:sendMessageToSelectedThread] steer during in-progress — threadId=%s mode=%s', threadId, mode)
+      fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'send-steer-inprogress', message: 'steer during in-progress', extra: { threadId, mode } }) }).catch(() => {})
       shouldAutoScrollOnNextAgentEvent = true
       error.value = ''
       setTurnErrorForThread(threadId, null)
@@ -5682,6 +5683,8 @@ export function useDesktopState() {
   async function interruptSelectedThreadTurn(): Promise<void> {
     const threadId = selectedThreadId.value
     console.warn('[DEBUG:interruptSelectedThreadTurn] called — threadId=%s timestamp=%s stack=%s', threadId, new Date().toISOString(), new Error().stack?.split('\n').slice(2, 6).join('\n') || '(no stack)')
+    const stackSummary = new Error().stack?.split('\n').slice(2, 5).join('\n') || '(no stack)'
+    fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'interrupt-called', message: 'interruptSelectedThreadTurn', extra: { threadId, stack: stackSummary } }) }).catch(() => {})
     if (!threadId) return
     if (inProgressById.value[threadId] !== true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — thread not in progress'); return }
     if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — interrupt blocked (persistence gate)'); return }

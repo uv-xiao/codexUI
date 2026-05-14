@@ -5271,7 +5271,7 @@ export function useDesktopState() {
       return
     }
 
-    const isInProgress = inProgressById.value[threadId] === true
+    let isInProgress = inProgressById.value[threadId] === true
 
     if (isInProgress && mode === 'queue') {
       const queue = queuedMessagesByThreadId.value[threadId] ?? []
@@ -5298,6 +5298,17 @@ export function useDesktopState() {
       }
       persistQueueState()
       return
+    }
+
+    // Before steering (isInProgress true) or starting a new turn (isInProgress false),
+    // double-check with the CLI that there's really no active turn.  This protects
+    // against the race where the local inProgressById is stale because the turn/started
+    // notification hasn't arrived yet or the event-sync debounce hasn't run.
+    const recheckedTurnId = await resolveActiveTurnIdForThread(threadId)
+    if (recheckedTurnId && !isInProgress) {
+      console.warn('[DEBUG:sendMessageToSelectedThread] stale inProgress=false, CLI says active turn=%s — switching to steer', recheckedTurnId)
+      fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'send-stale-inprogress-fixup', message: 'CLI says turn active but inProgress was false', extra: { threadId, turnId: recheckedTurnId, mode } }) }).catch(() => {})
+      isInProgress = true
     }
 
     if (isInProgress) {

@@ -1,5 +1,5 @@
 import { basename, dirname, extname, join } from 'node:path'
-import { open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { open, readFile, readdir, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { renderMarkdownContent } from '../components/content/markdownRenderer.js'
 import { KATEX_STYLESHEET_HREF } from './katexAssets.js'
 import { getEditorModeForPath } from '../utils/codeLanguage.js'
@@ -182,6 +182,48 @@ export async function createLocalBrowseFile(parentPath: string, rawName: string)
   }
 }
 
+
+export async function createLocalBrowseDirectory(parentPath: string, rawName: string): Promise<string> {
+  const targetPath = resolveLocalEntryPath(parentPath, rawName)
+  if (!targetPath) throw new LocalBrowseMutationError(400, "Missing directory name.")
+
+  try {
+    const parentStat = await stat(parentPath)
+    if (!parentStat.isDirectory()) throw new LocalBrowseMutationError(400, "Expected directory path.")
+  } catch (error) {
+    if (error instanceof LocalBrowseMutationError) throw error
+    throw new LocalBrowseMutationError(404, "Directory not found.")
+  }
+
+  try {
+    await mkdir(targetPath)
+    return targetPath
+  } catch (error) {
+    const code = fileSystemErrorCode(error)
+    if (code === "EEXIST") throw new LocalBrowseMutationError(409, "Directory already exists.")
+    if (code === "EACCES" || code === "EPERM") throw new LocalBrowseMutationError(403, "Permission denied.")
+    throw new LocalBrowseMutationError(500, "Create directory failed.")
+  }
+}
+
+export async function deleteLocalBrowseDirectory(localPath: string): Promise<void> {
+  try {
+    const dirStat = await stat(localPath)
+    if (!dirStat.isDirectory()) throw new LocalBrowseMutationError(400, "Expected directory path.")
+  } catch (error) {
+    if (error instanceof LocalBrowseMutationError) throw error
+    throw new LocalBrowseMutationError(404, "Directory not found.")
+  }
+
+  try {
+    await rm(localPath, { recursive: true })
+  } catch (error) {
+    const code = fileSystemErrorCode(error)
+    if (code === "EACCES" || code === "EPERM") throw new LocalBrowseMutationError(403, "Permission denied.")
+    throw new LocalBrowseMutationError(500, "Delete directory failed.")
+  }
+}
+
 export async function deleteLocalBrowseFile(localPath: string): Promise<void> {
   try {
     const fileStat = await stat(localPath)
@@ -296,6 +338,10 @@ function deleteFileIconHtml(): string {
   return '<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /></svg>'
 }
 
+function rawFileIconHtml(): string {
+  return '<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>'
+}
+
 function actionButtonsHtml(localPath: string, newProjectName: string): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   const createTargetPath = projectCreationTargetPath(localPath, normalizedName)
@@ -339,13 +385,11 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   const rows = items
     .map((item) => {
       const suffix = item.isDirectory ? '/' : ''
-      const editAction = item.editable
-        ? ` <a class="icon-btn" aria-label="Edit ${escapeHtml(item.name)}" href="${escapeHtml(toEditHref(item.path, newProjectName))}" title="Edit">✏️</a>`
+      const rawAction = item.editable
+        ? ` <a class="icon-btn" aria-label="Raw ${escapeHtml(item.name)}" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}" title="Open raw">${rawFileIconHtml()}</a>`
         : ''
-      const deleteAction = item.isDirectory
-        ? ''
-        : ` <button class="icon-btn danger delete-file-btn" type="button" aria-label="Delete ${escapeHtml(item.name)}" title="Delete ${escapeHtml(item.name)}" data-path="${escapeHtml(item.path)}" data-name="${escapeHtml(item.name)}">${deleteFileIconHtml()}</button>`
-      return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${editAction}${deleteAction}</span></li>`
+      const deleteAction = ` <button class="icon-btn danger delete-entry-btn" type="button" aria-label="Delete ${escapeHtml(item.name)}" title="Delete ${escapeHtml(item.name)}" data-path="${escapeHtml(item.path)}" data-name="${escapeHtml(item.name)}" data-is-dir="${item.isDirectory ? '1' : '0'}">${deleteFileIconHtml()}</button>`
+      return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${rawAction}${deleteAction}</span></li>`
     })
     .join('\n')
 
@@ -356,6 +400,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     ? `<p class="picker-summary">Browse to the parent folder where you want to create <strong>${escapeHtml(newProjectName)}</strong>, or open the current folder directly.</p>`
     : ''
   const createFileForm = '<form id="newFileForm" class="header-create-form"><input id="newFileName" class="header-file-input" type="text" autocomplete="off" spellcheck="false" aria-label="New file name" placeholder="New file name" /><button id="createFileBtn" class="header-open-btn create-file-btn" type="submit">Create file</button></form>'
+  const createDirForm = '<form id="newDirForm" class="header-create-form"><input id="newDirName" class="header-file-input" type="text" autocomplete="off" spellcheck="false" aria-label="New directory name" placeholder="New directory name" /><button id="createDirBtn" class="header-open-btn create-file-btn" type="submit">Create dir</button></form>'
   const actionButtons = actionButtonsHtml(localPath, newProjectName)
 
   return `<!doctype html>
@@ -514,6 +559,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   <div class="header-actions">
     ${parentLink}
     ${createFileForm}
+    ${createDirForm}
     ${actionButtons}
   </div>
   <p id="status" class="status"></p>
@@ -523,6 +569,9 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     const newFileForm = document.getElementById('newFileForm');
     const newFileNameInput = document.getElementById('newFileName');
     const createFileBtn = document.getElementById('createFileBtn');
+    const newDirForm = document.getElementById('newDirForm');
+    const newDirNameInput = document.getElementById('newDirName');
+    const createDirBtn = document.getElementById('createDirBtn');
     const setStatus = (message) => {
       status.textContent = message;
     };
@@ -574,36 +623,73 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
         if (createFileBtn instanceof HTMLButtonElement) createFileBtn.disabled = false;
       }
     };
+    const createLocalDir = async () => {
+      if (!(newDirNameInput instanceof HTMLInputElement)) return;
+      const dirName = normalizeEntryName(newDirNameInput.value);
+      if (!dirName) {
+        setStatus('Enter a directory name without path separators.');
+        newDirNameInput.focus();
+        return;
+      }
+      if (createDirBtn instanceof HTMLButtonElement) createDirBtn.disabled = true;
+      setStatus('Creating directory ' + dirName + '...');
+      try {
+        const response = await fetch(location.pathname, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: dirName, type: 'directory' }),
+        });
+        const payload = await readJsonPayload(response);
+        if (!response.ok) {
+          setStatus(payload && payload.error ? String(payload.error) : 'Create directory failed.');
+          return;
+        }
+        setStatus('Directory created. Refreshing...');
+        window.location.reload();
+      } catch {
+        setStatus('Create directory failed.');
+      } finally {
+        if (createDirBtn instanceof HTMLButtonElement) createDirBtn.disabled = false;
+      }
+    };
     if (newFileForm instanceof HTMLFormElement) {
       newFileForm.addEventListener('submit', (event) => {
         event.preventDefault();
         createLocalFile();
       });
     }
+    if (newDirForm instanceof HTMLFormElement) {
+      newDirForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        createLocalDir();
+      });
+    }
     document.addEventListener('click', async (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const deleteButton = target.closest('.delete-file-btn');
+      const deleteButton = target.closest('.delete-entry-btn');
       if (deleteButton instanceof HTMLButtonElement) {
         event.preventDefault();
-        const filePath = deleteButton.getAttribute('data-path') || '';
-        const fileName = deleteButton.getAttribute('data-name') || 'file';
-        if (!filePath) return;
-        if (!window.confirm('Delete ' + fileName + '?')) return;
+        const entryPath = deleteButton.getAttribute('data-path') || '';
+        const entryName = deleteButton.getAttribute('data-name') || 'entry';
+        const isDir = deleteButton.getAttribute('data-is-dir') === '1';
+        if (!entryPath) return;
+        const confirmMsg = isDir ? 'Delete directory ' + entryName + ' and all its contents?' : 'Delete ' + entryName + '?';
+        if (!window.confirm(confirmMsg)) return;
         deleteButton.disabled = true;
-        setStatus('Deleting ' + fileName + '...');
+        setStatus('Deleting ' + entryName + '...');
         try {
-          const response = await fetch('/codex-local-browse' + encodeURI(filePath), { method: 'DELETE' });
+          const response = await fetch('/codex-local-browse' + encodeURI(entryPath), { method: 'DELETE' });
           const payload = await readJsonPayload(response);
           if (!response.ok) {
-            setStatus(payload && payload.error ? String(payload.error) : 'Delete file failed.');
+            setStatus(payload && payload.error ? String(payload.error) : 'Delete failed.');
             deleteButton.disabled = false;
             return;
           }
-          setStatus('Deleted ' + fileName + '. Refreshing...');
+          setStatus('Deleted ' + entryName + '. Refreshing...');
           window.location.reload();
         } catch {
-          setStatus('Delete file failed.');
+          setStatus('Delete failed.');
           deleteButton.disabled = false;
         }
         return;

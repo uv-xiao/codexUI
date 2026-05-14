@@ -6,7 +6,7 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
-import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseDirectory, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseDirectory, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
@@ -204,19 +204,25 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
     if (!localPath || !isAbsolute(localPath)) {
-      res.status(400).json({ error: 'Expected absolute local file path.' })
+      res.status(400).json({ error: 'Expected absolute local path.' })
       return
     }
 
     const record = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : null
     const name = typeof record?.name === 'string' ? record.name : ''
+    const isDirectory = typeof record?.type === 'string' ? record.type === 'directory' : false
 
     try {
-      const filePath = await createLocalBrowseFile(localPath, name)
-      res.status(201).json({ data: { path: filePath } })
+      let createdPath: string
+      if (isDirectory) {
+        createdPath = await createLocalBrowseDirectory(localPath, name)
+      } else {
+        createdPath = await createLocalBrowseFile(localPath, name)
+      }
+      res.status(201).json({ data: { path: createdPath } })
     } catch (error) {
       const mutationError = error instanceof LocalBrowseMutationError ? error : null
-      res.status(mutationError?.statusCode ?? 500).json({ error: mutationError?.message ?? 'Create file failed.' })
+      res.status(mutationError?.statusCode ?? 500).json({ error: mutationError?.message ?? 'Create failed.' })
     }
   })
 
@@ -224,16 +230,21 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
     if (!localPath || !isAbsolute(localPath)) {
-      res.status(400).json({ error: 'Expected absolute local file path.' })
+      res.status(400).json({ error: 'Expected absolute local path.' })
       return
     }
 
     try {
-      await deleteLocalBrowseFile(localPath)
+      // Try file first, then directory
+      try {
+        await deleteLocalBrowseFile(localPath)
+      } catch (fileError) {
+        await deleteLocalBrowseDirectory(localPath)
+      }
       res.status(200).json({ ok: true })
     } catch (error) {
       const mutationError = error instanceof LocalBrowseMutationError ? error : null
-      res.status(mutationError?.statusCode ?? 500).json({ error: mutationError?.message ?? 'Delete file failed.' })
+      res.status(mutationError?.statusCode ?? 500).json({ error: mutationError?.message ?? 'Delete failed.' })
     }
   })
 

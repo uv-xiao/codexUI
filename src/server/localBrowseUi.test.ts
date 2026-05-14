@@ -146,10 +146,10 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('id="newFileForm"')
     expect(html).toContain('id="newFileName"')
     expect(html).toContain('id="createFileBtn"')
-    expect(html).toContain('class="icon-btn danger delete-file-btn"')
+    expect(html).toContain('class="icon-btn danger delete-entry-btn"')
     expect(html).toContain('data-name="note.txt"')
     expect(html).toContain('Delete note.txt')
-    expect((html.match(/class="icon-btn danger delete-file-btn"/gu) ?? []).length).toBe(1)
+    expect((html.match(/class="icon-btn danger delete-entry-btn"/gu) ?? []).length).toBe(2)
     expect(html).toContain('docs/')
   })
 

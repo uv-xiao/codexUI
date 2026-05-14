@@ -9,7 +9,8 @@ import { homedir } from 'node:os'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import { writeFile } from 'node:fs/promises'
+import { appendFile, writeFile } from 'node:fs/promises'
+import { writeDebugLog } from './debugLog.js'
 import { handleAccountRoutes } from './accountRoutes.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { handleReviewRoutes } from './reviewGit.js'
@@ -3952,6 +3953,7 @@ class AppServerProcess {
       }
 
       console.error('[DEBUG:AppServerProcess] codex app-server exited — stopping=%s pid=%d', this.stopping, proc.pid ?? -1)
+      writeDebugLog('app-server-exit', 'codex app-server exited', { stopping: this.stopping, pid: proc.pid ?? -1, pendingRequests: this.pending.size, pendingServerRequests: this.pendingServerRequests.size }).catch(() => {})
       const failure = new Error(this.stopping ? 'codex app-server stopped' : 'codex app-server exited unexpectedly')
       for (const request of this.pending.values()) {
         request.reject(failure)
@@ -3999,6 +4001,7 @@ class AppServerProcess {
     if (typeof message.method === 'string' && typeof message.id !== 'number') {
       if (message.method.startsWith('turn/') || message.method.startsWith('thread/') || message.method === 'error') {
         console.warn('[DEBUG:AppServerProcess] notification method=%s', message.method)
+        writeDebugLog('app-server-notification', message.method, { threadId: this.extractThreadIdFromParams(message.params ?? null) }).catch(() => {})
       }
       this.emitNotification({
         method: message.method,
@@ -5367,6 +5370,20 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'POST' && url.pathname === '/codex-api/debug-log') {
+        const payload = await readJsonBody(req)
+        const record = asRecord(payload)
+        if (record) {
+          writeDebugLog(
+            typeof record.tag === 'string' ? record.tag : 'unknown',
+            typeof record.message === 'string' ? record.message : JSON.stringify(payload ?? {}),
+            asRecord(record.extra) ?? undefined,
+          ).catch(() => {})
+        }
+        setJson(res, 200, { ok: true })
+        return
+      }
+
       if (req.method === 'POST' && url.pathname === '/codex-api/rpc') {
         const payload = await readJsonBody(req)
         const body = asRecord(payload) as RpcProxyRequest | null
@@ -5378,6 +5395,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         if (!body || typeof body.method !== 'string' || body.method.length === 0) {
           setJson(res, 400, { error: 'Invalid body: expected { method, params? }' })
           return
+        }
+
+        if (body.method === 'turn/interrupt') {
+          const paramsRecord = body.params !== null && typeof body.params === 'object' && !Array.isArray(body.params)
+            ? body.params as Record<string, unknown>
+            : null
+          writeDebugLog('rpc-turn-interrupt', 'RPC turn/interrupt received', {
+            threadId: typeof paramsRecord?.threadId === 'string' ? paramsRecord.threadId : '',
+            turnId: typeof paramsRecord?.turnId === 'string' ? paramsRecord.turnId : '',
+          }).catch(() => {})
         }
 
         const rpcResult = await appServer.rpc(body.method, body.params ?? null)

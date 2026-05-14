@@ -3951,6 +3951,7 @@ class AppServerProcess {
         return
       }
 
+      console.error('[DEBUG:AppServerProcess] codex app-server exited — stopping=%s pid=%d', this.stopping, proc.pid ?? -1)
       const failure = new Error(this.stopping ? 'codex app-server stopped' : 'codex app-server exited unexpectedly')
       for (const request of this.pending.values()) {
         request.reject(failure)
@@ -3996,6 +3997,9 @@ class AppServerProcess {
     }
 
     if (typeof message.method === 'string' && typeof message.id !== 'number') {
+      if (message.method.startsWith('turn/') || message.method.startsWith('thread/') || message.method === 'error') {
+        console.warn('[DEBUG:AppServerProcess] notification method=%s', message.method)
+      }
       this.emitNotification({
         method: message.method,
         params: message.params ?? null,

@@ -3467,6 +3467,7 @@ function onSelectSpeedMode(mode: SpeedMode): void {
 }
 
 function onInterruptTurn(): void {
+  console.warn('[DEBUG:onInterruptTurn] UI Stop button clicked — timestamp=%s', new Date().toISOString())
   void interruptSelectedThreadTurn()
 }
 

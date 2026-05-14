@@ -1778,6 +1778,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       selectedThreadId.value = nextThreadId
       saveSelectedThreadId(nextThreadId)
     }
+    const beforeModel = selectedModelId.value
     selectedModelId.value = readModelIdForThread(nextThreadId)
     ensureAvailableModelIds(selectedModelId.value)
     selectedCollaborationMode.value = readSelectedCollaborationMode(
@@ -1785,6 +1786,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       nextThreadId,
     )
     selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, nextThreadId)
+    console.warn('[DEBUG:setSelectedThreadId] threadId=%s model: %s->%s provider=%s', nextThreadId, beforeModel || '(none)', selectedModelId.value || '(none)', selectedProvider.value || 'codex')
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
   }
@@ -1877,6 +1879,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
   }
 
   function syncThreadProvidersFromGroups(groups: UiProjectGroup[]): void {
+    const syncEntries = Object.entries(selectedProviderByContext.value).filter(([, v]) => v && v !== 'codex')
     let nextProviderMap = selectedProviderByContext.value
     let changed = false
     const selectedContextId = toProviderSelectionContextId(selectedThreadId.value)
@@ -1890,6 +1893,11 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const contextId = toProviderSelectionContextId(normalizedThreadId)
       const currentProvider = normalizeProviderId(nextProviderMap[contextId])
       if (currentProvider === normalizedProvider) continue
+
+      // Never overwrite any thread whose provider was explicitly set by the user
+      // (currentProvider is non-empty and non-codex).  The backend's modelProvider
+      // reflects the last turn's provider, not the user's current preference.
+      if (currentProvider.length > 0) continue
 
       // Skip overwriting the currently selected thread's provider if the thread has
       // an explicit provider — the user may have changed it in this session.
@@ -1910,6 +1918,11 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
     if (!changed) return
 
+    const afterEntries = Object.entries(nextProviderMap).filter(([, v]) => v && v !== 'codex')
+    const removed = syncEntries.filter(([k]) => !afterEntries.some(([k2]) => k2 === k)).map(([k, v]) => k + '=' + v)
+    if (removed.length > 0) {
+      console.warn('[DEBUG:syncThreadProvidersFromGroups] cleaned user-set providers: %s', removed.join(', '))
+    }
     selectedProviderByContext.value = nextProviderMap
     selectedProvider.value = readSelectedProvider(nextProviderMap, selectedThreadId.value)
     saveSelectedProviderMap(nextProviderMap)
@@ -2185,6 +2198,8 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
       if (!normalizedSelectedModelId || !currentModelInNewList) {
+        console.warn('[DEBUG:refreshModelPreferences] model reset — was=%s inList=%s providerScoped=%s configuredModel=%s firstAvailable=%s',
+          normalizedSelectedModelId || '(none)', currentModelInNewList, providerScopedModelId || '(none)', normalizedConfiguredModelId || '(none)', nextModelIds.length > 0 ? nextModelIds[0] : '(none)')
         if (providerScopedModelId && nextModelIds.includes(providerScopedModelId)) {
           setSelectedModelId(providerScopedModelId)
         } else if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
@@ -4920,6 +4935,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     }
 
     if (isInProgress) {
+      console.warn('[DEBUG:sendMessageToSelectedThread] steer during in-progress — threadId=%s mode=%s', threadId, mode)
       shouldAutoScrollOnNextAgentEvent = true
       error.value = ''
       setTurnErrorForThread(threadId, null)
@@ -5289,9 +5305,10 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
   async function interruptSelectedThreadTurn(): Promise<void> {
     const threadId = selectedThreadId.value
+    console.warn('[DEBUG:interruptSelectedThreadTurn] called — threadId=%s timestamp=%s stack=%s', threadId, new Date().toISOString(), new Error().stack?.split('\n').slice(2, 6).join('\n') || '(no stack)')
     if (!threadId) return
-    if (inProgressById.value[threadId] !== true) return
-    if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) return
+    if (inProgressById.value[threadId] !== true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — thread not in progress'); return }
+    if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — interrupt blocked (persistence gate)'); return }
     let turnId = activeTurnIdByThreadId.value[threadId]
     if (!turnId) {
       const { activeTurnId } = await getThreadDetail(threadId)
@@ -5322,6 +5339,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       await syncFromNotifications()
     } catch (unknownError) {
       const errorMessage = unknownError instanceof Error ? unknownError.message : 'Failed to interrupt active turn'
+      console.error('[DEBUG:interruptSelectedThreadTurn] FAILED — threadId=%s error=%s', threadId, errorMessage)
       setTurnErrorForThread(threadId, errorMessage)
       error.value = errorMessage
     } finally {

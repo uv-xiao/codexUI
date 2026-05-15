@@ -3,6 +3,7 @@ import App from './App.vue'
 import router from './router'
 import './style.css'
 import { installFeedbackDiagnostics } from './composables/useFeedbackDiagnostics'
+import { t } from './composables/useUiLanguage'
 
 const DARK_MODE_KEY = 'codex-web-local.dark-mode.v1'
 
@@ -26,7 +27,7 @@ createApp(App).use(router).mount('#app')
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch((error) => {
-      console.error('Service worker registration failed.', error)
+      console.error(t('Service worker registration failed.'), error)
     })
   })
 }

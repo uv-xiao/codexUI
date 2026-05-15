@@ -6,6 +6,7 @@ import {
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
+  shouldAutoContinueInterruptedThreadFromThreadRead,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
 
@@ -416,6 +417,59 @@ describe('automation TOML handling', () => {
 
     expect(automation).toBeTruthy()
     expect(toAutomationApiRecord(automation as NonNullable<typeof automation>)).not.toHaveProperty('extraTomlLines')
+  })
+})
+
+describe('interrupted turn auto-continue detection', () => {
+  it('detects the latest interrupted turn on an idle thread', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: ' thread-1 ',
+        status: { type: ' idle ' },
+        turns: [
+          { id: 'turn-1', status: 'completed' },
+          { id: ' turn-2 ', status: ' interrupted ' },
+        ],
+      },
+    }, new Set())
+
+    expect(snapshot).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-2',
+    })
+  })
+
+  it('ignores user-stopped interrupted turns', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [{ id: 'turn-1', status: 'interrupted' }],
+      },
+    }, new Set(['turn-1']))
+
+    expect(snapshot).toBeNull()
+  })
+
+  it('ignores active threads and non-interrupted latest turns', () => {
+    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'inProgress' },
+        turns: [{ id: 'turn-1', status: 'interrupted' }],
+      },
+    }, new Set())).toBeNull()
+
+    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [
+          { id: 'turn-1', status: 'interrupted' },
+          { id: 'turn-2', status: 'completed' },
+        ],
+      },
+    }, new Set())).toBeNull()
   })
 })
 

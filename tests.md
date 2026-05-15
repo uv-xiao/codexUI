@@ -5177,3 +5177,27 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Stop only the temporary dev server started for this test.
 - Switch the sidebar provider back to the preferred default after testing.
+
+### Feature: Expanded command rows show full command text
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread contains at least one `commandExecution` item with a long command that is visibly truncated in the collapsed row.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Click the command row to expand its output.
+3. Confirm the expanded panel shows a `Command` block with the full command text, not just the truncated row label.
+4. Confirm the existing output still appears below the command block.
+5. Hover the collapsed command label and confirm the full command is exposed via the tooltip.
+6. Switch to dark theme and repeat steps 2-5.
+
+#### Expected Results
+- Expanded command rows show the complete command string above the output.
+- The output content remains visible and unchanged below the new command block.
+- The collapsed row still uses compact truncation for the inline label, but the full command is available on hover.
+- Both light and dark themes keep the command block readable.
+
+#### Rollback/Cleanup
+- No cleanup is required.

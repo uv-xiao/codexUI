@@ -5147,3 +5147,33 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Stop any disposable test turn from the UI if it is still running.
 - Remove only temporary test threads if they were created solely for validation.
+
+### Feature: Provider-scoped app-server runtime pool
+
+#### Prerequisites
+- App server is running from this repository.
+- At least two providers are configurable from the sidebar, such as Codex plus OpenRouter, Moon Bridge, OpenCode Zen, or a custom endpoint.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Start the dev server on a non-conflicting port, for example `node scripts/dev.cjs --host 127.0.0.1 --port 5174`.
+2. Connect to `/codex-api/ws` and confirm it receives the `ready` notification without crashing the Vite dev server.
+3. In light theme, start a long-running turn with provider A.
+4. While the turn is active, switch the sidebar provider to provider B.
+5. Switch sessions or refresh the page, then return to the active thread.
+6. Confirm new turns use provider B while the provider A turn can continue delivering events.
+7. Repeat steps 3-6 in dark theme.
+8. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts`.
+9. Run `./node_modules/.bin/vue-tsc --noEmit --pretty false`.
+
+#### Expected Results
+- Opening the WebSocket no longer throws `Cannot read properties of undefined (reading 'onNotification')`.
+- Switching providers does not dispose the previous provider's app-server process.
+- Notifications from existing provider runtimes continue to reach SSE/WebSocket subscribers.
+- User-initiated stops are still recorded against the active runtime's queue processor.
+- Provider switching controls remain readable and usable in light and dark themes.
+- The targeted Vitest suite and TypeScript check pass.
+
+#### Rollback/Cleanup
+- Stop only the temporary dev server started for this test.
+- Switch the sidebar provider back to the preferred default after testing.

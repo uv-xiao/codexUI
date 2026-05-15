@@ -6478,6 +6478,60 @@ const MERGEABLE_ITEM_TYPES = new Set([
   'fileChange',
 ])
 
+type AppServerConfig = {
+  command: string
+  args: string[]
+  env: Record<string, string>
+}
+
+function cloneFreeModeState(state: FreeModeState): FreeModeState {
+  return {
+    ...state,
+    providerKeys: state.providerKeys ? { ...state.providerKeys } : undefined,
+  }
+}
+
+function hasFreeModeStateChanged(current: FreeModeState, newState: FreeModeState): boolean {
+  if (current.enabled !== newState.enabled) return true
+  if (current.provider !== newState.provider) return true
+  if (current.model !== newState.model) return true
+  if (current.wireApi !== newState.wireApi) return true
+  if (current.customBaseUrl !== newState.customBaseUrl) return true
+  if (newState.provider !== 'moon' && current.apiKey !== newState.apiKey) return true
+  return false
+}
+
+function buildAppServerConfigForState(state: FreeModeState): AppServerConfig {
+  const args = buildAppServerArgs()
+  let extraEnv: Record<string, string> = {}
+  const serverPort = parseInt(process.env.CODEXUI_SERVER_PORT ?? '', 10) || undefined
+  args.push(...getProviderCompatibilityConfigArgs(serverPort))
+  let command = resolveCodexCommand()
+  if (!command) {
+    throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
+  }
+  if (state.enabled && state.provider === MOONBRIDGE_PROVIDER_ID) {
+    command = resolveCodexMoonCommand()
+    if (!command) {
+      throw new Error('Codex Moon Bridge CLI is not available. Install codex-moon or set CODEXUI_CODEX_MOON_COMMAND.')
+    }
+  } else {
+    args.push(...getFreeModeConfigArgs(state, serverPort))
+    extraEnv = getFreeModeEnvVars(state)
+  }
+  return { command, args, env: extraEnv }
+}
+
+function getAppServerRuntimeSignature(state: FreeModeState): string {
+  const config = buildAppServerConfigForState(state)
+  const envEntries = Object.entries(config.env).sort(([left], [right]) => left.localeCompare(right))
+  return JSON.stringify({
+    command: config.command,
+    args: config.args,
+    env: envEntries,
+  })
+}
+
 class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
   private initialized = false
@@ -6498,65 +6552,16 @@ class AppServerProcess {
   private activeConfigSignature = ''
   private freeModeState: FreeModeState = createDefaultFreeModeState()
 
-
-  private getCodexCommand(): string {
-    const codexCommand = resolveCodexCommand()
-    if (!codexCommand) {
-      throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
-    }
-    return codexCommand
-  }
-
-  private getCodexMoonCommand(): string {
-    const codexMoonCommand = resolveCodexMoonCommand()
-    if (!codexMoonCommand) {
-      throw new Error('Codex Moon Bridge CLI is not available. Install codex-moon or set CODEXUI_CODEX_MOON_COMMAND.')
-    }
-    return codexMoonCommand
-  }
-
   getFreeModeState(): FreeModeState {
-    const state = this.freeModeState
-    return {
-      ...state,
-      providerKeys: state.providerKeys ? { ...state.providerKeys } : undefined,
-    }
+    return cloneFreeModeState(this.freeModeState)
   }
 
- setFreeModeState(state: FreeModeState): void {
-   this.freeModeState = {
-     ...state,
-     providerKeys: state.providerKeys ? { ...state.providerKeys } : undefined,
-   }
- }
-
-  private hasFreeModeStateChanged(newState: FreeModeState): boolean {
-    const current = this.getFreeModeState()
-    // Compare only fields that matter for codex process configuration.
-    if (current.enabled !== newState.enabled) return true
-    if (current.provider !== newState.provider) return true
-    if (current.model !== newState.model) return true
-    if (current.wireApi !== newState.wireApi) return true
-    if (current.customBaseUrl !== newState.customBaseUrl) return true
-    // moon provider uses codex-moon proxy, so apiKey is null; no comparison needed.
-    if (newState.provider !== 'moon' && current.apiKey !== newState.apiKey) return true
-    return false
+  setFreeModeState(state: FreeModeState): void {
+    this.freeModeState = cloneFreeModeState(state)
   }
 
   private buildAppServerConfig(): { command: string; args: string[]; env: Record<string, string> } {
-    const args = buildAppServerArgs()
-    let extraEnv: Record<string, string> = {}
-    let command = this.getCodexCommand()
-    const serverPort = parseInt(process.env.CODEXUI_SERVER_PORT ?? '', 10) || undefined
-    args.push(...getProviderCompatibilityConfigArgs(serverPort))
-    const state = this.freeModeState
-    if (state.enabled && state.provider === MOONBRIDGE_PROVIDER_ID) {
-      command = this.getCodexMoonCommand()
-    } else {
-      args.push(...getFreeModeConfigArgs(state, serverPort))
-      extraEnv = getFreeModeEnvVars(state)
-    }
-    return { command, args, env: extraEnv }
+    return buildAppServerConfigForState(this.freeModeState)
   }
 
   private getAppServerConfigSignature(config: { command: string; args: string[]; env: Record<string, string> }): string {
@@ -7513,6 +7518,119 @@ export class BackendQueueProcessor {
   }
 }
 
+type BridgeNotification = {
+  method: string
+  params: unknown
+  atIso: string
+}
+
+class AppServerRuntime {
+  readonly appServer: AppServerProcess
+  readonly backendQueueProcessor: BackendQueueProcessor
+  readonly signature: string
+  private readonly unsubscribeNotifications: () => void
+  private disposed = false
+
+  constructor(
+    state: FreeModeState,
+    private readonly forwardNotification: (notification: BridgeNotification) => void,
+  ) {
+    this.signature = getAppServerRuntimeSignature(state)
+    this.appServer = new AppServerProcess()
+    this.appServer.setFreeModeState(state)
+    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer)
+    this.unsubscribeNotifications = this.appServer.onNotification((notification) => {
+      this.forwardNotification({
+        ...notification,
+        atIso: new Date().toISOString(),
+      })
+    })
+    void initializeSkillsSyncOnStartup(this.appServer).catch(() => {})
+  }
+
+  setFreeModeState(state: FreeModeState): void {
+    this.appServer.setFreeModeState(state)
+  }
+
+  getFreeModeState(): FreeModeState {
+    return this.appServer.getFreeModeState()
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.unsubscribeNotifications()
+    this.backendQueueProcessor.dispose()
+    this.appServer.dispose()
+  }
+}
+
+class AppServerRuntimePool {
+  private readonly runtimesBySignature = new Map<string, AppServerRuntime>()
+  private readonly notificationListeners = new Set<(notification: BridgeNotification) => void>()
+  private activeState: FreeModeState = createDefaultFreeModeState()
+
+  private emitNotification(notification: BridgeNotification): void {
+    for (const listener of this.notificationListeners) {
+      listener(notification)
+    }
+  }
+
+  private createRuntime(state: FreeModeState): AppServerRuntime {
+    const runtime = new AppServerRuntime(state, (notification) => {
+      this.emitNotification(notification)
+    })
+    this.runtimesBySignature.set(runtime.signature, runtime)
+    return runtime
+  }
+
+  private getOrCreateRuntime(state: FreeModeState): AppServerRuntime {
+    const signature = getAppServerRuntimeSignature(state)
+    const existing = this.runtimesBySignature.get(signature)
+    if (existing) {
+      existing.setFreeModeState(state)
+      return existing
+    }
+    return this.createRuntime(state)
+  }
+
+  setActiveState(state: FreeModeState): AppServerRuntime {
+    this.activeState = cloneFreeModeState(state)
+    return this.getOrCreateRuntime(this.activeState)
+  }
+
+  getActiveState(): FreeModeState {
+    return cloneFreeModeState(this.activeState)
+  }
+
+  getActiveRuntime(): AppServerRuntime {
+    return this.getOrCreateRuntime(this.activeState)
+  }
+
+  getActiveAppServer(): AppServerProcess {
+    return this.getActiveRuntime().appServer
+  }
+
+  getActiveBackendQueueProcessor(): BackendQueueProcessor {
+    return this.getActiveRuntime().backendQueueProcessor
+  }
+
+  subscribeNotifications(listener: (notification: BridgeNotification) => void): () => void {
+    this.notificationListeners.add(listener)
+    return () => {
+      this.notificationListeners.delete(listener)
+    }
+  }
+
+  dispose(): void {
+    for (const runtime of this.runtimesBySignature.values()) {
+      runtime.dispose()
+    }
+    this.runtimesBySignature.clear()
+    this.notificationListeners.clear()
+  }
+}
+
 class MethodCatalog {
   private methodCache: string[] | null = null
   private notificationCache: string[] | null = null
@@ -7633,11 +7751,10 @@ type CodexBridgeMiddleware = ((req: IncomingMessage, res: ServerResponse, next: 
 
 type SharedBridgeState = {
   version: string
-  appServer: AppServerProcess
+  runtimePool: AppServerRuntimePool
   terminalManager: ThreadTerminalManager
   methodCatalog: MethodCatalog
   telegramBridge: TelegramThreadBridge
-  backendQueueProcessor: BackendQueueProcessor
 }
 
 const SHARED_BRIDGE_KEY = '__codexRemoteSharedBridge__'
@@ -7662,9 +7779,8 @@ function disposeSharedBridgeState(state: SharedBridgeStateLike, globalScope = ge
     delete globalScope[SHARED_BRIDGE_KEY]
   }
   state.telegramBridge?.stop()
-  state.backendQueueProcessor?.dispose()
+  state.runtimePool?.dispose()
   state.terminalManager?.dispose()
-  state.appServer?.dispose()
 }
 
 function disposeCurrentSharedBridgeState(globalScope = getSharedBridgeGlobalScope()): void {
@@ -7683,11 +7799,10 @@ function ensureSharedBridgeExitCleanup(globalScope: SharedBridgeGlobalScope): vo
 
 function isCompleteSharedBridgeState(state: SharedBridgeStateLike): state is SharedBridgeState {
   return Boolean(
-    state.appServer &&
+    state.runtimePool &&
     state.terminalManager &&
     state.methodCatalog &&
-    state.telegramBridge &&
-    state.backendQueueProcessor,
+    state.telegramBridge,
   )
 }
 
@@ -7703,19 +7818,18 @@ function getSharedBridgeState(): SharedBridgeState {
     disposeCurrentSharedBridgeState(globalScope)
   }
 
-  const appServer = new AppServerProcess()
+  const runtimePool = new AppServerRuntimePool()
   const terminalManager = new ThreadTerminalManager()
-  const backendQueueProcessor = new BackendQueueProcessor(appServer)
   const created: SharedBridgeState = {
     version: SHARED_BRIDGE_VERSION,
-    appServer,
+    runtimePool,
     terminalManager,
     methodCatalog: new MethodCatalog(),
-    backendQueueProcessor,
-    telegramBridge: new TelegramThreadBridge(appServer, {
+    telegramBridge: new TelegramThreadBridge(() => runtimePool.getActiveAppServer(), {
       onChatSeen: (chatId) => {
         void rememberTelegramChatId(chatId).catch(() => {})
       },
+      subscribeNotifications: (listener) => runtimePool.subscribeNotifications(listener),
     }),
   }
   globalScope[SHARED_BRIDGE_KEY] = created
@@ -7800,14 +7914,38 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
 
 export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
   const sharedBridgeState = getSharedBridgeState()
-  const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = sharedBridgeState
+  const runtimePool = sharedBridgeState.runtimePool
+  const terminalManager = sharedBridgeState.terminalManager
+  const methodCatalog = sharedBridgeState.methodCatalog
+  const telegramBridge = sharedBridgeState.telegramBridge
   let threadSearchIndex: ThreadSearchIndex | null = null
   let threadSearchIndexPromise: Promise<ThreadSearchIndex> | null = null
+
+  function getActiveRuntime(): AppServerRuntime {
+    return runtimePool.getActiveRuntime()
+  }
+
+  function getActiveAppServer(): AppServerProcess {
+    return getActiveRuntime().appServer
+  }
+
+  function getActiveBackendQueueProcessor(): BackendQueueProcessor {
+    return getActiveRuntime().backendQueueProcessor
+  }
+
+  function applyActiveFreeModeState(state: FreeModeState): void {
+    const currentState = runtimePool.getActiveState()
+    runtimePool.setActiveState(state)
+    if (hasFreeModeStateChanged(currentState, state)) {
+      threadSearchIndex = null
+      threadSearchIndexPromise = null
+    }
+  }
 
   async function getThreadSearchIndex(): Promise<ThreadSearchIndex> {
     if (threadSearchIndex) return threadSearchIndex
     if (!threadSearchIndexPromise) {
-      threadSearchIndexPromise = buildThreadSearchIndex(appServer)
+      threadSearchIndexPromise = buildThreadSearchIndex(getActiveAppServer())
         .then((index) => {
           threadSearchIndex = index
           return index
@@ -7818,7 +7956,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     }
     return threadSearchIndexPromise
   }
-  void initializeSkillsSyncOnStartup(appServer)
   void readTelegramBridgeConfig()
     .then((config) => {
       if (!config.botToken) return
@@ -7877,6 +8014,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
       }
 
       const url = new URL(req.url, 'http://localhost')
+      const appServer = getActiveAppServer()
+      const backendQueueProcessor = getActiveBackendQueueProcessor()
 
       if (url.pathname === '/codex-api/zen-proxy/v1/responses' && req.method === 'POST') {
         if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
@@ -7936,6 +8075,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               if (prev.provider && prev.apiKey) {
                 prevKeys[prev.provider] = prev.apiKey
               }
+
               const state: FreeModeState = {
                 enabled: true,
                 apiKey,
@@ -7943,38 +8083,35 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
                 providerKeys: prevKeys,
+              }
+              applyActiveFreeModeState(state)
+
+              const freeModels = await getFreeModels()
+              setJson(res, 200, {
+                ok: true,
+                enabled: true,
+                model: FREE_MODE_DEFAULT_MODEL,
+                keyCount: getFreeKeyCount(),
+                models: freeModels,
+              })
+            } else {
+              const prev = readFreeModeState()
+              const prevKeys = prev.providerKeys ?? {}
+              if (prev.provider && prev.apiKey) {
+                prevKeys[prev.provider] = prev.apiKey
+              }
+
+              const state: FreeModeState = {
+                enabled: false,
+                apiKey: null,
+                model: FREE_MODE_DEFAULT_MODEL,
+                wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
+                providerKeys: prevKeys,
+              }
+              applyActiveFreeModeState(state)
+
+              setJson(res, 200, { ok: true, enabled: false })
             }
-                        if (appServer.hasFreeModeStateChanged(state)) {
-              appServer.setFreeModeState(state)
-              appServer.dispose()
-            }
-            const freeModels = await getFreeModels()
-             setJson(res, 200, {
-               ok: true,
-               enabled: true,
-               model: FREE_MODE_DEFAULT_MODEL,
-               keyCount: getFreeKeyCount(),
-               models: freeModels,
-             })
-           } else {
-             const prev = readFreeModeState()
-             const prevKeys = prev.providerKeys ?? {}
-             if (prev.provider && prev.apiKey) {
-               prevKeys[prev.provider] = prev.apiKey
-             }
-             const state: FreeModeState = {
-               enabled: false,
-               apiKey: null,
-               model: FREE_MODE_DEFAULT_MODEL,
-               wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
-               providerKeys: prevKeys,
-             }
-                         if (appServer.hasFreeModeStateChanged(state)) {
-              appServer.setFreeModeState(state)
-              appServer.dispose()
-            }
-             setJson(res, 200, { ok: true, enabled: false })
-           }
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to toggle free mode') })
           }
@@ -7985,7 +8122,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           try {
             const state = readFreeModeState()
             const maskedKey = state.apiKey && state.customKey
-              ? state.apiKey.substring(0, 12) + '...' + state.apiKey.substring(state.apiKey.length - 4)
+              ? `${state.apiKey.substring(0, 12)}...${state.apiKey.substring(state.apiKey.length - 4)}`
               : null
             let models = state.provider === MOONBRIDGE_PROVIDER_ID
               ? getMoonBridgeModels()
@@ -8046,13 +8183,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               setJson(res, 500, { error: 'No free keys available' })
               return
             }
+
             const current = readFreeModeState()
             const state: FreeModeState = { ...current, apiKey, customKey: false }
+            applyActiveFreeModeState(state)
 
-                        if (appServer.hasFreeModeStateChanged(state)) {
-              appServer.setFreeModeState(state)
-              appServer.dispose()
-            }
             setJson(res, 200, { ok: true })
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to rotate key') })
@@ -8075,10 +8210,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: current.wireApi === 'chat' ? 'chat' : 'responses',
               }
-                            if (appServer.hasFreeModeStateChanged(state)) {
-                appServer.setFreeModeState(state)
-                appServer.dispose()
-              }
+              applyActiveFreeModeState(state)
               setJson(res, 200, { ok: true, customKey: true })
             } else {
               const communityKey = getRandomFreeKey()
@@ -8089,10 +8221,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: current.wireApi === 'chat' ? 'chat' : 'responses',
               }
-                            if (appServer.hasFreeModeStateChanged(state)) {
-                appServer.setFreeModeState(state)
-                appServer.dispose()
-              }
+              applyActiveFreeModeState(state)
               setJson(res, 200, { ok: true, customKey: false })
             }
           } catch (error) {
@@ -8106,23 +8235,26 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const body = await readJsonBody(req) as Record<string, unknown> | null
             const baseUrl = typeof body?.baseUrl === 'string' ? body.baseUrl.trim() : ''
             const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : ''
-            const wireApi = body?.wireApi === 'chat' ? 'chat' as const : 'responses' as const
+            const wireApi = body?.wireApi === 'chat' ? 'chat' : 'responses'
             const providerType = body?.provider === 'opencode-zen'
-              ? 'opencode-zen' as const
+              ? 'opencode-zen'
               : body?.provider === 'openrouter'
-                ? 'openrouter' as const
+                ? 'openrouter'
                 : body?.provider === 'moon'
-                  ? 'moon' as const
-                : 'custom' as const
+                  ? 'moon'
+                  : 'custom'
+
             if (providerType === 'custom' && !baseUrl) {
               setJson(res, 400, { error: 'baseUrl is required' })
               return
             }
+
             const current = readFreeModeState()
             const prevKeys = { ...(current.providerKeys ?? {}) }
             if (current.provider && current.apiKey) {
               prevKeys[current.provider] = current.apiKey
             }
+
             const resolvedKey = apiKey || prevKeys[providerType] || ''
             if (resolvedKey) {
               prevKeys[providerType] = resolvedKey
@@ -8141,6 +8273,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                         : moonModels[0] ?? ''
                     })()
                   : OPENCODE_ZEN_DEFAULT_MODEL
+                  : OPENCODE_ZEN_DEFAULT_MODEL
             const state: FreeModeState = {
               enabled: true,
               apiKey: providerType === 'moon' ? null : resolvedKey,
@@ -8153,10 +8286,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               wireApi: providerType === 'moon' ? undefined : wireApi,
               providerKeys: prevKeys,
             }
-                        if (appServer.hasFreeModeStateChanged(state)) {
-              appServer.setFreeModeState(state)
-              appServer.dispose()
-            }
+            applyActiveFreeModeState(state)
+
             setJson(res, 200, { ok: true })
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to set custom provider') })
@@ -10054,16 +10185,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
   middleware.dispose = () => {
     threadSearchIndex = null
+    threadSearchIndexPromise = null
     disposeSharedBridgeState(sharedBridgeState)
   }
   middleware.subscribeNotifications = (
     listener: (value: { method: string; params: unknown; atIso: string }) => void,
   ) => {
-    const unsubscribeAppServer = appServer.onNotification((notification: { method: string; params: unknown }) => {
-      listener({
-        ...notification,
-        atIso: new Date().toISOString(),
-      })
+    const unsubscribeAppServer = runtimePool.subscribeNotifications((notification) => {
+      listener(notification)
     })
     const unsubscribeTerminal = terminalManager.subscribe((notification) => {
       listener({

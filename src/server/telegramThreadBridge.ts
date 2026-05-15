@@ -33,6 +33,7 @@ type AppServerLike = {
 
 type TelegramThreadBridgeOptions = {
   onChatSeen?: (chatId: number) => void
+  subscribeNotifications?: (listener: (value: { method: string; params: unknown; atIso?: string }) => void) => () => void
 }
 
 export type TelegramBridgeStatus = {
@@ -198,7 +199,7 @@ function splitTelegramText(text: string, maxLength = TELEGRAM_MESSAGE_MAX_LENGTH
 
 export class TelegramThreadBridge {
   private token: string
-  private readonly appServer: AppServerLike
+  private readonly getAppServer: () => AppServerLike
   private readonly defaultCwd: string
   private allowAllUsers = false
   private allowedUserIds = new Set<number>()
@@ -210,9 +211,11 @@ export class TelegramThreadBridge {
   private nextUpdateOffset = 0
   private lastError = ''
   private readonly onChatSeen?: (chatId: number) => void
+  private readonly subscribeNotifications?: (listener: (value: { method: string; params: unknown; atIso?: string }) => void) => () => void
+  private unsubscribeNotifications: (() => void) | null = null
 
-  constructor(appServer: AppServerLike, options: TelegramThreadBridgeOptions = {}) {
-    this.appServer = appServer
+  constructor(appServer: AppServerLike | (() => AppServerLike), options: TelegramThreadBridgeOptions = {}) {
+    this.getAppServer = typeof appServer === 'function' ? appServer : () => appServer
     this.token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
     this.defaultCwd = process.env.TELEGRAM_DEFAULT_CWD?.trim() ?? process.cwd()
     this.configureAllowedUserIds(
@@ -222,6 +225,7 @@ export class TelegramThreadBridge {
         .filter(Boolean),
     )
     this.onChatSeen = options.onChatSeen
+    this.subscribeNotifications = options.subscribeNotifications
   }
 
   start(): void {
@@ -230,13 +234,17 @@ export class TelegramThreadBridge {
     void this.syncBotCommands().catch(() => {})
     void this.notifyOnlineForKnownChats().catch(() => {})
     this.pollingTask = this.pollLoop()
-    this.appServer.onNotification((notification) => {
-      void this.handleNotification(notification).catch(() => {})
-    })
+    this.unsubscribeNotifications = (this.subscribeNotifications ?? ((listener) => this.getAppServer().onNotification(listener)))(
+      (notification) => {
+        void this.handleNotification(notification).catch(() => {})
+      },
+    )
   }
 
   stop(): void {
     this.active = false
+    this.unsubscribeNotifications?.()
+    this.unsubscribeNotifications = null
   }
 
   private async pollLoop(): Promise<void> {
@@ -507,7 +515,7 @@ export class TelegramThreadBridge {
 
     const threadId = await this.ensureThreadForChat(chatId)
     try {
-      await this.appServer.rpc('turn/start', {
+      await this.getAppServer().rpc('turn/start', {
         threadId,
         input: [{ type: 'text', text }],
       })
@@ -611,7 +619,7 @@ export class TelegramThreadBridge {
   }
 
   private async listRecentThreads(): Promise<Array<{ id: string; title: string }>> {
-    const payload = asRecord(await this.appServer.rpc('thread/list', {
+    const payload = asRecord(await this.getAppServer().rpc('thread/list', {
       archived: false,
       limit: 20,
       sortKey: 'updated_at',
@@ -635,7 +643,7 @@ export class TelegramThreadBridge {
   }
 
   private async createThreadForChat(chatId: number): Promise<string> {
-    const response = asRecord(await this.appServer.rpc('thread/start', {
+    const response = asRecord(await this.getAppServer().rpc('thread/start', {
       cwd: this.defaultCwd,
       persistExtendedHistory: true,
     }))
@@ -711,7 +719,7 @@ export class TelegramThreadBridge {
   }
 
   private async readLatestAssistantMessage(threadId: string): Promise<string> {
-    const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: true }))
+    const response = asRecord(await this.getAppServer().rpc('thread/read', { threadId, includeTurns: true }))
     const thread = asRecord(response?.thread)
     const turns = Array.isArray(thread?.turns) ? thread.turns : []
 
@@ -730,7 +738,7 @@ export class TelegramThreadBridge {
   }
 
   private async readThreadHistorySummary(threadId: string): Promise<string> {
-    const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: true }))
+    const response = asRecord(await this.getAppServer().rpc('thread/read', { threadId, includeTurns: true }))
     const thread = asRecord(response?.thread)
     const turns = Array.isArray(thread?.turns) ? thread.turns : []
     const historyRows: string[] = []

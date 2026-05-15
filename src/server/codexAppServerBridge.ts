@@ -8121,6 +8121,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         if (req.method === 'GET' && url.pathname === '/codex-api/free-mode/status') {
           try {
             const state = readFreeModeState()
+            const statusProvider = state.enabled ? (state.provider ?? 'openrouter') : undefined
             const maskedKey = state.apiKey && state.customKey
               ? `${state.apiKey.substring(0, 12)}...${state.apiKey.substring(state.apiKey.length - 4)}`
               : null
@@ -8155,7 +8156,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 ]
               }
               wireApi = 'responses'
-            } else {
+            } else if (statusProvider === 'openrouter') {
               refreshFreeModelsInBackground()
             }
             setJson(res, 200, {
@@ -8166,7 +8167,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               currentModel,
               customKey: Boolean(state.customKey),
               maskedKey,
-              provider: state.enabled ? (state.provider ?? 'openrouter') : undefined,
+              provider: statusProvider,
               customBaseUrl: state.customBaseUrl ?? null,
               wireApi,
             })

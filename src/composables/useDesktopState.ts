@@ -5011,12 +5011,19 @@ export function useDesktopState() {
   }
 
   async function refreshAll(
-    options: { includeSelectedThreadMessages?: boolean; awaitAncillaryRefreshes?: boolean; providerChanged?: boolean; forceThreadRefresh?: boolean } = {},
+    options: {
+      includeSelectedThreadMessages?: boolean
+      awaitAncillaryRefreshes?: boolean
+      providerChanged?: boolean
+      forceThreadRefresh?: boolean
+      refreshAncillary?: boolean
+    } = {},
   ) {
     error.value = ''
     codexCliMissingError.value = ''
     const includeSelectedThreadMessages = options.includeSelectedThreadMessages !== false
     const awaitAncillaryRefreshes = options.awaitAncillaryRefreshes === true
+    const refreshAncillary = options.refreshAncillary !== false
 
     try {
       await loadPersistedQueueStateIfNeeded()
@@ -5027,6 +5034,9 @@ export function useDesktopState() {
         } catch (unknownError) {
           error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
         }
+      }
+      if (!refreshAncillary) {
+        return
       }
       if (awaitAncillaryRefreshes) {
         await refreshAncillaryState({

@@ -4762,18 +4762,22 @@ async function initialize(): Promise<void> {
 
   await refreshAll({
     includeSelectedThreadMessages: false,
+    refreshAncillary: false,
   })
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)
   } else if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
     primeSelectedThread('', { persist: false })
   }
-  await applySelectedProviderState().catch(() => {})
+  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
   await syncThreadSelectionWithRoute()
   startPolling()
+  window.setTimeout(() => {
+    void refreshAncillaryState({ providerChanged: false, includeProviderModels: false })
+  }, 0)
 }
 
 async function syncThreadSelectionWithRoute(): Promise<void> {

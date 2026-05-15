@@ -271,6 +271,42 @@ This file tracks manual regression and feature verification steps.
 
 ---
 
+### Docker Tailscale iOS deployment workflow
+
+#### Feature/Change Name
+Docker Compose workflow for running codexUI with a Tailscale sidecar for iPhone/iPad access.
+
+#### Prerequisites/Setup
+1. Docker and Docker Compose v2 are available for the current user.
+2. `/dev/net/tun` is available to containers.
+3. `~/.codex` contains the Codex auth/config state to mount into the UI container.
+4. `~/.agents` exists if agent configuration should be visible inside the UI container.
+5. Optional: `TS_AUTHKEY` is set to a valid Tailscale auth key for unattended login.
+
+#### Steps
+1. Run `scripts/docker-tailscale-ios.sh up`.
+2. Confirm the script builds `codexui-local:docker-tailscale` and starts `codexui-ios` plus `codexui-tailscale`.
+3. Confirm `curl -fsSI http://127.0.0.1:5900/` returns HTTP 200.
+4. If no `TS_AUTHKEY` was provided, open the printed Tailscale auth URL and confirm the sidecar does not exit or rotate the auth URL while waiting.
+5. After authentication, run `scripts/docker-tailscale-ios.sh serve`.
+6. Run `scripts/docker-tailscale-ios.sh status` and confirm Tailscale Serve lists a proxy for `localhost:5900`.
+7. From an iPhone or iPad connected to the same tailnet, open the printed HTTPS MagicDNS URL.
+8. In light theme, confirm the UI loads and the expected project/thread list is visible.
+9. Switch to dark theme and confirm the UI remains readable with no light-only route surfaces.
+
+#### Expected Results
+- codexUI runs in Docker on local port `127.0.0.1:5900`.
+- The UI container can access mounted Codex state, agent config, and the original `$HOME` workspace paths.
+- The Tailscale sidecar shares the codexUI network namespace and serves `localhost:5900`.
+- iOS Safari can reach the UI through the private Tailscale HTTPS URL.
+- Light theme and dark theme both render correctly.
+
+#### Rollback/Cleanup
+- Run `scripts/docker-tailscale-ios.sh down` to stop containers while preserving the Tailscale state volume.
+- Remove the persisted Tailscale node identity only if needed with `docker volume rm codexui-tailscale-state`.
+
+---
+
 ### Pinned threads remain visible during background pagination
 
 #### Feature/Change Name
@@ -4986,3 +5022,74 @@ The sidebar Chats section lists the first 10 projectless chats, offers Show more
 
 #### Rollback/Cleanup
 - None.
+
+---
+
+### Docker Tailscale iOS proxies to host codexUI
+
+#### Feature/Change Name
+Docker/Tailscale iOS deployment runs codexUI on the host and uses Docker only for the Tailscale Serve node.
+
+#### Prerequisites/Setup
+1. Docker Compose is available.
+2. Host Codex home exists at `~/.codex` and `codex login status` succeeds.
+3. Tailscale auth for the `codexui-ios` node is already configured, or `TS_AUTHKEY` is available.
+4. Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `scripts/docker-tailscale-ios.sh up`.
+2. Confirm `tmux has-session -t codexui-host` succeeds.
+3. Confirm `docker ps --filter name=codexui` shows `codexui-tailscale` but does not show a running `codexui-ios` web UI container.
+4. Run `scripts/docker-tailscale-ios.sh status` and confirm the host codexUI URL uses a non-loopback host IP, such as `http://10.101.0.11:5900`.
+5. Confirm Tailscale Serve status proxies to the same host codexUI URL.
+6. From the server, call `curl -fsSI http://<host-ip>:5900/` and confirm HTTP 200.
+7. Open the iOS Tailscale Serve URL in light theme and confirm existing host sessions are listed.
+8. Send a test message in a host-backed session and confirm a normal assistant response starts.
+9. Switch to dark theme and confirm the session list and chat view remain readable.
+10. From Mac without Tailscale, run `ssh -N -L 15900:<host-ip>:5900 uvxiao@115.27.161.184`, open `http://127.0.0.1:15900`, and confirm the same UI loads.
+
+#### Expected Results
+- codexUI and Codex app-server run on the host, using host `~/.codex`, host proxy environment, host certificates, and host filesystem paths.
+- Docker owns only the Tailscale node; there is no Docker codexUI container and no Docker Codex auth copy.
+- Existing host sessions appear without session-history bind mounts or copied auth.
+- Tailscale Serve reaches host codexUI through the non-loopback host URL.
+- Mac SSH forwarding reaches the same host codexUI URL without Tailscale.
+- Light and dark theme chat surfaces remain readable through the Tailscale Serve URL.
+
+#### Rollback/Cleanup
+- Run `scripts/docker-tailscale-ios.sh down` to stop the deployment.
+- If a manual SSH tunnel was started, stop it with Ctrl-C.
+
+---
+
+### Mac Dock control app for CodexUI
+
+#### Feature/Change Name
+Mac-side AppleScript control app opens codexUI through SSH and controls host codexUI plus Docker Tailscale services.
+
+#### Prerequisites/Setup
+1. Mac can SSH to `uvxiao@115.27.161.184` without an interactive password prompt.
+2. This repository, or at least `scripts/macos-codexui-control.applescript`, is available on the Mac.
+3. Server deployment paths match the defaults in the AppleScript properties.
+4. Host codexUI and Docker Tailscale can be managed by `scripts/docker-tailscale-ios.sh`.
+
+#### Steps
+1. On the Mac, run `osacompile -o ~/Applications/CodexUI.app scripts/macos-codexui-control.applescript`.
+2. Open `~/Applications/CodexUI.app`.
+3. Choose `Test status` and confirm a status dialog shows the host codexUI HTTP 200 check and Tailscale Serve target.
+4. Reopen the app, choose `Open CodexUI`, and confirm it opens `http://127.0.0.1:15900` through an SSH tunnel.
+5. Reopen the app, choose `Restart services`, and confirm the remote script completes and offers to open the UI.
+6. Reopen the app, choose `Open iOS URL`, and confirm it opens `https://codexui-ios.tail27dc02.ts.net`.
+7. Reopen the app, choose `Stop services`, cancel once, then repeat and confirm stop works only after choosing `Stop`.
+8. Start a stale listener on local port `15900`, choose `Open CodexUI`, and confirm the app clears the stale listener before opening the real UI.
+
+#### Expected Results
+- The compiled Dock app provides one-click access to codexUI from Mac.
+- `Open CodexUI` creates or reuses an SSH tunnel without opening a terminal window.
+- `Open CodexUI` verifies the local HTTP endpoint, not only whether port `15900` is open.
+- `Test status`, `Restart services`, and `Stop services` execute the remote deployment wrapper over SSH.
+- The app does not require Docker or Tailscale on the Mac.
+
+#### Rollback/Cleanup
+- Remove `~/Applications/CodexUI.app`.
+- Stop any SSH tunnel created by the app with `pkill -f 'ssh .*15900:10.101.0.11:5900'` if needed.

@@ -2601,6 +2601,8 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
                 path: fileReference.path,
                 displayPath,
                 downloadName: getBasename(fileReference.path),
+                line: fileReference.line,
+                endLine: fileReference.endLine,
               })
             } else {
               segments.push({ kind: 'code', value: token })

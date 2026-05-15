@@ -2230,6 +2230,13 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
       const isProviderBacked = normalizedProviderId !== 'codex'
       activeProviderId.value = normalizedProviderId
+      if (
+        isProviderBacked &&
+        selectedThreadId.value === '' &&
+        readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value) !== normalizedProviderId
+      ) {
+        setSelectedProviderForThread(selectedThreadId.value, normalizedProviderId)
+      }
       const [modelIds, moonModels] = await Promise.all([
         getAvailableModelIds({
           includeProviderModels: options?.includeProviderModels !== false || isProviderBacked,

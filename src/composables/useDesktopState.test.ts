@@ -24,6 +24,8 @@ const gatewayMocks = vi.hoisted(() => ({
   getAvailableCollaborationModes: vi.fn(),
   getAvailableModelIds: vi.fn(),
   getCurrentModelConfig: vi.fn(),
+  getMoonBridgeModelIds: vi.fn(),
+  getMoonBridgeModelMetadata: vi.fn(),
   getPendingServerRequests: vi.fn(),
   getSkillsList: vi.fn(),
   getThreadDetail: vi.fn(),
@@ -89,6 +91,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
+  gatewayMocks.getMoonBridgeModelIds.mockResolvedValue([])
+  gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([])
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
 })
 

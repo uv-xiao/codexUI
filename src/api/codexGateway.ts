@@ -1667,7 +1667,6 @@ export async function forkThread(
         threadId: forkedThreadId,
         cwd: normalizeThreadCwdFromPayload(payload),
         model: normalizeThreadModelFromPayload(payload),
-        messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
         modelProvider: normalizeThreadModelProviderFromPayload(payload),
         messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
       }

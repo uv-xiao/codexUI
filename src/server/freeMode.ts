@@ -97,6 +97,7 @@ export function getFreeKeyCount(): number {
 
 export const FREE_MODE_PROVIDER_ID = 'openrouter-free'
 export const FREE_MODE_BASE_URL = 'https://openrouter.ai/api/v1'
+export const FREE_MODE_STATE_FILE = 'webui-free-mode.json'
 export const MOONBRIDGE_PROVIDER_ID = 'moon'
 export const MOONBRIDGE_PROVIDER_NAME = 'Moon Bridge'
 export const MOONBRIDGE_MODEL_CATALOG_FILE = 'models_catalog.json'

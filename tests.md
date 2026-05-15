@@ -5093,3 +5093,40 @@ Mac-side AppleScript control app opens codexUI through SSH and controls host cod
 #### Rollback/Cleanup
 - Remove `~/Applications/CodexUI.app`.
 - Stop any SSH tunnel created by the app with `pkill -f 'ssh .*15900:10.101.0.11:5900'` if needed.
+
+---
+
+### Upstream and Light-of-Hers feature import
+
+#### Feature/Change Name
+Import upstream `friuns2/codexUI` changes and all feature changes from `Light-of-Hers/codexUI` branch `crz/dev`.
+
+#### Prerequisites/Setup
+1. Install dependencies with `npm install` or reuse the repository `node_modules`.
+2. Ensure Codex CLI is authenticated for normal Codex provider testing.
+3. For provider-backed model testing, configure OpenCode Zen or Moon Bridge provider state from the app settings.
+4. Start the app with `pnpm run dev --host 127.0.0.1 --port 4173`.
+5. Test once in light theme and once in dark theme.
+
+#### Steps
+1. Open `http://127.0.0.1:4173`.
+2. Confirm the sidebar, project list, automations entry points, and existing chats load normally.
+3. Open a thread and scroll through older turns; confirm paged thread loading continues to show conversation content without duplicate or missing visible turns.
+4. Send a normal Codex message and confirm the assistant response appears.
+5. Enable a provider-backed mode such as OpenCode Zen, choose a provider model, refresh the page, and confirm the provider-specific model selection is restored instead of falling back to the global Codex model.
+6. Compose a message using markdown preview, file mention, and skill mention controls; confirm the composer can switch between editing and preview without losing text.
+7. Expand the composer to fullscreen and collapse it again; confirm the draft content, selected mentions, and send controls remain intact.
+8. Send or load a message containing markdown code spans, normal URLs, `codex://threads/...` links, and file references with line numbers; confirm each link type renders and opens through the expected route.
+9. Trigger an interrupted or queued turn if available; confirm queue state and recovered/interrupted-turn content remain visible after refresh.
+10. Switch to dark theme and repeat steps 2, 6, 7, and 8.
+
+#### Expected Results
+- Upstream route exclusions, bounded thread payload handling, recovered turn merging, provider state, free-mode defaults, markdown rendering, mention controls, and fullscreen composer behavior work together.
+- Provider-backed model lists are requested with provider models required, and provider-scoped selected models survive refresh.
+- Markdown preview, file mentions, skill mentions, and fullscreen composer controls remain readable and usable in light and dark themes.
+- File links, thread links, and normal URLs are parsed without breaking inline code rendering.
+- No duplicate requests, missing turns, or stale queue state are visible during the tested flows.
+
+#### Rollback/Cleanup
+- Disable provider-backed mode if it was enabled only for testing.
+- Stop the `4173` dev server if it was started only for this verification.

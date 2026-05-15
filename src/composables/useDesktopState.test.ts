@@ -2,11 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildWorkspaceRootsProjectOrderState,
   collectWorkspaceRootPathsForProjectRemoval,
+  applyModelContextWindowToThreadTokenUsage,
   filterGroupsByWorkspaceRoots,
   findAdjacentThreadId,
   removeThreadFromGroups,
+  inferProviderFromModel,
   isThreadUnreadByLastRead,
+  normalizeProviderId,
   useDesktopState,
+  readSelectedProvider,
+  readSelectedModelForThreadContext,
+  writeSelectedProviderForContext,
 } from './useDesktopState'
 import type { UiProjectGroup } from '../types/codex'
 import type { WorkspaceRootsState } from '../api/codexGateway'
@@ -18,6 +24,8 @@ const gatewayMocks = vi.hoisted(() => ({
   getAvailableCollaborationModes: vi.fn(),
   getAvailableModelIds: vi.fn(),
   getCurrentModelConfig: vi.fn(),
+  getMoonBridgeModelIds: vi.fn(),
+  getMoonBridgeModelMetadata: vi.fn(),
   getPendingServerRequests: vi.fn(),
   getSkillsList: vi.fn(),
   getThreadDetail: vi.fn(),
@@ -83,6 +91,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
+  gatewayMocks.getMoonBridgeModelIds.mockResolvedValue([])
+  gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([])
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
 })
 
@@ -369,6 +379,84 @@ describe('workspace roots project persistence helpers', () => {
   })
 })
 
+describe('provider session helpers', () => {
+  it('defaults provider selections to Codex', () => {
+    expect(normalizeProviderId('')).toBe('codex')
+    expect(normalizeProviderId('rustcat')).toBe('codex')
+    expect(normalizeProviderId('openrouter-free')).toBe('openrouter')
+    expect(normalizeProviderId('custom-endpoint')).toBe('custom')
+    expect(readSelectedProvider({}, '')).toBe('codex')
+  })
+
+  it('stores provider selections by session context', () => {
+    const next = writeSelectedProviderForContext({}, 'thread-a', 'moon')
+
+    expect(readSelectedProvider(next, 'thread-a')).toBe('moon')
+    expect(readSelectedProvider(next, 'thread-b')).toBe('codex')
+  })
+
+  it('maps the new-thread model context to the new-thread provider context', () => {
+    const next = writeSelectedProviderForContext({}, '__new-thread__', 'moon')
+
+    expect(readSelectedProvider(next, '')).toBe('moon')
+    expect(readSelectedProvider(next, '__new-thread__')).toBe('moon')
+  })
+
+  it('infers Moon Bridge provider from session model catalog entries', () => {
+    expect(inferProviderFromModel('glm-5.1', ['glm-5.1', 'kimi-k2.6'])).toBe('moon')
+    expect(inferProviderFromModel('gpt-5.4-mini', ['glm-5.1', 'kimi-k2.6'])).toBeNull()
+  })
+
+  it('keeps the new-thread model selection scoped to the active session provider', () => {
+    const state = {
+      '__new-thread__': 'gpt-5.4-mini',
+      '__new-thread-provider__::codex': 'gpt-5.4-mini',
+      '__new-thread-provider__::moon': 'glm-5.1',
+    }
+
+    expect(readSelectedModelForThreadContext(state, '__new-thread__', 'moon')).toBe('glm-5.1')
+    expect(readSelectedModelForThreadContext(state, '', 'codex')).toBe('gpt-5.4-mini')
+  })
+
+  it('updates the current model ref when selecting a model for the new-thread composer', () => {
+    const state = useDesktopState()
+
+    state.setSelectedModelIdForThread('__new-thread__', 'gpt-5.4-mini')
+
+    expect(state.selectedModelId.value).toBe('gpt-5.4-mini')
+  })
+
+  it('recomputes token usage from the selected model context window', () => {
+    const usage = applyModelContextWindowToThreadTokenUsage({
+      total: {
+        totalTokens: 15000,
+        inputTokens: 9000,
+        cachedInputTokens: 0,
+        outputTokens: 6000,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: 15000,
+        inputTokens: 9000,
+        cachedInputTokens: 0,
+        outputTokens: 6000,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 12000,
+      currentContextTokens: 15000,
+      remainingContextTokens: 0,
+      remainingContextPercent: 0,
+    }, 200000)
+
+    expect(usage).toMatchObject({
+      modelContextWindow: 200000,
+      currentContextTokens: 15000,
+      remainingContextTokens: 185000,
+      remainingContextPercent: 93,
+    })
+  })
+})
+
 describe('thread unread state helpers', () => {
   const cutoffIso = '2026-05-01T12:00:00.000Z'
 
@@ -418,6 +506,117 @@ describe('collaboration mode selection', () => {
     state.primeSelectedThread('thread-a')
 
     expect(state.selectedCollaborationMode.value).toBe('plan')
+  })
+})
+
+describe('Codex CLI availability', () => {
+  it('surfaces a chat runtime error when the app-server bridge cannot find Codex CLI', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockRejectedValue(new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.'))
+
+    const state = useDesktopState()
+
+    await state.refreshAll({ awaitAncillaryRefreshes: true })
+
+    expect(state.codexCliMissingError.value).toBe('Codex CLI not found. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
+  })
+
+  it('clears a previous Codex CLI missing banner when a later refresh fails for another reason', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage
+      .mockRejectedValueOnce(new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.'))
+      .mockRejectedValueOnce(new Error('Connection lost'))
+
+    const state = useDesktopState()
+
+    await state.refreshAll({ awaitAncillaryRefreshes: true })
+    expect(state.codexCliMissingError.value).toBe('Codex CLI not found. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
+
+    await state.refreshAll({ awaitAncillaryRefreshes: true })
+    expect(state.error.value).toBe('Connection lost')
+    expect(state.codexCliMissingError.value).toBe('')
+  })
+})
+
+describe('provider model selection', () => {
+  it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread__': 'gpt-5.5',
+      }),
+      'codex-web-local.selected-model-id.v1': 'gpt-5.5',
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'big-pickle',
+      providerId: 'opencode-zen',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'big-pickle',
+      'deepseek-v4-flash-free',
+      'ring-2.6-1t-free',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })
+    expect(state.availableModelIds.value).toEqual([
+      'big-pickle',
+      'deepseek-v4-flash-free',
+      'ring-2.6-1t-free',
+    ])
+    expect(state.selectedModelId.value).toBe('big-pickle')
+    expect(state.readModelIdForThread('').trim()).toBe('big-pickle')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::opencode-zen': 'big-pickle',
+    })
+    expect(window.localStorage.getItem('codex-web-local.selected-model-id.v1')).toBe(null)
+  })
+
+  it('restores a valid provider-scoped OpenCode Zen selected model from localStorage', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::opencode-zen': 'ring-2.6-1t-free',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'big-pickle',
+      providerId: 'opencode-zen',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'big-pickle',
+      'deepseek-v4-flash-free',
+      'ring-2.6-1t-free',
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.availableModelIds.value).toEqual([
+      'big-pickle',
+      'deepseek-v4-flash-free',
+      'ring-2.6-1t-free',
+    ])
+    expect(state.selectedModelId.value).toBe('ring-2.6-1t-free')
+    expect(state.readModelIdForThread('').trim()).toBe('ring-2.6-1t-free')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::opencode-zen': 'ring-2.6-1t-free',
+    })
   })
 })
 

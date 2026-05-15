@@ -1,5 +1,5 @@
 <template>
-  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu">
+  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu" @click.capture="onConversationClick">
     <p v-if="isLoading" class="conversation-loading">Loading messages...</p>
 
     <p
@@ -14,13 +14,13 @@
         <button
           type="button"
           class="load-more-button"
-          :disabled="isLoadingMore"
+          :disabled="isLoadingMore || isLoadingPersistedAbove"
           @click="loadMoreAbove"
         >
-          {{ isLoadingMore ? 'Loading…' : 'Load earlier messages' }}
+          {{ isLoadingMore || isLoadingPersistedAbove ? 'Loading…' : 'Load earlier messages' }}
         </button>
       </li>
-      <template v-for="message in visibleMessages" :key="message.id">
+      <template v-for="(message, messageIndex) in visibleMessages" :key="message.id">
       <li
         v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
         class="conversation-item"
@@ -64,7 +64,7 @@
                     @click="toggleCommandExpand(cmd)"
                   >
                     <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                    <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                    <code class="cmd-label" :title="commandDisplayText(cmd)">{{ commandDisplayText(cmd) }}</code>
                     <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
                   </button>
                   <div
@@ -72,6 +72,10 @@
                     :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                   >
                     <div class="cmd-output-inner">
+                      <div class="cmd-output-command">
+                        <span class="cmd-output-command-label">Command</span>
+                        <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                      </div>
                       <pre
                         class="cmd-output"
                         :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
@@ -96,7 +100,7 @@
                 @click="toggleCommandExpand(message)"
               >
                 <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(message) }">▶</span>
-                <code class="cmd-label">{{ message.commandExecution?.command || '(command)' }}</code>
+                <code class="cmd-label" :title="commandDisplayText(message)">{{ commandDisplayText(message) }}</code>
                 <span class="cmd-status">{{ commandStatusLabel(message) }}</span>
               </button>
               <div
@@ -104,6 +108,10 @@
                 :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
               >
                 <div class="cmd-output-inner">
+                  <div class="cmd-output-command">
+                    <span class="cmd-output-command-label">Command</span>
+                    <pre class="cmd-output-command-text" v-text="commandDisplayText(message)"></pre>
+                  </div>
                   <pre
                     class="cmd-output"
                     :class="{ 'cmd-output-condensed': isCommandOutputCondensed(message) }"
@@ -118,9 +126,13 @@
         <div
           v-else-if="isFileChangeMessage(message)"
           class="message-row"
+          :class="{ 'message-row-agent-start': showAgentAvatar(message, messageIndex) }"
           :data-role="message.role"
           :data-message-type="message.messageType || ''"
         >
+          <div v-if="showAgentAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
+            <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
+          </div>
           <div class="message-stack" :data-role="message.role">
             <article class="message-body" :data-role="message.role">
               <section v-if="readStandaloneFileChangeSummary(message)" class="file-change-summary-block">
@@ -193,7 +205,22 @@
           </div>
         </div>
 
-        <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
+        <div
+          v-else
+          class="message-row"
+          :class="{
+            'message-row-agent-start': showAgentAvatar(message, messageIndex),
+            'message-row-user-start': showUserAvatar(message, messageIndex),
+          }"
+          :data-role="message.role"
+          :data-message-type="message.messageType || ''"
+        >
+          <div v-if="showUserAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
+            <img class="message-avatar-image" :src="userAvatarSrc" alt="" />
+          </div>
+          <div v-else-if="showAgentAvatar(message, messageIndex)" class="message-avatar" aria-hidden="true">
+            <img class="message-avatar-image" :src="agentAvatarSrc" alt="" />
+          </div>
           <div class="message-stack" :data-role="message.role">
             <article class="message-body" :data-role="message.role">
               <ul
@@ -274,7 +301,7 @@
                         @click="toggleCommandExpand(cmd)"
                       >
                         <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                        <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                        <code class="cmd-label" :title="commandDisplayText(cmd)">{{ commandDisplayText(cmd) }}</code>
                         <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
                       </button>
                       <div
@@ -282,6 +309,10 @@
                         :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                       >
                         <div class="cmd-output-inner">
+                          <div class="cmd-output-command">
+                            <span class="cmd-output-command-label">Command</span>
+                            <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                          </div>
                           <pre
                             class="cmd-output"
                             :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
@@ -297,11 +328,11 @@
                     <p class="plan-card-title">Plan</p>
                     <span v-if="message.messageType === 'plan.live'" class="plan-card-badge">Updating</span>
                   </div>
-                  <div
-                    v-if="readPlanExplanation(message)"
-                    class="plan-card-explanation plan-card-markdown"
-                    v-html="renderMarkdownBlocksAsHtml(readPlanExplanation(message))"
-                  />
+                <div
+                  v-if="readPlanExplanation(message)"
+                  class="plan-card-explanation plan-card-markdown"
+                  v-html="renderMarkdownContent(readPlanExplanation(message), { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                />
                   <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
                     <li
                       v-for="(step, stepIndex) in readPlanSteps(message)"
@@ -310,10 +341,17 @@
                       :data-status="step.status"
                     >
                       <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
-                      <div class="plan-step-text plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(step.step)" />
+                      <div
+                        class="plan-step-text plan-card-markdown"
+                        v-html="renderMarkdownContent(step.step, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                      />
                     </li>
                   </ol>
-                  <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                  <div
+                    v-else
+                    class="plan-card-markdown"
+                    v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                  />
                   <div v-if="showImplementPlanButton(message)" class="plan-card-actions">
                     <button
                       type="button"
@@ -326,253 +364,18 @@
                 </div>
                 <div
                   v-else
-                  class="message-text-flow"
-                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownImageFailureVersion]"
-                >
-                  <template v-for="(block, blockIndex) in getMessageBlocks(message)" :key="`block-${blockIndex}`">
-                    <p v-if="block.kind === 'paragraph'" class="message-text">
-                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`seg-${blockIndex}-${segmentIndex}`">
-                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                        <a
-                          v-else-if="segment.kind === 'file'"
-                          class="message-file-link"
-                          :href="toBrowseUrl(segment.path)"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.path"
-                        >
-                          {{ segment.displayPath }}
-                        </a>
-                        <a
-                          v-else-if="segment.kind === 'url'"
-                          class="message-file-link"
-                          :href="segment.href"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.href"
-                        >
-                          {{ segment.value }}
-                        </a>
-                        <code v-else class="message-inline-code">{{ segment.value }}</code>
-                      </template>
-                    </p>
-                    <component
-                      :is="headingTag(block.level)"
-                      v-else-if="block.kind === 'heading'"
-                      class="message-heading"
-                      :class="headingClass(block.level)"
-                    >
-                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`heading-seg-${blockIndex}-${segmentIndex}`">
-                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                        <a
-                          v-else-if="segment.kind === 'file'"
-                          class="message-file-link"
-                          :href="toBrowseUrl(segment.path)"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.path"
-                        >
-                          {{ segment.displayPath }}
-                        </a>
-                        <a
-                          v-else-if="segment.kind === 'url'"
-                          class="message-file-link"
-                          :href="segment.href"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.href"
-                        >
-                          {{ segment.value }}
-                        </a>
-                        <code v-else class="message-inline-code">{{ segment.value }}</code>
-                      </template>
-                    </component>
-                    <blockquote v-else-if="block.kind === 'blockquote'" class="message-blockquote">
-                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`quote-seg-${blockIndex}-${segmentIndex}`">
-                        <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                        <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                        <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                        <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                        <a
-                          v-else-if="segment.kind === 'file'"
-                          class="message-file-link"
-                          :href="toBrowseUrl(segment.path)"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.path"
-                        >
-                          {{ segment.displayPath }}
-                        </a>
-                        <a
-                          v-else-if="segment.kind === 'url'"
-                          class="message-file-link"
-                          :href="segment.href"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          :title="segment.href"
-                        >
-                          {{ segment.value }}
-                        </a>
-                        <code v-else class="message-inline-code">{{ segment.value }}</code>
-                      </template>
-                    </blockquote>
-                    <ul v-else-if="block.kind === 'unorderedList'" class="message-list message-list-unordered">
-                      <li v-for="(item, itemIndex) in block.items" :key="`ul-${blockIndex}-${itemIndex}`" class="message-list-item">
-                        <div class="message-list-item-content" v-html="renderListItemContentAsHtml(item)" />
-                      </li>
-                    </ul>
-                    <ul v-else-if="block.kind === 'taskList'" class="message-list message-task-list">
-                      <li v-for="(item, itemIndex) in block.items" :key="`task-${blockIndex}-${itemIndex}`" class="message-task-item">
-                        <span class="message-task-checkbox" :data-checked="item.checked">{{ item.checked ? '☑' : '☐' }}</span>
-                        <div class="message-list-item-text">
-                          <template v-for="(segment, segmentIndex) in getInlineSegments(item.text)" :key="`task-seg-${blockIndex}-${itemIndex}-${segmentIndex}`">
-                            <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                            <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                            <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                            <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                            <a
-                              v-else-if="segment.kind === 'file'"
-                              class="message-file-link"
-                              :href="toBrowseUrl(segment.path)"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              :title="segment.path"
-                            >
-                              {{ segment.displayPath }}
-                            </a>
-                            <a
-                              v-else-if="segment.kind === 'url'"
-                              class="message-file-link"
-                              :href="segment.href"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              :title="segment.href"
-                            >
-                              {{ segment.value }}
-                            </a>
-                            <code v-else class="message-inline-code">{{ segment.value }}</code>
-                          </template>
-                        </div>
-                      </li>
-                    </ul>
-                    <ol
-                      v-else-if="block.kind === 'orderedList'"
-                      class="message-list message-list-ordered"
-                      :start="block.start"
-                    >
-                      <li v-for="(item, itemIndex) in block.items" :key="`ol-${blockIndex}-${itemIndex}`" class="message-list-item">
-                        <div class="message-list-item-content" v-html="renderListItemContentAsHtml(item)" />
-                      </li>
-                    </ol>
-                    <div v-else-if="block.kind === 'table'" class="message-table-wrap">
-                      <table class="message-table">
-                        <thead>
-                          <tr>
-                            <th
-                              v-for="(cell, cellIndex) in block.headers"
-                              :key="`th-${blockIndex}-${cellIndex}`"
-                              class="message-table-head-cell"
-                              :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
-                            >
-                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`th-seg-${blockIndex}-${cellIndex}-${segmentIndex}`">
-                                <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                                <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                                <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                                <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                                <a
-                                  v-else-if="segment.kind === 'file'"
-                                  class="message-file-link"
-                                  :href="toBrowseUrl(segment.path)"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.path"
-                                >
-                                  {{ segment.displayPath }}
-                                </a>
-                                <a
-                                  v-else-if="segment.kind === 'url'"
-                                  class="message-file-link"
-                                  :href="segment.href"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.href"
-                                >
-                                  {{ segment.value }}
-                                </a>
-                                <code v-else class="message-inline-code">{{ segment.value }}</code>
-                              </template>
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody v-if="block.rows.length > 0">
-                          <tr v-for="(row, rowIndex) in block.rows" :key="`tr-${blockIndex}-${rowIndex}`" class="message-table-body-row">
-                            <td
-                              v-for="(cell, cellIndex) in row"
-                              :key="`td-${blockIndex}-${rowIndex}-${cellIndex}`"
-                              class="message-table-cell"
-                              :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
-                            >
-                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`td-seg-${blockIndex}-${rowIndex}-${cellIndex}-${segmentIndex}`">
-                                <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                                <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
-                                <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
-                                <s v-else-if="segment.kind === 'strikethrough'" class="message-strikethrough-text">{{ segment.value }}</s>
-                                <a
-                                  v-else-if="segment.kind === 'file'"
-                                  class="message-file-link"
-                                  :href="toBrowseUrl(segment.path)"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.path"
-                                >
-                                  {{ segment.displayPath }}
-                                </a>
-                                <a
-                                  v-else-if="segment.kind === 'url'"
-                                  class="message-file-link"
-                                  :href="segment.href"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  :title="segment.href"
-                                >
-                                  {{ segment.value }}
-                                </a>
-                                <code v-else class="message-inline-code">{{ segment.value }}</code>
-                              </template>
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    <div v-else-if="block.kind === 'codeBlock'" class="message-code-block">
-                      <div v-if="block.language" class="message-code-language">{{ block.language }}</div>
-                      <pre class="message-code-pre"><code class="hljs" v-html="renderCachedHighlightedCodeAsHtml(block.language, block.value)"></code></pre>
-                    </div>
-                    <hr v-else-if="block.kind === 'thematicBreak'" class="message-divider" />
-                    <p v-else-if="isMarkdownImageFailed(message.id, blockIndex)" class="message-text">{{ block.markdown }}</p>
-                    <button
-                      v-else
-                      class="message-image-button"
-                      type="button"
-                      @click="openImageModal(block.url)"
-                    >
-                      <img
-                        class="message-image-preview message-markdown-image"
-                        :src="block.url"
-                        :alt="block.alt || 'Embedded message image'"
-                        loading="lazy"
-                        @error="onMarkdownImageError(message.id, blockIndex)"
-                      />
-                    </button>
-                  </template>
-                </div>
+                  class="message-text-flow message-markdown-body"
+                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion]"
+                  v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'message', highlightVersion: highlightCacheVersion }).html"
+                ></div>
               </article>
+
+              <pre
+                v-if="showResponseSourceButton(message) && isResponseSourceVisible(message)"
+                :id="`message-source-${message.id}`"
+                class="message-source-text"
+                v-text="getResponseSourceText(message)"
+              ></pre>
 
               <section v-if="readAnchoredFileChangeSummary(message)" class="file-change-summary-block file-change-summary-block-inline">
                 <button
@@ -642,7 +445,7 @@
               </section>
 
               <div
-                v-if="showCopyResponseButton(message) || showEditMessageButton(message)"
+                v-if="showCopyResponseButton(message) || showResponseSourceButton(message) || showEditMessageButton(message)"
                 class="message-toolbar"
                 :data-role="message.role"
               >
@@ -667,6 +470,19 @@
                 >
                   <IconTablerGitFork class="icon-svg message-fork-icon" />
                   <span class="message-fork-label">Fork</span>
+                </button>
+                <button
+                  v-if="showResponseSourceButton(message)"
+                  type="button"
+                  class="message-source-button"
+                  :data-open="isResponseSourceVisible(message) ? 'true' : 'false'"
+                  :aria-expanded="isResponseSourceVisible(message)"
+                  :aria-controls="`message-source-${message.id}`"
+                  :aria-label="isResponseSourceVisible(message) ? t('Hide original') : t('Show original')"
+                  :title="isResponseSourceVisible(message) ? t('Hide original') : t('Show original')"
+                  @click="toggleResponseSource(message.id)"
+                >
+                  <span class="message-source-label">{{ isResponseSourceVisible(message) ? t('Hide original') : t('Show original') }}</span>
                 </button>
                 <button
                   v-if="showCopyResponseButton(message)"
@@ -697,7 +513,10 @@
               >
                 {{ liveOverlay.reasoningText }}
               </p>
-              <p v-if="liveOverlay.errorText" class="live-overlay-error">{{ liveOverlay.errorText }}</p>
+              <div v-if="liveOverlay.errorText" class="live-overlay-error">
+                <span>{{ liveOverlay.errorText }}</span>
+                <a class="live-overlay-feedback" :href="feedbackMailto" @click="prepareLiveErrorFeedback($event, liveOverlay.errorText)">Send feedback</a>
+              </div>
             </article>
           </div>
         </div>
@@ -870,7 +689,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
+import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
+import { useUiLanguage } from '../../composables/useUiLanguage'
+import { clearMarkdownRendererCache, renderMarkdownContent } from './markdownRenderer'
+import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
@@ -878,13 +701,14 @@ import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 
-type HighlightJsModule = (typeof import('highlight.js/lib/common'))['default']
+type HighlightJsModule = (typeof import('highlight.js'))['default']
 
 const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
+const expandedResponseSourceIds = ref<Set<string>>(new Set())
 const activeDiffViewerSummary = ref<TurnFileChangeSummary | null>(null)
 const activeDiffViewerChangeKey = ref('')
 const isDiffViewerFileListOpen = ref(false)
@@ -895,6 +719,17 @@ const fileLinkContextMenuY = ref(0)
 const fileLinkContextBrowseUrl = ref('')
 const fileLinkContextEditUrl = ref('')
 const { isMobile } = useMobile()
+const { buildFeedbackMailto, feedbackMailtoBase, recordVisibleFailure } = useFeedbackDiagnostics()
+const feedbackMailto = feedbackMailtoBase()
+const { t } = useUiLanguage()
+
+function prepareLiveErrorFeedback(event: MouseEvent, message: string): void {
+  recordVisibleFailure(message)
+  const target = event.currentTarget
+  if (target instanceof HTMLAnchorElement) {
+    target.href = buildFeedbackMailto()
+  }
+}
 
 function parsePlanFromMessageText(text: string): { explanation: string; steps: UiPlanStep[] } | null {
   const normalized = text.replace(/\r\n/g, '\n').trim()
@@ -947,6 +782,11 @@ function isCommandMessage(message: UiMessage): boolean {
   return message.messageType === 'commandExecution' && !!message.commandExecution
 }
 
+function commandDisplayText(message: UiMessage): string {
+  const command = message.commandExecution?.command
+  return typeof command === 'string' && command.length > 0 ? command : '(command)'
+}
+
 function isPlanMessage(message: UiMessage): boolean {
   return message.messageType === 'plan' || message.messageType === 'plan.live'
 }
@@ -988,6 +828,37 @@ function isCopyableAssistantMessage(message: UiMessage): boolean {
     && !isCommandMessage(message)
     && message.messageType !== 'worked'
     && !(message.messageType ?? '').endsWith('.live')
+}
+
+function showTurnAvatar(message: UiMessage, messageIndex: number, role: 'assistant' | 'user'): boolean {
+  if (message.role !== role) return false
+
+  if (typeof message.turnIndex === 'number') {
+    for (let index = messageIndex - 1; index >= 0; index -= 1) {
+      const previous = visibleMessages.value[index]
+      if (previous?.role === role && previous.turnIndex === message.turnIndex) {
+        return false
+      }
+    }
+    return true
+  }
+
+  for (let index = messageIndex - 1; index >= 0; index -= 1) {
+    const previous = visibleMessages.value[index]
+    if (previous?.role === role) return false
+    if (role === 'assistant' && previous?.role === 'user') return true
+    if (role === 'user' && previous?.role === 'assistant') return true
+  }
+
+  return true
+}
+
+function showAgentAvatar(message: UiMessage, messageIndex: number): boolean {
+  return showTurnAvatar(message, messageIndex, 'assistant')
+}
+
+function showUserAvatar(message: UiMessage, messageIndex: number): boolean {
+  return showTurnAvatar(message, messageIndex, 'user')
 }
 
 const activeCommandMessageId = computed(() => {
@@ -1238,6 +1109,9 @@ const props = defineProps<{
   isLoading: boolean
   activeThreadId: string
   cwd: string
+  hasMorePersistedAbove?: boolean
+  isLoadingPersistedAbove?: boolean
+  loadEarlierMessages?: (threadId: string) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -1256,22 +1130,37 @@ const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const mcpElicitationAnswers = ref<Record<string, string | number | boolean | string[]>>({})
 const autoFollowOutput = ref(true)
 const BOTTOM_THRESHOLD_PX = 16
-const CODE_LANGUAGE_ALIASES: Record<string, string> = {
-  js: 'javascript',
-  jsx: 'jsx',
-  ts: 'typescript',
-  tsx: 'tsx',
-  py: 'python',
-  rb: 'ruby',
-  sh: 'bash',
-  shell: 'bash',
-  zsh: 'bash',
-  yml: 'yaml',
-  md: 'markdown',
-  'c++': 'cpp',
-  'c#': 'csharp',
-  ps1: 'powershell',
+function normalizeLineRange(line: number | null, endLine: number | null = line): { startLine: number; endLine: number } | null {
+  if (!Number.isFinite(line ?? NaN) || !Number.isFinite(endLine ?? NaN)) return null
+  const startLine = Math.floor(line ?? NaN)
+  const normalizedEndLine = Math.floor(endLine ?? NaN)
+  if (startLine < 1 || normalizedEndLine < 1) return null
+  return {
+    startLine: Math.min(startLine, normalizedEndLine),
+    endLine: Math.max(startLine, normalizedEndLine),
+  }
 }
+
+function lineRangeQueryValue(line: number | null, endLine: number | null = line): string {
+  const normalized = normalizeLineRange(line, endLine)
+  if (!normalized) return ''
+  return normalized.startLine === normalized.endLine
+    ? String(normalized.startLine)
+    : `${normalized.startLine}-${normalized.endLine}`
+}
+
+function appendLineQuery(href: string, line: number | null, endLine: number | null = line): string {
+  const queryValue = lineRangeQueryValue(line, endLine)
+  if (!queryValue) return href
+  const separator = href.includes('?') ? '&' : '?'
+  return `${href}${separator}line=${encodeURIComponent(queryValue)}`
+}
+
+function fileReferenceDisplayPath(pathValue: string, line: number | null, endLine: number | null = line): string {
+  const queryValue = lineRangeQueryValue(line, endLine)
+  return queryValue ? `${pathValue}:${queryValue}` : pathValue
+}
+
 type InlineSegment =
   | { kind: 'text'; value: string }
   | { kind: 'bold'; value: string }
@@ -1279,7 +1168,12 @@ type InlineSegment =
   | { kind: 'strikethrough'; value: string }
   | { kind: 'code'; value: string }
   | { kind: 'url'; value: string; href: string }
-  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string }
+  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string; line: number | null; endLine: number | null; inlineCode?: boolean }
+type ParsedFileReference = {
+  path: string
+  line: number | null
+  endLine: number | null
+}
 type TaskListItem = {
   text: string
   checked: boolean
@@ -1310,6 +1204,8 @@ const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
 const highlightCacheVersion = ref(0)
 const markdownImageFailureVersion = ref(0)
+const agentAvatarSrc = '/icons/agent-avatar.png'
+const userAvatarSrc = '/icons/user-avatar.png'
 let highlightJsLoader: Promise<void> | null = null
 const MESSAGE_BLOCK_CACHE_LIMIT = 300
 const INLINE_SEGMENT_CACHE_LIMIT = 1200
@@ -1353,7 +1249,7 @@ const renderWindowStart = ref(0)
 const isLoadingMore = ref(false)
 
 const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value))
-const hasMoreAbove = computed(() => renderWindowStart.value > 0)
+const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMorePersistedAbove === true)
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
@@ -1362,7 +1258,7 @@ const showJumpToLatestButton = computed(
 function ensureHighlightJsLoaded(): Promise<void> {
   if (highlightJsModule.value) return Promise.resolve()
   if (!highlightJsLoader) {
-    highlightJsLoader = import('highlight.js/lib/common')
+    highlightJsLoader = import('highlight.js')
       .then((module) => {
         highlightJsModule.value = module.default
         highlightHtmlCache.clear()
@@ -1512,29 +1408,47 @@ function resolveRelativePath(pathValue: string, cwd: string): string {
   return normalizePathDots(`${base.replace(/\/+$/u, '')}/${normalizedPath}`)
 }
 
-function parseFileReference(value: string): { path: string; line: number | null } | null {
+function parseFileReference(value: string): ParsedFileReference | null {
   if (!value) return null
 
   let pathValue = value.trim()
   const wrapped = trimLinkWrappers(pathValue)
   pathValue = wrapped.core.trim()
   let line: number | null = null
+  let endLine: number | null = null
 
-  const hashLineMatch = pathValue.match(/^(.*)#L(\d+)(?:C\d+)?$/u)
+  const hashLineMatch = pathValue.match(/^(.*)#L(\d+)(?:-L?(\d+))?(?:C\d+)?$/u)
   if (hashLineMatch) {
     pathValue = hashLineMatch[1]
     line = Number(hashLineMatch[2])
+    endLine = Number(hashLineMatch[3] ?? hashLineMatch[2])
   } else {
-    const colonLineMatch = pathValue.match(/^(.*):(\d+)(?::\d+)?$/u)
+    const colonLineMatch = pathValue.match(/^(.*):(\d+)(?:-(\d+))?(?::\d+)?$/u)
     if (colonLineMatch) {
       pathValue = colonLineMatch[1]
       line = Number(colonLineMatch[2])
+      endLine = Number(colonLineMatch[3] ?? colonLineMatch[2])
     }
   }
 
   pathValue = normalizeFileUrlToPath(pathValue)
   if (!isFilePath(pathValue)) return null
-  return { path: pathValue, line }
+  const normalizedRange = normalizeLineRange(line, endLine)
+  return {
+    path: pathValue,
+    line: normalizedRange?.startLine ?? null,
+    endLine: normalizedRange?.endLine ?? null,
+  }
+}
+
+function shouldLinkInlineCodeFileReference(ref: ParsedFileReference): boolean {
+  if (ref.line !== null) return true
+
+  const normalizedPath = normalizePathSeparators(ref.path)
+  if (/^(?:\/|[A-Za-z]:[\\/]|\.{1,2}\/|~\/)/u.test(normalizedPath)) return true
+
+  const baseName = getBasename(normalizedPath)
+  return /\.[A-Za-z0-9]{1,12}$/u.test(baseName)
 }
 
 function trimLinkWrappers(value: string): { core: string; leading: string; trailing: string } {
@@ -1566,6 +1480,57 @@ function trimLinkWrappers(value: string): { core: string; leading: string; trail
   return { core, leading, trailing }
 }
 
+function countAsterisksBefore(value: string, endIndex: number, minIndex: number): number {
+  let count = 0
+  let index = endIndex - 1
+  while (index >= minIndex && value[index] === '*') {
+    count += 1
+    index -= 1
+  }
+  return count
+}
+
+function countAsterisksAfter(value: string, startIndex: number): number {
+  let count = 0
+  let index = startIndex
+  while (index < value.length && value[index] === '*') {
+    count += 1
+    index += 1
+  }
+  return count
+}
+
+function readAsteriskLinkWrapper(
+  source: string,
+  matchStart: number,
+  matchEnd: number,
+  cursor: number,
+  matchedToken: string,
+): { segmentStart: number; segmentEnd: number; tokenEndTrim: number } | null {
+  const leadingCount = countAsterisksBefore(source, matchStart, cursor)
+  if (leadingCount < 2) return null
+
+  const trailingOutsideCount = countAsterisksAfter(source, matchEnd)
+  if (trailingOutsideCount >= leadingCount) {
+    return {
+      segmentStart: matchStart - leadingCount,
+      segmentEnd: matchEnd + leadingCount,
+      tokenEndTrim: 0,
+    }
+  }
+
+  const trailingInsideCount = countAsterisksBefore(matchedToken, matchedToken.length, 0)
+  if (trailingInsideCount >= leadingCount) {
+    return {
+      segmentStart: matchStart - leadingCount,
+      segmentEnd: matchEnd,
+      tokenEndTrim: leadingCount,
+    }
+  }
+
+  return null
+}
+
 function parseMarkdownLinkToken(value: string): { label: string; target: string } | null {
   const trimmed = value.trim()
   if (!trimmed.startsWith('[') || !trimmed.endsWith(')')) return null
@@ -1579,6 +1544,14 @@ function parseMarkdownLinkToken(value: string): { label: string; target: string 
   const target = trimLinkWrappers(targetRaw).core.trim()
   if (!target) return null
   return { label, target }
+}
+
+function toLocalThreadUrl(value: string): string | null {
+  const match = value.trim().match(/^codex:\/\/threads\/([A-Za-z0-9-]+)$/u)
+  if (!match) return null
+  if (typeof window === 'undefined') return `/#/thread/${match[1]}`
+  const basePath = window.location.pathname.replace(/\/?$/u, '/')
+  return `${window.location.origin}${basePath}#/thread/${match[1]}`
 }
 
 function headingTag(level: number): string {
@@ -1728,6 +1701,27 @@ const forkableTurnIndexByAnchorId = computed<Record<string, number>>(() => {
 
 function showCopyResponseButton(message: UiMessage): boolean {
   return typeof copyableResponseContentByAnchorId.value[message.id] === 'string'
+}
+
+function getResponseSourceText(message: UiMessage): string {
+  return message.text.length > 0
+    ? message.text
+    : copyableResponseContentByAnchorId.value[message.id] ?? ''
+}
+
+function showResponseSourceButton(message: UiMessage): boolean {
+  return showCopyResponseButton(message) && getResponseSourceText(message).length > 0
+}
+
+function isResponseSourceVisible(message: UiMessage): boolean {
+  return expandedResponseSourceIds.value.has(message.id)
+}
+
+function toggleResponseSource(messageId: string): void {
+  const next = new Set(expandedResponseSourceIds.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  expandedResponseSourceIds.value = next
 }
 
 function showForkResponseButton(message: UiMessage): boolean {
@@ -1996,8 +1990,7 @@ const activeDiffViewerChange = computed<UiFileChange | null>(() => {
 
 function inferDiffViewerLanguage(change: UiFileChange): string {
   const targetPath = change.movedToPath || change.path
-  const extension = targetPath.split('.').pop()?.toLowerCase() ?? ''
-  return CODE_LANGUAGE_ALIASES[extension] ?? extension ?? ''
+  return getHighlightLanguageForPath(targetPath)
 }
 
 function hasStructuredUnifiedDiff(change: UiFileChange): boolean {
@@ -2204,19 +2197,24 @@ function editMessage(messageId: string): void {
 
 function splitPlainTextByLinks(text: string): InlineSegment[] {
   const segments: InlineSegment[] = []
-  const pattern = /https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`/gu
+  const pattern = /codex:\/\/threads\/[A-Za-z0-9-]+|https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`/gu
   let cursor = 0
 
   for (const match of text.matchAll(pattern)) {
     if (typeof match.index !== 'number') continue
     const start = match.index
     const end = start + match[0].length
+    const asteriskWrapper = readAsteriskLinkWrapper(text, start, end, cursor, match[0])
+    const segmentStart = asteriskWrapper?.segmentStart ?? start
+    const segmentEnd = asteriskWrapper?.segmentEnd ?? end
 
-    if (start > cursor) {
-      segments.push({ kind: 'text', value: text.slice(cursor, start) })
+    if (segmentStart > cursor) {
+      segments.push({ kind: 'text', value: text.slice(cursor, segmentStart) })
     }
 
-    let token = match[0]
+    let token = asteriskWrapper?.tokenEndTrim
+      ? match[0].slice(0, -asteriskWrapper.tokenEndTrim)
+      : match[0]
     let trailingPunctuation = ''
     while (/[.,;:!?，。；：！？、]$/u.test(token)) {
       trailingPunctuation = token.slice(-1) + trailingPunctuation
@@ -2231,7 +2229,14 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
       segments.push({ kind: 'text', value: leading })
     }
 
-    if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+    const localThreadUrl = toLocalThreadUrl(token)
+
+    if (localThreadUrl) {
+      segments.push({ kind: 'url', value: localThreadUrl, href: localThreadUrl })
+      if (trailing) {
+        segments.push({ kind: 'text', value: trailing })
+      }
+    } else if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
       segments.push({ kind: 'bold', value: token.slice(2, -2) })
       if (trailing) {
         segments.push({ kind: 'text', value: trailing })
@@ -2248,8 +2253,10 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
           kind: 'file',
           value: token,
           path: ref.path,
-          displayPath: token,
+          displayPath: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
           downloadName: getBasename(ref.path),
+          line: ref.line,
+          endLine: ref.endLine,
         })
         if (trailing) {
           segments.push({ kind: 'text', value: trailing })
@@ -2259,7 +2266,7 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
       }
     }
 
-    cursor = end
+    cursor = segmentEnd
   }
 
   if (cursor < text.length) {
@@ -2418,22 +2425,28 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
     const match = findNextMarkdownLink(text, scanFrom)
     if (!match) break
     const { start, end, token } = match
+    const asteriskWrapper = readAsteriskLinkWrapper(text, start, end, cursor, token)
+    const segmentStart = asteriskWrapper?.segmentStart ?? start
+    const segmentEnd = asteriskWrapper?.segmentEnd ?? end
 
-    if (start > cursor) {
-      segments.push(...splitPlainTextByLinks(text.slice(cursor, start)))
+    if (segmentStart > cursor) {
+      segments.push(...splitPlainTextByLinks(text.slice(cursor, segmentStart)))
     }
 
     const markdownToken = parseMarkdownLinkToken(token)
     if (!markdownToken) {
-      segments.push(...splitPlainTextByLinks(text.slice(start, end)))
-      cursor = end
-      scanFrom = end
+      segments.push(...splitPlainTextByLinks(text.slice(segmentStart, segmentEnd)))
+      cursor = segmentEnd
+      scanFrom = segmentEnd
       continue
     }
     const label = markdownToken.label
     const target = markdownToken.target
+    const localThreadUrl = toLocalThreadUrl(target)
 
-    if (/^https?:\/\//u.test(target)) {
+    if (localThreadUrl) {
+      segments.push({ kind: 'url', value: label || localThreadUrl, href: localThreadUrl })
+    } else if (/^https?:\/\//u.test(target)) {
       segments.push({ kind: 'url', value: label || target, href: target })
     } else {
       const ref = parseFileReference(target)
@@ -2444,14 +2457,16 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
           path: ref.path,
           displayPath: label || target,
           downloadName: getBasename(ref.path),
+          line: ref.line,
+          endLine: ref.endLine,
         })
       } else {
         segments.push({ kind: 'text', value: token })
       }
     }
 
-    cursor = end
-    scanFrom = end
+    cursor = segmentEnd
+    scanFrom = segmentEnd
   }
 
   if (cursor < text.length) {
@@ -2518,7 +2533,14 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
       if (token.length > 0) {
         const markdownLink = parseMarkdownLinkToken(token)
         if (markdownLink) {
-          if (/^https?:\/\//u.test(markdownLink.target)) {
+          const localThreadUrl = toLocalThreadUrl(markdownLink.target)
+          if (localThreadUrl) {
+            segments.push({
+              kind: 'url',
+              value: markdownLink.label || localThreadUrl,
+              href: localThreadUrl,
+            })
+          } else if (/^https?:\/\//u.test(markdownLink.target)) {
             segments.push({
               kind: 'url',
               value: markdownLink.label || markdownLink.target,
@@ -2533,32 +2555,59 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
                 path: markdownFileReference.path,
                 displayPath: markdownLink.label || markdownLink.target,
                 downloadName: getBasename(markdownFileReference.path),
+                line: markdownFileReference.line,
+                endLine: markdownFileReference.endLine,
               })
             } else {
               segments.push({ kind: 'code', value: token })
             }
           }
-        } else if (/^https?:\/\/[^\s]+$/u.test(token)) {
-          segments.push({
-            kind: 'url',
-            value: token,
-            href: token,
-          })
         } else {
-          const fileReference = parseFileReference(token)
-          if (fileReference) {
-            const displayPath = fileReference.line
-              ? `${fileReference.path}:${String(fileReference.line)}`
-              : fileReference.path
+          const localThreadUrl = toLocalThreadUrl(token)
+          if (localThreadUrl) {
             segments.push({
-              kind: 'file',
-              value: token,
-              path: fileReference.path,
-              displayPath,
-              downloadName: getBasename(fileReference.path),
+              kind: 'url',
+              value: localThreadUrl,
+              href: localThreadUrl,
             })
           } else {
-            segments.push({ kind: 'code', value: token })
+            const fileReference = parseFileReference(token)
+            if (fileReference && shouldLinkInlineCodeFileReference(fileReference)) {
+              const displayPath = fileReferenceDisplayPath(fileReference.path, fileReference.line, fileReference.endLine)
+              segments.push({
+                kind: 'file',
+                value: token,
+                path: fileReference.path,
+                displayPath,
+                downloadName: getBasename(fileReference.path),
+                line: fileReference.line,
+                endLine: fileReference.endLine,
+                inlineCode: true,
+              })
+          } else if (/^https?:\/\/[^\s]+$/u.test(token)) {
+            segments.push({
+              kind: 'url',
+              value: token,
+              href: token,
+            })
+          } else {
+            if (fileReference) {
+              const displayPath = fileReference.line
+                ? `${fileReference.path}:${String(fileReference.line)}`
+                : fileReference.path
+              segments.push({
+                kind: 'file',
+                value: token,
+                path: fileReference.path,
+                displayPath,
+                downloadName: getBasename(fileReference.path),
+                line: fileReference.line,
+                endLine: fileReference.endLine,
+              })
+            } else {
+              segments.push({ kind: 'code', value: token })
+            }
+          }
           }
         }
       } else {
@@ -2619,7 +2668,7 @@ function toRenderableImageUrl(value: string): string {
   return normalized
 }
 
-function toBrowseUrl(pathValue: string): string {
+function toBrowseUrl(pathValue: string, line: number | null = null, endLine: number | null = line): string {
   const normalized = pathValue.trim()
   if (!normalized) return '#'
   const looksLikeAbsolutePath = (candidate: string): boolean => (
@@ -2632,7 +2681,11 @@ function toBrowseUrl(pathValue: string): string {
 
   if (looksLikeAbsolutePath(resolved)) {
     const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
-    return `/codex-local-browse${encodeURI(normalizedResolved)}`
+    return appendLineQuery(
+      `/codex-local-browse${encodeURI(normalizedResolved)}`,
+      parsed?.line ?? line,
+      parsed?.endLine ?? endLine,
+    )
   }
 
   return '#'
@@ -2674,6 +2727,22 @@ function onConversationContextMenu(event: MouseEvent): void {
   fileLinkContextMenuX.value = event.clientX
   fileLinkContextMenuY.value = event.clientY
   isFileLinkContextMenuVisible.value = true
+}
+
+function onConversationClick(event: MouseEvent): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+
+  const image = target.closest('img.message-markdown-image')
+  if (!(image instanceof HTMLImageElement)) return
+  if (image.closest('button.message-image-button')) return
+
+  const src = (image.getAttribute('src') ?? '').trim()
+  if (!src) return
+
+  event.preventDefault()
+  event.stopPropagation()
+  openImageModal(src)
 }
 
 function closeFileLinkContextMenu(): void {
@@ -3363,9 +3432,7 @@ function escapeHtml(value: string): string {
 }
 
 function normalizeCodeLanguage(language: string): string {
-  const token = language.trim().split(/\s+/u)[0]?.toLowerCase() ?? ''
-  if (!token) return ''
-  return CODE_LANGUAGE_ALIASES[token] ?? token
+  return normalizeHighlightLanguage(language)
 }
 
 function renderHighlightedCodeAsHtmlUncached(language: string, value: string): string {
@@ -3420,7 +3487,10 @@ function renderInlineSegmentsAsHtml(text: string): string {
         return `<s class="message-strikethrough-text">${escapeHtml(segment.value)}</s>`
       }
       if (segment.kind === 'file') {
-        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.path)}">${escapeHtml(segment.displayPath)}</a>`
+        if (segment.inlineCode) {
+          return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}"><code class="message-inline-code">${escapeHtml(segment.displayPath)}</code></a>`
+        }
+        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
         return `<a class="message-file-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`
@@ -4011,7 +4081,7 @@ function jumpToLatest(): void {
 
 async function loadMoreAbove(): Promise<void> {
   const container = conversationListRef.value
-  if (!container || !hasMoreAbove.value || isLoadingMore.value) return
+  if (!container || !hasMoreAbove.value || isLoadingMore.value || props.isLoadingPersistedAbove === true) return
 
   isLoadingMore.value = true
   const threadIdAtStart = props.activeThreadId
@@ -4019,13 +4089,20 @@ async function loadMoreAbove(): Promise<void> {
   const prevScrollHeight = container.scrollHeight
   const prevScrollTop = container.scrollTop
 
-  renderWindowStart.value = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
+  try {
+    if (renderWindowStart.value > 0) {
+      renderWindowStart.value = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
+    } else if (props.hasMorePersistedAbove === true) {
+      await props.loadEarlierMessages?.(threadIdAtStart)
+    }
 
-  await nextTick()
+    await nextTick()
 
-  // Discard scroll restoration if the thread changed while we were awaiting.
-  if (props.activeThreadId === threadIdAtStart) {
-    container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
+    // Discard scroll restoration if the thread changed while we were awaiting.
+    if (props.activeThreadId === threadIdAtStart) {
+      container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
+    }
+  } finally {
     isLoadingMore.value = false
   }
 }
@@ -4041,11 +4118,39 @@ function bindPendingImageHandlers(): void {
 
   const images = container.querySelectorAll<HTMLImageElement>('img.message-image-preview')
   for (const image of images) {
-    if (image.complete || trackedPendingImages.has(image)) continue
+    if (image.complete) {
+      if (image.naturalWidth === 0 && image.naturalHeight === 0) {
+        replaceFailedPreviewImage(image)
+      }
+      continue
+    }
+    if (trackedPendingImages.has(image)) continue
     trackedPendingImages.add(image)
-    image.addEventListener('load', onPendingImageSettled, { once: true })
-    image.addEventListener('error', onPendingImageSettled, { once: true })
+    image.addEventListener('load', () => onPendingPreviewImageLoad(image), { once: true })
+    image.addEventListener('error', () => onPendingPreviewImageError(image), { once: true })
   }
+}
+
+function onPendingPreviewImageLoad(image: HTMLImageElement): void {
+  if (image.naturalWidth === 0 && image.naturalHeight === 0) {
+    replaceFailedPreviewImage(image)
+  }
+  onPendingImageSettled()
+}
+
+function onPendingPreviewImageError(image: HTMLImageElement): void {
+  replaceFailedPreviewImage(image)
+  onPendingImageSettled()
+}
+
+function replaceFailedPreviewImage(image: HTMLImageElement): void {
+  if (image.dataset.codexPreviewFallbackApplied === 'true') return
+  image.dataset.codexPreviewFallbackApplied = 'true'
+
+  const fallback = document.createElement('span')
+  fallback.className = 'message-image-fallback'
+  fallback.textContent = image.alt.trim() || 'Image failed to load'
+  image.replaceWith(fallback)
 }
 
 async function scheduleConversationScroll(): Promise<void> {
@@ -4069,6 +4174,7 @@ async function scheduleConversationScroll(): Promise<void> {
 }
 
 function clearRenderCaches(): void {
+  clearMarkdownRendererCache()
   messageBlockCache.clear()
   inlineSegmentCache.clear()
   markdownHtmlCache.clear()
@@ -4097,6 +4203,10 @@ watch(
         ...Object.keys(anchoredFileChangeSummaryByAnchorId.value),
         ...Object.keys(standaloneFileChangeSummaryByMessageId.value),
       ]),
+    )
+    expandedResponseSourceIds.value = pruneCommandIdSet(
+      expandedResponseSourceIds.value,
+      new Set(Object.keys(copyableResponseContentByAnchorId.value)),
     )
 
     // Keep renderWindowStart in bounds whenever the message list changes length.
@@ -4170,6 +4280,7 @@ watch(
     autoFollowOutput.value = true
     modalImageUrl.value = ''
     isLoadingMore.value = false
+    expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
     renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
     await scheduleConversationScroll()
@@ -4184,23 +4295,6 @@ function onConversationScroll(): void {
   if (hasMoreAbove.value && !isLoadingMore.value && container.scrollTop < LOAD_MORE_SCROLL_THRESHOLD_PX) {
     void loadMoreAbove()
   }
-}
-
-const failedMarkdownImages = ref(new Set<string>())
-
-function markdownImageKey(messageId: string, blockIndex: number): string {
-  return `${messageId}:${blockIndex}`
-}
-
-function isMarkdownImageFailed(messageId: string, blockIndex: number): boolean {
-  return failedMarkdownImages.value.has(markdownImageKey(messageId, blockIndex))
-}
-
-function onMarkdownImageError(messageId: string, blockIndex: number): void {
-  const next = new Set(failedMarkdownImages.value)
-  next.add(markdownImageKey(messageId, blockIndex))
-  failedMarkdownImages.value = next
-  markdownImageFailureVersion.value += 1
 }
 
 function openImageModal(imageUrl: string): void {
@@ -4241,6 +4335,9 @@ onBeforeUnmount(() => {
 @reference "tailwindcss";
 
 .conversation-root {
+  --conversation-code-font-family: var(--codex-code-font-family);
+  --conversation-ui-symbol-font-family: var(--codex-ui-symbol-font-family);
+  --conversation-code-font-weight: var(--codex-code-font-weight);
   @apply relative h-full min-h-0 min-w-0 p-0 flex flex-col overflow-y-hidden overflow-x-hidden bg-transparent border-none rounded-none;
 }
 
@@ -4281,7 +4378,7 @@ onBeforeUnmount(() => {
 }
 
 .message-row {
-  @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex;
+  @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex items-start gap-3;
 }
 
 .message-row[data-role='user'] {
@@ -4291,6 +4388,19 @@ onBeforeUnmount(() => {
 .message-row[data-role='assistant'],
 .message-row[data-role='system'] {
   @apply justify-start;
+}
+
+.message-row-agent-start {
+  @apply flex-col items-start gap-2;
+}
+
+.message-row-user-start {
+  @apply flex-col items-end gap-2;
+}
+
+.message-row-agent-start .message-stack,
+.message-row-user-start .message-stack {
+  @apply w-full flex-none;
 }
 
 .conversation-bottom-anchor {
@@ -4306,11 +4416,28 @@ onBeforeUnmount(() => {
 }
 
 .message-stack {
-  @apply flex flex-col w-full min-w-0;
+  @apply flex flex-col min-w-0 flex-1;
+}
+
+.message-avatar {
+  @apply flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden border border-zinc-200 bg-white shadow-sm;
+}
+
+.message-avatar-image {
+  @apply block h-full w-full object-cover;
+}
+
+:global(:root.dark) .message-avatar,
+:global(.dark) .message-avatar {
+  @apply border-zinc-700 bg-zinc-900;
 }
 
 .request-card {
   @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-col gap-2;
+  font-family: var(--conversation-ui-symbol-font-family);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .request-title {
@@ -4332,10 +4459,14 @@ onBeforeUnmount(() => {
 
 .request-button {
   @apply rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs text-amber-900 hover:bg-amber-100 transition;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-button-primary {
   @apply border-amber-500 bg-amber-500 text-white hover:bg-amber-600;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-user-input {
@@ -4360,14 +4491,20 @@ onBeforeUnmount(() => {
 
 .request-link {
   @apply inline-flex w-fit rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs text-amber-900 hover:bg-amber-100 transition;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-select {
   @apply h-8 rounded-md border border-amber-300 bg-white px-2 text-sm text-amber-900;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-input {
   @apply h-8 rounded-md border border-amber-300 bg-white px-2 text-sm text-amber-900 placeholder:text-amber-500;
+  font-family: inherit;
+  font-synthesis: inherit;
 }
 
 .request-checkbox-list {
@@ -4402,7 +4539,11 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-error {
-  @apply m-0 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
+  @apply m-0 flex items-start justify-between gap-3 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
+}
+
+.live-overlay-feedback {
+  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold leading-none text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .message-body {
@@ -4416,7 +4557,7 @@ onBeforeUnmount(() => {
 }
 
 .message-toolbar {
-  @apply mt-1 self-start flex items-center gap-1 opacity-[0.01] transition-opacity duration-200;
+  @apply mt-1 self-start flex max-w-full flex-wrap items-center gap-1 opacity-[0.01] transition-opacity duration-200;
 }
 
 .message-row:hover .message-toolbar {
@@ -4425,6 +4566,14 @@ onBeforeUnmount(() => {
 
 .message-copy-button {
   @apply inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/90 px-1.25 py-0.5 text-[9px] font-medium leading-none text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900;
+}
+
+.message-source-button {
+  @apply inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/90 px-1.25 py-0.5 text-[9px] font-medium leading-none text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900;
+}
+
+.message-source-button[data-open='true'] {
+  @apply border-sky-200 bg-sky-50 text-sky-700;
 }
 
 .message-fork-button {
@@ -4448,6 +4597,7 @@ onBeforeUnmount(() => {
 
 .message-fork-label,
 .message-copy-label,
+.message-source-label,
 .message-edit-label {
   @apply leading-none;
 }
@@ -4518,6 +4668,29 @@ onBeforeUnmount(() => {
 
 .message-text-flow {
   @apply flex flex-col gap-2;
+}
+
+.message-source-text {
+  @apply mt-2 max-h-80 w-full max-w-[min(var(--chat-card-max,76ch),100%)] select-text overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[12px] leading-5 text-slate-700 whitespace-pre-wrap;
+  font-family: var(--conversation-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--conversation-code-font-weight);
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+:global(:root.dark) .message-source-button,
+:global(.dark) .message-source-button {
+  @apply border-zinc-700 bg-zinc-800/90 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100;
+}
+
+:global(:root.dark) .message-source-button[data-open='true'],
+:global(.dark) .message-source-button[data-open='true'] {
+  @apply border-sky-500/40 bg-sky-500/10 text-sky-200;
+}
+
+:global(:root.dark) .message-source-text,
+:global(.dark) .message-source-text {
+  @apply border-zinc-700 bg-zinc-950 text-zinc-200;
 }
 
 .plan-card {
@@ -4628,18 +4801,62 @@ onBeforeUnmount(() => {
 
 .plan-card-markdown :deep(.message-code-block) {
   @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950/95 text-slate-100;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .plan-card-markdown :deep(.message-code-language) {
   @apply border-b border-slate-800 bg-slate-900/90 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .plan-card-markdown :deep(.message-code-pre) {
   @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-6;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .plan-card-markdown :deep(.message-inline-code) {
   @apply rounded-md bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-900;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.plan-card-markdown :deep(.message-inline-code-link) {
+  @apply inline-flex no-underline;
+}
+
+.plan-card-markdown :deep(.message-inline-code-link:hover),
+.plan-card-markdown :deep(.message-inline-code-link:focus-visible) {
+  @apply no-underline;
+}
+
+.plan-card-markdown :deep(.message-inline-code-link:hover .message-inline-code) {
+  @apply border-sky-300 bg-sky-100 text-slate-900;
+}
+
+.plan-card-markdown :deep(.message-code-pre .hljs),
+.plan-card-markdown :deep(.message-code-pre .hljs *) {
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .plan-card-markdown :deep(.message-code-pre .hljs),
+  .plan-card-markdown :deep(.message-code-pre .hljs *) {
+    font-weight: var(--conversation-code-font-weight) !important;
+    font-synthesis: none;
+  }
 }
 
 .plan-card-markdown :deep(.message-file-link) {
@@ -4812,24 +5029,66 @@ onBeforeUnmount(() => {
   @apply w-auto h-auto max-w-[min(560px,85vw)] max-h-[min(460px,62vh)] object-contain bg-white;
 }
 
+.message-image-fallback {
+  @apply inline-flex max-w-full items-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-500;
+  overflow-wrap: anywhere;
+}
+
 .message-inline-code {
   @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .message-code-block {
   @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .message-code-language {
   @apply border-b border-slate-800 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em] text-slate-400;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .message-code-pre {
   @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed font-mono whitespace-pre;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
 }
 
 .message-code-pre :deep(.hljs) {
   @apply block bg-transparent p-0 text-inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .message-code-pre :deep(.hljs),
+  .message-code-pre :deep(.hljs *) {
+    font-weight: var(--conversation-code-font-weight) !important;
+    font-synthesis: none;
+  }
+}
+
+.message-text-flow :deep(.katex-display),
+.plan-card-markdown :deep(.katex-display) {
+  @apply my-2 overflow-x-auto overflow-y-hidden;
+}
+
+.message-text-flow :deep(.katex),
+.plan-card-markdown :deep(.katex) {
+  @apply max-w-full;
 }
 
 .message-file-link {
@@ -5041,6 +5300,18 @@ onBeforeUnmount(() => {
 .cmd-output-inner {
   overflow: hidden;
   min-height: 0;
+}
+
+.cmd-output-command {
+  @apply flex flex-col gap-1 border-b border-white/10 px-3 py-2;
+}
+
+.cmd-output-command-label {
+  @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400;
+}
+
+.cmd-output-command-text {
+  @apply m-0 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs font-mono text-zinc-100;
 }
 
 .cmd-output {

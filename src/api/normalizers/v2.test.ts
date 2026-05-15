@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeThreadMessagesV2 } from './v2'
-import type { ThreadReadResponse } from '../appServerDtos'
+import { normalizeThreadGroupsV2, normalizeThreadMessagesV2 } from './v2'
+import type { ThreadListResponse, ThreadReadResponse } from '../appServerDtos'
 
 function threadReadResponseWithContent(content: ThreadReadResponse['thread']['turns'][number]['items'][number][]): ThreadReadResponse {
   return {
@@ -89,5 +89,48 @@ Reply with &lt;/instructions&gt; and A &amp; B
       isAutomationRun: true,
       automationDisplayName: 'automation-1',
     })
+  })
+
+  it('applies a base turn index for paged thread slices', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'userMessage',
+      id: 'user-3',
+      content: [{ type: 'text', text: 'Paged message', text_elements: [] }],
+    }]), 12)
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'user-3',
+      turnId: 'turn-1',
+      turnIndex: 12,
+    })
+  })
+})
+
+describe('normalizeThreadGroupsV2', () => {
+  it('preserves thread model providers from thread list summaries', () => {
+    const payload: ThreadListResponse = {
+      data: [
+        {
+          id: 'thread-1',
+          preview: 'Moon session',
+          modelProvider: 'moon',
+          createdAt: 1710000000,
+          updatedAt: 1710000300,
+          path: null,
+          cwd: '/tmp/project',
+          cliVersion: '0.130.0',
+          source: 'appServer',
+          gitInfo: null,
+          turns: [],
+        },
+      ],
+      nextCursor: null,
+    }
+
+    const groups = normalizeThreadGroupsV2(payload)
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.threads[0]?.modelProvider).toBe('moon')
   })
 })

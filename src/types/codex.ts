@@ -65,6 +65,7 @@ export type UiThread = {
   title: string
   projectName: string
   cwd: string
+  modelProvider?: string
   hasWorktree: boolean
   createdAtIso: string
   updatedAtIso: string
@@ -86,6 +87,7 @@ export type UiThreadAutomation = {
   rrule: string
   status: UiThreadAutomationStatus
   targetThreadId: string | null
+  cwds: string[]
   createdAtMs: number | null
   updatedAtMs: number | null
   nextRunAtMs: number | null

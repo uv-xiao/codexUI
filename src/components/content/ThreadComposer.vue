@@ -82,9 +82,37 @@
         </span>
       </div>
 
+      <div v-if="composerStatusVisible" class="thread-composer-rate-limit">
+        <div class="thread-composer-rate-limit-row">
+          <span
+            v-if="contextUsageSummaryText"
+            class="thread-composer-context-usage-inline"
+            :class="{
+              'is-muted': !contextUsageHasData,
+              'is-warning': contextUsageTone === 'warning',
+              'is-danger': contextUsageTone === 'danger',
+            }"
+            :title="contextUsageTooltipText"
+          >
+            <span class="thread-composer-context-usage-inline-value">
+              {{ t('Context') }} {{ contextUsageSummaryText }}
+            </span>
+            <span v-if="contextUsageView" class="thread-composer-context-usage-inline-bar" aria-hidden="true">
+              <span
+                class="thread-composer-context-usage-inline-bar-fill"
+                :style="{ width: `${contextUsageUsedPercent}%` }"
+              />
+            </span>
+          </span>
+        </div>
+      </div>
+
       <div
         class="thread-composer-input-wrap"
-        :class="{ 'thread-composer-input-wrap--drag-active': isDragActive }"
+        :class="{
+          'thread-composer-input-wrap--drag-active': isDragActive,
+          'thread-composer-input-wrap--expanded': isComposerExpanded,
+        }"
         @dragenter="onInputDragEnter"
         @dragover="onInputDragOver"
         @dragleave="onInputDragLeave"
@@ -99,12 +127,21 @@
               v-for="(item, index) in fileMentionSuggestions"
               :key="item.path"
               class="thread-composer-file-mention-row"
-              :class="{ 'is-active': index === fileMentionHighlightedIndex }"
+              :class="{ 'is-active': index === mentionHighlightedIndex }"
               type="button"
               @mousedown.prevent="applyFileMention(item)"
             >
               <span
-                v-if="getMentionBadgeText(item.path)"
+                v-if="item.isSymlink"
+                class="thread-composer-file-mention-symlink-badge"
+                :title="t('Symlink')"
+                aria-hidden="true"
+              >
+                ↗
+              </span>
+              <IconTablerFolderOpen v-if="item.kind === 'directory'" class="thread-composer-file-mention-icon-folder" />
+              <span
+                v-else-if="getMentionBadgeText(item.path)"
                 class="thread-composer-file-mention-icon-badge"
                 :class="`is-${getMentionBadgeClass(item.path)}`"
               >
@@ -118,7 +155,33 @@
               </span>
             </button>
           </template>
-          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching files') }}</div>
+          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching paths') }}</div>
+        </div>
+        <div v-if="isSkillMentionOpen" class="thread-composer-file-mentions thread-composer-skill-mentions">
+          <template v-if="skillMentionSuggestions.length > 0">
+            <button
+              v-for="(item, index) in skillMentionSuggestions"
+              :key="item.path"
+              class="thread-composer-file-mention-row thread-composer-skill-mention-row"
+              :class="{ 'is-active': index === mentionHighlightedIndex }"
+              type="button"
+              @mousedown.prevent="applySkillMention(item)"
+            >
+              <span
+                class="thread-composer-skill-mention-badge"
+                :class="`is-${skillSourceBadge(item).badgeTone}`"
+                :title="skillSourceBadge(item).badgeLabel"
+                aria-hidden="true"
+              >
+                {{ skillSourceBadge(item).badge }}
+              </span>
+              <span class="thread-composer-skill-mention-copy">
+                <span class="thread-composer-skill-mention-name">{{ item.displayName || item.name }}</span>
+                <span v-if="item.description" class="thread-composer-skill-mention-desc">{{ item.description }}</span>
+              </span>
+            </button>
+          </template>
+          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching skills') }}</div>
         </div>
         <textarea
           ref="inputRef"
@@ -130,6 +193,27 @@
           @keydown="onInputKeydown"
           @paste="onInputPaste"
         />
+        <button
+          v-if="hasExpandedComposerToggle"
+          class="thread-composer-expand"
+          type="button"
+          :aria-label="isComposerExpanded ? t('Exit full screen composer') : t('Expand composer')"
+          :title="isComposerExpanded ? t('Exit full screen composer') : t('Expand composer')"
+          :disabled="isInteractionDisabled"
+          @click="toggleComposerExpanded"
+        >
+          <IconTablerMinimize v-if="isComposerExpanded" class="thread-composer-expand-icon" />
+          <IconTablerMaximize v-else class="thread-composer-expand-icon" />
+        </button>
+      </div>
+
+      <div
+        v-if="isMarkdownPreviewVisible"
+        class="thread-composer-preview"
+        role="region"
+        :aria-label="t('Markdown preview')"
+      >
+        <article class="thread-composer-preview-content message-text-flow" v-html="draftPreviewHtml"></article>
       </div>
 
       <div
@@ -240,6 +324,18 @@
             </button>
           </div>
         </div>
+
+        <button
+          class="thread-composer-preview-toggle"
+          type="button"
+          :aria-pressed="isMarkdownPreviewVisible"
+          :aria-label="isMarkdownPreviewVisible ? t('Hide preview') : t('Preview markdown')"
+          :title="isMarkdownPreviewVisible ? t('Hide preview') : t('Preview markdown')"
+          :disabled="isInteractionDisabled"
+          @click="toggleMarkdownPreview"
+        >
+          <IconTablerEye class="thread-composer-preview-toggle-icon" />
+        </button>
 
         <template v-if="!isDictationRecording">
           <ComposerDropdown
@@ -398,11 +494,26 @@ import {
   type ComposerFileSuggestion,
   type ComposerPromptInfo,
 } from '../../api/codexGateway'
+import {
+  extractComposerFileMentionAttachments,
+  insertComposerFileMentionText,
+  toComposerFileMentionSearchQuery,
+} from './composerFileMentions'
+import {
+  extractComposerSkillMentionSelections,
+  filterComposerSkillMentionSuggestions,
+  insertComposerSkillMentionText,
+} from './composerSkillMentions'
+import { renderMarkdownContent } from './markdownRenderer'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
+import IconTablerEye from '../icons/IconTablerEye.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
+import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
+import IconTablerMaximize from '../icons/IconTablerMaximize.vue'
 import IconTablerMicrophone from '../icons/IconTablerMicrophone.vue'
+import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
@@ -499,6 +610,7 @@ const PASTED_TEXT_FILE_THRESHOLD = 2000
 const PROMPT_OPTION_PREFIX = 'prompt:'
 
 const draft = ref('')
+const isMarkdownPreviewVisible = ref(false)
 const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
 const savedPrompts = ref<ComposerPromptInfo[]>([])
@@ -550,11 +662,15 @@ const folderPickerInputRef = ref<HTMLInputElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const { isMobile } = useMobile()
 const isAttachMenuOpen = ref(false)
+const activeMentionKind = ref<'file' | 'skill' | null>(null)
 const mentionStartIndex = ref<number | null>(null)
 const mentionQuery = ref('')
 const fileMentionSuggestions = ref<ComposerFileSuggestion[]>([])
-const isFileMentionOpen = ref(false)
-const fileMentionHighlightedIndex = ref(0)
+const skillMentionSuggestions = ref<SkillItem[]>([])
+const mentionHighlightedIndex = ref(0)
+const isComposerExpanded = ref(false)
+const isDraftOverflowing = ref(false)
+let composerOverflowMeasurementQueued = false
 const draftGeneration = ref(0)
 let fileMentionSearchToken = 0
 let fileMentionDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -587,6 +703,8 @@ const isPlanModeWaitingForModel = computed(() =>
 )
 
 const selectedSkillPaths = computed(() => selectedSkills.value.map((s) => s.path))
+const isFileMentionOpen = computed(() => activeMentionKind.value === 'file')
+const isSkillMentionOpen = computed(() => activeMentionKind.value === 'skill')
 const skillDropdownOptions = computed(() =>
   [
     ...(props.skills ?? []).map((s) => {
@@ -699,19 +817,39 @@ const placeholderText = computed(() =>
     ? t('Select a thread to send a message')
     : isPlanModeWaitingForModel.value
       ? t('Loading models for plan mode...')
-      : t('Type a message... (@ for files)'),
+      : t('Type a message... (@ for paths, $ for skills)'),
 )
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
 )
+const draftLineCount = computed(() => draft.value.split('\n').length)
+const hasExpandedComposerToggle = computed(() =>
+  isComposerExpanded.value || draftLineCount.value >= 6 || isDraftOverflowing.value,
+)
+const draftPreviewHtml = computed(() => {
+  const rendered = renderMarkdownContent(draft.value, {
+    cwd: props.cwd ?? '',
+    kind: 'message',
+    highlightVersion: 0,
+  }).html
+  return rendered.trim()
+    ? rendered
+    : `<p class="thread-composer-preview-empty">${t('Nothing to preview.')}</p>`
+})
 const quotaSummaryText = computed(() => buildQuotaSummaryText(props.codexQuota ?? null))
 const quotaWeeklyRefreshText = computed(() => '')
 const quotaTooltipText = computed(() => buildQuotaTooltipText(props.codexQuota ?? null))
 const contextUsageView = computed(() => buildContextUsageView(props.threadTokenUsage ?? null))
-const contextUsageSummaryText = computed(() => contextUsageView.value?.summaryText ?? '')
-const contextUsageTooltipText = computed(() => contextUsageView.value?.tooltipText ?? '')
-const contextUsageRemainingPercent = computed(() => contextUsageView.value?.percentRemaining ?? 0)
+const contextUsageSummaryText = computed(() =>
+  contextUsageView.value?.summaryText ?? t('Awaiting data'),
+)
+const contextUsageTooltipText = computed(() =>
+  contextUsageView.value?.tooltipText ?? t('Updates after the next token usage event'),
+)
+const contextUsageUsedPercent = computed(() => contextUsageView.value?.percentUsed ?? 0)
 const contextUsageTone = computed(() => contextUsageView.value?.tone ?? 'healthy')
+const contextUsageHasData = computed(() => contextUsageView.value !== null)
+const composerStatusVisible = computed(() => Boolean(props.activeThreadId))
 
 function formatPlanType(planType: string | null | undefined): string {
   if (!planType || planType === 'unknown') return ''
@@ -898,7 +1036,7 @@ function buildContextUsageView(
 ): {
     summaryText: string
     tooltipText: string
-    percentRemaining: number
+    percentUsed: number
     tone: 'healthy' | 'warning' | 'danger'
   } | null {
   if (!usage) return null
@@ -916,14 +1054,14 @@ function buildContextUsageView(
       : 'healthy'
 
   return {
-    summaryText: `${percentRemaining}% · ${formatCompactTokenCount(tokensInContext)} / ${formatCompactTokenCount(contextWindow)}`,
+    summaryText: `${percentUsed}% ${t('used')} · ${formatCompactTokenCount(tokensInContext)} / ${formatCompactTokenCount(contextWindow)}`,
     tooltipText: [
       `Context window: ${percentRemaining}% left (${percentUsed}% used)`,
       `In context: ${tokensInContext.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`,
       `Last turn: ${formatBreakdownSummary(usage.last)}`,
       `Session total: ${formatBreakdownSummary(usage.total)}`,
     ].join('\n'),
-    percentRemaining,
+    percentUsed,
     tone,
   }
 }
@@ -931,15 +1069,22 @@ function buildContextUsageView(
 function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   const text = draft.value.trim()
   if (!canSubmit.value) return
+  const inlineFileAttachments = extractComposerFileMentionAttachments(text, props.cwd ?? '')
+  const inlineSkillSelections = extractComposerSkillMentionSelections(text, props.skills ?? [])
   emit('submit', {
     text,
     imageUrls: selectedImages.value.map((image) => image.url),
-    fileAttachments: [...fileAttachments.value],
-    skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
+    fileAttachments: dedupeFileAttachments([...fileAttachments.value, ...inlineFileAttachments]),
+    skills: dedupeSkillSelections([...selectedSkills.value, ...inlineSkillSelections]).map((skill) => ({
+      name: skill.name,
+      path: skill.path,
+    })),
     mode,
   })
   clearPersistedDraftForThread(props.activeThreadId)
   clearDraftState()
+  isComposerExpanded.value = false
+  isMarkdownPreviewVisible.value = false
   folderUploadGroups.value = []
   isAttachMenuOpen.value = false
   closeFileMention()
@@ -952,6 +1097,11 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
 
 function setActiveInProgressMode(mode: 'steer' | 'queue'): void {
   activeInProgressMode.value = mode
+}
+
+function toggleMarkdownPreview(): void {
+  if (isInteractionDisabled.value) return
+  isMarkdownPreviewVisible.value = !isMarkdownPreviewVisible.value
 }
 
 function replaceDraftState(payload: ComposerDraftPayload): void {
@@ -983,6 +1133,7 @@ function clearDraftState(): void {
     fileAttachments: [],
     skills: [],
   })
+  isComposerExpanded.value = false
 }
 
 function getDraftStorageKey(threadId: string): string {
@@ -1070,6 +1221,31 @@ function getCurrentDraftPayload(): ComposerDraftPayload {
 
 function onInterrupt(): void {
   emit('interrupt')
+}
+
+function updateComposerOverflowState(): void {
+  const input = inputRef.value
+  if (!input) {
+    isDraftOverflowing.value = false
+    return
+  }
+  isDraftOverflowing.value = input.scrollHeight > input.clientHeight + 2
+}
+
+function queueComposerOverflowMeasurement(): void {
+  if (composerOverflowMeasurementQueued) return
+  composerOverflowMeasurementQueued = true
+  void nextTick(() => {
+    composerOverflowMeasurementQueued = false
+    updateComposerOverflowState()
+  })
+}
+
+function toggleComposerExpanded(): void {
+  if (isInteractionDisabled.value) return
+  isComposerExpanded.value = !isComposerExpanded.value
+  queueComposerOverflowMeasurement()
+  void nextTick(() => inputRef.value?.focus())
 }
 
 function onModelSelect(value: string): void {
@@ -1189,6 +1365,30 @@ function addFileAttachment(filePath: string, customLabel?: string): void {
   const parts = normalized.split('/').filter(Boolean)
   const label = customLabel?.trim() || parts[parts.length - 1] || normalized
   fileAttachments.value = [...fileAttachments.value, { label, path: normalized, fsPath: normalized }]
+}
+
+function dedupeFileAttachments(attachments: FileAttachment[]): FileAttachment[] {
+  const seen = new Set<string>()
+  const next: FileAttachment[] = []
+  for (const attachment of attachments) {
+    const key = attachment.fsPath || attachment.path
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    next.push(attachment)
+  }
+  return next
+}
+
+function dedupeSkillSelections(skills: SkillItem[]): SkillItem[] {
+  const seen = new Set<string>()
+  const next: SkillItem[] = []
+  for (const skill of skills) {
+    const key = skill.path.trim()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    next.push(skill)
+  }
+  return next
 }
 
 function isImageFile(file: File): boolean {
@@ -1496,39 +1696,44 @@ function onInputChange(): void {
   if (dictationFeedback.value) {
     dictationFeedback.value = ''
   }
-  updateFileMentionState()
+  queueComposerOverflowMeasurement()
+  updateInlineMentionState()
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
-  if (isFileMentionOpen.value) {
+  if (isFileMentionOpen.value || isSkillMentionOpen.value) {
+    const suggestions = isFileMentionOpen.value ? fileMentionSuggestions.value : skillMentionSuggestions.value
     if (event.key === 'Escape') {
       event.preventDefault()
-      closeFileMention()
+      closeInlineMention()
       return
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      if (fileMentionSuggestions.value.length > 0) {
-        fileMentionHighlightedIndex.value =
-          (fileMentionHighlightedIndex.value + 1) % fileMentionSuggestions.value.length
+      if (suggestions.length > 0) {
+        mentionHighlightedIndex.value = (mentionHighlightedIndex.value + 1) % suggestions.length
       }
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      if (fileMentionSuggestions.value.length > 0) {
-        const size = fileMentionSuggestions.value.length
-        fileMentionHighlightedIndex.value = (fileMentionHighlightedIndex.value + size - 1) % size
+      if (suggestions.length > 0) {
+        const size = suggestions.length
+        mentionHighlightedIndex.value = (mentionHighlightedIndex.value + size - 1) % size
       }
       return
     }
     if (event.key === 'Enter' || event.key === 'Tab') {
       event.preventDefault()
-      const selected = fileMentionSuggestions.value[fileMentionHighlightedIndex.value]
+      const selected = suggestions[mentionHighlightedIndex.value]
       if (selected) {
-        applyFileMention(selected)
+        if (isFileMentionOpen.value) {
+          applyFileMention(selected as ComposerFileSuggestion)
+        } else {
+          applySkillMention(selected as SkillItem)
+        }
       } else {
-        closeFileMention()
+        closeInlineMention()
       }
       return
     }
@@ -1544,35 +1749,50 @@ function onInputKeydown(event: KeyboardEvent): void {
   }
 }
 
-function closeFileMention(): void {
-  isFileMentionOpen.value = false
+function closeInlineMention(): void {
+  activeMentionKind.value = null
   mentionStartIndex.value = null
   mentionQuery.value = ''
   fileMentionSuggestions.value = []
-  fileMentionHighlightedIndex.value = 0
+  skillMentionSuggestions.value = []
+  mentionHighlightedIndex.value = 0
 }
 
-function updateFileMentionState(): void {
+function closeFileMention(): void {
+  closeInlineMention()
+}
+
+function updateInlineMentionState(): void {
   const input = inputRef.value
   if (!input) {
-    closeFileMention()
+    closeInlineMention()
     return
   }
   const cursor = input.selectionStart ?? draft.value.length
   const beforeCursor = draft.value.slice(0, cursor)
-  const match = beforeCursor.match(/(^|\s)(@[^\s@]*)$/)
+  const match = beforeCursor.match(/(^|\s)([@$][^\s@$]*)$/u)
   if (!match) {
-    closeFileMention()
+    closeInlineMention()
     return
   }
 
   const mentionToken = match[2] ?? ''
   const mentionOffset = mentionToken.length
   const startIndex = cursor - mentionOffset
+  const mentionKind = mentionToken.startsWith('$') ? 'skill' : 'file'
   mentionStartIndex.value = startIndex
   mentionQuery.value = mentionToken.slice(1)
-  isFileMentionOpen.value = true
-  void queueFileMentionSearch()
+  activeMentionKind.value = mentionKind
+  mentionHighlightedIndex.value = 0
+
+  if (mentionKind === 'file') {
+    skillMentionSuggestions.value = []
+    void queueFileMentionSearch()
+    return
+  }
+
+  fileMentionSuggestions.value = []
+  skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
 }
 
 async function queueFileMentionSearch(): Promise<void> {
@@ -1588,10 +1808,10 @@ async function queueFileMentionSearch(): Promise<void> {
   const token = ++fileMentionSearchToken
   fileMentionDebounceTimer = setTimeout(async () => {
     try {
-      const rows = await searchComposerFiles(cwd, mentionQuery.value, 20)
+      const rows = await searchComposerFiles(cwd, toComposerFileMentionSearchQuery(mentionQuery.value), 20)
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = rows
-      fileMentionHighlightedIndex.value = 0
+      mentionHighlightedIndex.value = 0
     } catch {
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = []
@@ -1602,19 +1822,48 @@ async function queueFileMentionSearch(): Promise<void> {
 function applyFileMention(suggestion: ComposerFileSuggestion): void {
   const input = inputRef.value
   const start = mentionStartIndex.value
-  if (start !== null && input) {
-    const cursor = input.selectionStart ?? draft.value.length
-    draft.value = `${draft.value.slice(0, start)}${draft.value.slice(cursor)}`.trimEnd()
+  const cursor = input?.selectionStart ?? draft.value.length
+  const insertion = insertComposerFileMentionText(draft.value, suggestion.path, start, cursor)
+  if (!insertion) {
+    closeFileMention()
+    nextTick(() => input?.focus())
+    return
   }
-  addFileAttachment(suggestion.path)
-  closeFileMention()
-  nextTick(() => input?.focus())
+
+  draft.value = insertion.text
+  closeInlineMention()
+  nextTick(() => {
+    input?.focus()
+    input?.setSelectionRange(insertion.selectionIndex, insertion.selectionIndex)
+  })
+}
+
+function applySkillMention(suggestion: SkillItem): void {
+  const input = inputRef.value
+  const start = mentionStartIndex.value
+  const cursor = input?.selectionStart ?? draft.value.length
+  const insertion = insertComposerSkillMentionText(draft.value, suggestion.name, start, cursor)
+  if (!insertion) {
+    closeInlineMention()
+    nextTick(() => input?.focus())
+    return
+  }
+
+  draft.value = insertion.text
+  closeInlineMention()
+  nextTick(() => {
+    input?.focus()
+    input?.setSelectionRange(insertion.selectionIndex, insertion.selectionIndex)
+  })
 }
 
 function hydrateDraft(payload: ComposerDraftPayload): void {
   cancelDictation()
   replaceDraftState(payload)
-  nextTick(() => inputRef.value?.focus())
+  void nextTick(() => {
+    inputRef.value?.focus()
+    updateComposerOverflowState()
+  })
 }
 
 function appendTextToDraft(text: string): void {
@@ -1756,6 +2005,7 @@ onMounted(() => {
   window.addEventListener('dragend', onWindowDragCleanup)
   window.addEventListener('blur', onWindowDragCleanup)
   void reloadPrompts()
+  queueComposerOverflowMeasurement()
 })
 
 defineExpose<ThreadComposerExposed>({
@@ -1785,6 +2035,7 @@ watch(
       persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
     }
     clearDraftState()
+    isMarkdownPreviewVisible.value = false
     const restored = loadPersistedDraftForThread(nextThreadId)
     if (restored) {
       replaceDraftState(restored)
@@ -1800,6 +2051,10 @@ watch([draft, selectedImages, fileAttachments, selectedSkills], () => {
   persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
 }, { deep: true })
 
+watch(draft, () => {
+  queueComposerOverflowMeasurement()
+})
+
 watch(
   () => props.cwd,
   () => {
@@ -1808,6 +2063,22 @@ watch(
     }
   },
 )
+
+watch(
+  () => props.skills,
+  () => {
+    if (!isSkillMentionOpen.value) return
+    skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
+    mentionHighlightedIndex.value = 0
+  },
+  { deep: true },
+)
+
+watch(isInteractionDisabled, (disabled) => {
+  if (disabled) {
+    isMarkdownPreviewVisible.value = false
+  }
+})
 
 watch(
   inProgressMode,
@@ -1826,8 +2097,16 @@ watch(
   @apply w-full max-w-[min(var(--chat-column-max,72rem),100%)] mx-auto;
 }
 
+.thread-composer:has(.thread-composer-input-wrap--expanded) {
+  @apply fixed inset-0 z-50 max-w-none bg-white/95 p-3 sm:p-6;
+}
+
 .thread-composer-shell {
   @apply relative rounded-2xl border border-zinc-300 bg-white p-2 sm:p-3 shadow-sm;
+}
+
+.thread-composer:has(.thread-composer-input-wrap--expanded) .thread-composer-shell {
+  @apply mx-auto flex h-full w-full max-w-[min(var(--chat-column-max,72rem),100%)] flex-col shadow-2xl;
 }
 
 .thread-composer-shell--drag-active {
@@ -1919,7 +2198,7 @@ watch(
 }
 
 .thread-composer-rate-limit-row {
-  @apply flex min-w-0 items-center gap-x-1.5 gap-y-1;
+  @apply flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1;
 }
 
 .thread-composer-rate-limit-value {
@@ -1929,6 +2208,10 @@ watch(
 .thread-composer-context-usage-inline {
   --context-usage-accent: rgb(34 197 94);
   @apply ml-auto inline-flex min-w-0 max-w-[56%] items-center gap-2 text-right;
+}
+
+.thread-composer-context-usage-inline.is-muted {
+  --context-usage-accent: rgb(113 113 122);
 }
 
 .thread-composer-context-usage-inline.is-warning {
@@ -1955,6 +2238,10 @@ watch(
 
 .thread-composer-input-wrap {
   @apply relative;
+}
+
+.thread-composer-input-wrap--expanded {
+  @apply min-h-0 flex-1;
 }
 
 .thread-composer-input-wrap--drag-active {
@@ -2001,8 +2288,16 @@ watch(
   @apply inline-flex h-5 min-w-5 items-center justify-center text-sm leading-none text-zinc-700;
 }
 
+.thread-composer-file-mention-icon-folder {
+  @apply h-4 w-4 text-amber-600;
+}
+
 .thread-composer-file-mention-icon-file {
   @apply h-4 w-4 text-zinc-600;
+}
+
+.thread-composer-file-mention-symlink-badge {
+  @apply inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-1 text-[10px] font-semibold leading-none text-sky-700;
 }
 
 .thread-composer-file-mention-text {
@@ -2021,8 +2316,60 @@ watch(
   @apply px-2 py-1.5 text-xs text-zinc-500;
 }
 
+.thread-composer-skill-mentions {
+  @apply pb-1;
+}
+
+.thread-composer-skill-mention-row {
+  @apply items-start;
+}
+
+.thread-composer-skill-mention-badge {
+  @apply inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[9px] font-semibold leading-none;
+}
+
+.thread-composer-skill-mention-badge.is-repo {
+  @apply bg-sky-50 text-sky-700;
+}
+
+.thread-composer-skill-mention-badge.is-system {
+  @apply bg-zinc-100 text-zinc-700;
+}
+
+.thread-composer-skill-mention-badge.is-plugin {
+  @apply bg-amber-50 text-amber-700;
+}
+
+.thread-composer-skill-mention-badge.is-user {
+  @apply bg-emerald-50 text-emerald-700;
+}
+
+.thread-composer-skill-mention-badge.is-prompt {
+  @apply bg-violet-50 text-violet-700;
+}
+
+.thread-composer-skill-mention-copy {
+  @apply min-w-0 flex flex-col overflow-hidden;
+}
+
+.thread-composer-skill-mention-name {
+  @apply truncate text-zinc-900;
+}
+
+.thread-composer-skill-mention-desc {
+  @apply mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-zinc-500;
+}
+
 .thread-composer-input {
-  @apply w-full min-w-0 min-h-10 sm:min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 text-sm text-zinc-900 outline-none transition resize-none overflow-y-auto;
+  @apply w-full min-w-0 min-h-10 sm:min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 pr-10 text-sm text-zinc-900 outline-none transition resize-none overflow-y-auto;
+  font-family: var(--codex-ui-symbol-font-family);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.thread-composer-input-wrap--expanded .thread-composer-input {
+  @apply h-full max-h-none pr-12 text-base leading-6;
 }
 
 .thread-composer-input:focus {
@@ -2031,6 +2378,216 @@ watch(
 
 .thread-composer-input:disabled {
   @apply bg-zinc-100 text-zinc-500 cursor-not-allowed;
+}
+
+.thread-composer-expand {
+  @apply absolute right-0.5 top-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full border-0 bg-zinc-100 text-zinc-500 shadow-sm transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-400;
+}
+
+.thread-composer-expand-icon {
+  @apply h-[18px] w-[18px];
+}
+
+.thread-composer-preview {
+  --thread-composer-code-font-family: var(--codex-code-font-family);
+  --thread-composer-code-font-weight: var(--codex-code-font-weight);
+  @apply mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white px-3 py-3;
+}
+
+.thread-composer-preview-content {
+  @apply flex max-h-64 min-w-0 flex-col gap-2 overflow-y-auto pr-1;
+}
+
+.thread-composer-preview-empty {
+  @apply m-0 text-sm leading-relaxed text-zinc-500;
+}
+
+.thread-composer-preview :deep(.message-text),
+.thread-composer-preview :deep(.message-heading),
+.thread-composer-preview :deep(.message-blockquote),
+.thread-composer-preview :deep(.message-list),
+.thread-composer-preview :deep(.message-table-wrap),
+.thread-composer-preview :deep(.message-code-block),
+.thread-composer-preview :deep(.message-divider) {
+  @apply m-0;
+}
+
+.thread-composer-preview :deep(.message-text) {
+  @apply text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-800;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-heading) {
+  @apply text-slate-900 tracking-tight;
+}
+
+.thread-composer-preview :deep(.message-heading-h1) {
+  @apply text-xl font-semibold leading-tight;
+}
+
+.thread-composer-preview :deep(.message-heading-h2) {
+  @apply text-lg font-semibold leading-tight;
+}
+
+.thread-composer-preview :deep(.message-heading-h3) {
+  @apply text-base font-semibold leading-snug;
+}
+
+.thread-composer-preview :deep(.message-heading-h4) {
+  @apply text-sm font-semibold leading-snug;
+}
+
+.thread-composer-preview :deep(.message-heading-h5) {
+  @apply text-xs font-semibold leading-snug uppercase tracking-[0.02em];
+}
+
+.thread-composer-preview :deep(.message-heading-h6) {
+  @apply text-xs font-semibold leading-snug uppercase tracking-[0.04em] text-slate-600;
+}
+
+.thread-composer-preview :deep(.message-blockquote) {
+  @apply border-l-4 border-slate-300 bg-slate-50/70 py-1 pl-4 text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-700 rounded-r-lg;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-list) {
+  @apply flex flex-col gap-1.5 pl-5 text-sm leading-relaxed text-slate-800;
+}
+
+.thread-composer-preview :deep(.message-list-unordered) {
+  @apply list-disc;
+}
+
+.thread-composer-preview :deep(.message-list-ordered) {
+  @apply list-decimal;
+}
+
+.thread-composer-preview :deep(.message-list-item) {
+  @apply pl-1;
+}
+
+.thread-composer-preview :deep(.message-list-item-content) {
+  @apply flex flex-col gap-1.5;
+}
+
+.thread-composer-preview :deep(.message-list-item-text) {
+  @apply whitespace-pre-wrap break-words;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-task-list) {
+  @apply list-none pl-0;
+}
+
+.thread-composer-preview :deep(.message-task-item) {
+  @apply flex items-start gap-2;
+}
+
+.thread-composer-preview :deep(.message-task-checkbox) {
+  @apply mt-0.5 text-sm leading-none text-slate-500 select-none;
+}
+
+.thread-composer-preview :deep(.message-table-wrap) {
+  @apply w-full overflow-x-auto;
+}
+
+.thread-composer-preview :deep(.message-table) {
+  @apply min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm text-slate-800;
+}
+
+.thread-composer-preview :deep(.message-table-head-cell),
+.thread-composer-preview :deep(.message-table-cell) {
+  @apply border-b border-l border-slate-200 px-3 py-2 align-top whitespace-pre-wrap break-words;
+  overflow-wrap: anywhere;
+}
+
+.thread-composer-preview :deep(.message-table-head-cell:first-child),
+.thread-composer-preview :deep(.message-table-cell:first-child) {
+  @apply border-l-0;
+}
+
+.thread-composer-preview :deep(.message-table-head-cell) {
+  @apply bg-slate-100 font-semibold text-slate-900;
+}
+
+.thread-composer-preview :deep(.message-table-body-row:last-child .message-table-cell) {
+  @apply border-b-0;
+}
+
+.thread-composer-preview :deep(.message-bold-text) {
+  @apply font-semibold text-slate-900;
+}
+
+.thread-composer-preview :deep(.message-italic-text) {
+  @apply italic;
+}
+
+.thread-composer-preview :deep(.message-strikethrough-text) {
+  @apply line-through text-slate-500;
+}
+
+.thread-composer-preview :deep(.message-divider) {
+  @apply h-px border-0 bg-slate-200;
+}
+
+.thread-composer-preview :deep(.message-markdown-image) {
+  @apply h-auto max-h-72 w-auto max-w-full object-contain rounded-lg bg-white;
+}
+
+.thread-composer-preview :deep(.message-inline-code) {
+  @apply rounded-md border border-slate-200 bg-slate-100/70 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900;
+  font-family: var(--thread-composer-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--thread-composer-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.thread-composer-preview :deep(.message-code-block) {
+  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  font-family: var(--thread-composer-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--thread-composer-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.thread-composer-preview :deep(.message-code-language) {
+  @apply border-b border-slate-800 px-3 py-2 text-[11px] uppercase tracking-[0.08em] text-slate-400;
+  font-family: inherit;
+}
+
+.thread-composer-preview :deep(.message-code-pre) {
+  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed whitespace-pre;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+.thread-composer-preview :deep(.message-code-pre .hljs) {
+  @apply block bg-transparent p-0 text-inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+.thread-composer-preview :deep(.message-code-pre .hljs *) {
+  font-family: inherit;
+  font-weight: inherit;
+  font-synthesis: inherit;
+}
+
+.thread-composer-preview :deep(.message-text-flow .katex-display),
+.thread-composer-preview :deep(.katex-display) {
+  @apply my-2 overflow-x-auto overflow-y-hidden;
+}
+
+.thread-composer-preview :deep(.katex) {
+  @apply max-w-full;
+}
+
+.thread-composer-preview :deep(.message-file-link) {
+  @apply text-sm leading-relaxed text-[#0969da] no-underline underline-offset-2 hover:text-[#1f6feb] hover:underline;
 }
 
 .thread-composer-controls {
@@ -2120,6 +2677,18 @@ watch(
 
 .thread-composer-attach-switch.is-disabled {
   @apply opacity-50;
+}
+
+.thread-composer-preview-toggle {
+  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-zinc-100 text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-400;
+}
+
+.thread-composer-preview-toggle[aria-pressed='true'] {
+  @apply bg-sky-100 text-sky-700 hover:bg-sky-200 hover:text-sky-800;
+}
+
+.thread-composer-preview-toggle-icon {
+  @apply h-5 w-5;
 }
 
 .thread-composer-control {

@@ -1,13 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FREE_MODE_DEFAULT_MODEL,
   FREE_MODE_PROVIDER_ID,
   OPENCODE_ZEN_DEFAULT_MODEL,
   OPENCODE_ZEN_PROVIDER_ID,
+  createDefaultFreeModeState,
   createDefaultOpenCodeZenFreeModeState,
+  getMoonBridgeModelMetadata,
+  getMoonBridgeModels,
   getFreeModeConfigArgs,
   shouldCreateDefaultFreeModeStateForMissingAuth,
 } from './freeMode'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('unauthenticated free mode defaults', () => {
   it('creates an enabled OpenCode Zen state for unauthenticated startup', () => {
@@ -16,7 +26,7 @@ describe('unauthenticated free mode defaults', () => {
     expect(state.enabled).toBe(true)
     expect(state.provider).toBe('opencode-zen')
     expect(state.model).toBe(OPENCODE_ZEN_DEFAULT_MODEL)
-    expect(state.wireApi).toBe('chat')
+    expect(state.wireApi).toBe('responses')
     expect(state.apiKey).toBeNull()
     expect(state.providerKeys).toEqual({})
   })
@@ -29,7 +39,17 @@ describe('unauthenticated free mode defaults', () => {
     expect(args).toContain(`model_provider="${OPENCODE_ZEN_PROVIDER_ID}"`)
     expect(args).toContain(`model="${OPENCODE_ZEN_DEFAULT_MODEL}"`)
     expect(args).toContain(`model_providers.${OPENCODE_ZEN_PROVIDER_ID}.base_url="http://127.0.0.1:4173/codex-api/zen-proxy/v1"`)
+    expect(args).toContain(`model_providers.${OPENCODE_ZEN_PROVIDER_ID}.wire_api="responses"`)
     expect(args).toContain(`model_providers.${OPENCODE_ZEN_PROVIDER_ID}.experimental_bearer_token="zen-proxy-token"`)
+  })
+
+  it('uses the OpenCode Zen default model when persisted Zen state has an empty model', () => {
+    const args = getFreeModeConfigArgs({
+      ...createDefaultOpenCodeZenFreeModeState(),
+      model: '',
+    }, 4173)
+
+    expect(args).toContain(`model="${OPENCODE_ZEN_DEFAULT_MODEL}"`)
   })
 
   it('keeps OpenRouter config available for manual free mode', () => {
@@ -58,5 +78,43 @@ describe('unauthenticated free mode defaults', () => {
   it('creates the default only when state is absent and Codex auth is missing', () => {
     expect(shouldCreateDefaultFreeModeStateForMissingAuth(null, false)).toBe(true)
     expect(shouldCreateDefaultFreeModeStateForMissingAuth(null, true)).toBe(false)
+  })
+})
+
+describe('Moon Bridge catalog loading', () => {
+  it('defaults external provider state to disabled', () => {
+    expect(createDefaultFreeModeState()).toEqual({
+      enabled: false,
+      apiKey: null,
+      model: 'openrouter/free',
+    })
+  })
+
+  it('reads model slugs from the generated catalog', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-moonbridge-'))
+    const catalogPath = join(tempDir, 'models_catalog.json')
+    try {
+      await writeFile(
+        catalogPath,
+        JSON.stringify({
+          models: [
+            { slug: 'deepseek-v4-pro', context_window: 128000 },
+            { slug: 'deepseek-v4-flash', context_window: '64000' },
+            { slug: 'deepseek-v4-pro', context_window: 32000 },
+          ],
+        }),
+        'utf8',
+      )
+
+      vi.stubEnv('CODEXUI_MOONBRIDGE_MODEL_CATALOG', catalogPath)
+
+      expect(getMoonBridgeModels()).toEqual(['deepseek-v4-pro', 'deepseek-v4-flash'])
+      expect(getMoonBridgeModelMetadata()).toEqual([
+        { id: 'deepseek-v4-pro', contextWindow: 128000 },
+        { id: 'deepseek-v4-flash', contextWindow: 64000 },
+      ])
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })

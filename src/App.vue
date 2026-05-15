@@ -60,8 +60,25 @@
             </span>
           </button>
 
-          <SidebarThreadTree :groups="projectGroups" :project-display-name-by-id="projectDisplayNameById"
+          <button
+            v-if="!isSidebarCollapsed"
+            class="sidebar-skills-link"
+            :class="{ 'is-active': isAutomationsRoute }"
+            type="button"
+            @click="router.push({ name: 'automations' }); isMobile && setSidebarCollapsed(true)"
+          >
+            <span class="sidebar-skills-link-icon sidebar-automations-link-icon" aria-hidden="true">
+              <IconTablerBolt />
+            </span>
+            <span class="sidebar-skills-link-copy">
+              <span class="sidebar-skills-link-title">{{ t('Automations') }}</span>
+              <span class="sidebar-skills-link-subtitle">{{ t('Scheduled work') }}</span>
+            </span>
+          </button>
+
+          <SidebarThreadTree ref="sidebarThreadTreeRef" :groups="projectGroups" :project-display-name-by-id="projectDisplayNameById"
             :project-git-repo-by-name="projectGitRepoByName"
+            :project-cwd-by-name="projectCwdByName"
             v-if="!isSidebarCollapsed"
             :selected-thread-id="selectedThreadId" :is-loading="isLoadingThreads"
             :is-thread-list-fully-loaded="isThreadListFullyLoaded"
@@ -77,6 +94,7 @@
             @fork-thread="onForkThread"
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @export-thread="onExportThread"
+            @automations-changed="onAutomationsChanged"
             @start-new-chat="onStartNewThreadFromToolbar" />
         </div>
 
@@ -118,7 +136,10 @@
                   </button>
                 </div>
                 <template v-if="!isAccountsSectionCollapsed">
-                  <p v-if="accountActionError" class="sidebar-settings-account-error">{{ accountActionError }}</p>
+                  <div v-if="accountActionError" class="sidebar-settings-account-error visible-error-with-feedback">
+                    <span>{{ accountActionError }}</span>
+                    <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
+                  </div>
                   <div class="sidebar-settings-account-login">
                     <button
                       class="sidebar-settings-account-login-button"
@@ -228,6 +249,15 @@
                 <span class="sidebar-settings-label">{{ t('Auto send dictation') }}</span>
                 <span class="sidebar-settings-toggle" :class="{ 'is-on': dictationAutoSend }" />
               </button>
+              <a
+                v-if="hasFeedbackDiagnostics"
+                class="sidebar-settings-row sidebar-settings-feedback-row"
+                :href="feedbackMailto"
+                @click="prepareFeedbackLink"
+              >
+                <span class="sidebar-settings-label">{{ t('Send feedback') }}</span>
+                <span class="sidebar-settings-value">{{ t('Issue detected') }}</span>
+              </a>
 
               <div class="sidebar-settings-row sidebar-settings-row--select" :title="t('Choose the API provider for the Codex backend')">
                 <span class="sidebar-settings-label">{{ t('Provider') }}</span>
@@ -240,11 +270,13 @@
                   <option value="codex">Codex</option>
                   <option value="openrouter">OpenRouter</option>
                   <option value="opencode-zen">OpenCode Zen</option>
+                  <option value="moon">Moon Bridge</option>
                   <option value="custom">Custom endpoint</option>
                 </select>
               </div>
               <div v-if="providerError" class="sidebar-settings-row sidebar-settings-error">
-                {{ providerError }}
+                <span>{{ providerError }}</span>
+                <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, providerError)">{{ t('Send feedback') }}</a>
               </div>
               <div v-if="selectedProvider === 'openrouter'" class="sidebar-settings-row sidebar-settings-row--input">
                 <div class="sidebar-settings-provider-info">
@@ -425,7 +457,8 @@
                   {{ t('Put one Telegram user ID per line or separate them with commas. Use `*` to allow all Telegram users. Unauthorized users will see their own ID in the rejection message so they can copy it here.') }}
                 </div>
                 <div v-if="telegramConfigError" class="sidebar-settings-telegram-error">
-                  {{ telegramConfigError }}
+                  <span>{{ telegramConfigError }}</span>
+                  <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, telegramConfigError)">{{ t('Send feedback') }}</a>
                 </div>
                 <div class="sidebar-settings-telegram-actions">
                   <button
@@ -448,6 +481,26 @@
                 <span class="sidebar-settings-context-value" :data-state="threadContextBadgeState">
                   {{ threadContextPrimaryText }}
                   <span class="sidebar-settings-context-meta">{{ threadContextSecondaryText }}</span>
+                </span>
+              </div>
+              <div
+                v-if="showThreadSessionIdRow"
+                class="sidebar-settings-row sidebar-settings-session-row"
+                :title="threadSessionId"
+              >
+                <span class="sidebar-settings-label">{{ t('Session ID') }}</span>
+                <span class="sidebar-settings-session-actions">
+                  <span class="sidebar-settings-session-value" :title="threadSessionId">{{ threadSessionId }}</span>
+                  <button
+                    type="button"
+                    class="sidebar-settings-session-copy"
+                    :data-copied="isThreadSessionIdCopied"
+                    :aria-label="threadSessionCopyButtonLabel"
+                    :title="threadSessionCopyButtonLabel"
+                    @click.stop="copyThreadSessionId"
+                  >
+                    <IconTablerCopy class="sidebar-settings-session-copy-icon" />
+                  </button>
                 </span>
               </div>
               <div class="sidebar-settings-rate-limits">
@@ -484,7 +537,7 @@
         :style="contentStyle"
       >
         <span v-if="isVirtualKeyboardOpen" class="content-keyboard-spacer" aria-hidden="true" />
-        <ContentHeader :title="contentTitle" :accent="isSkillsRoute">
+        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute">
           <template #leading>
             <SidebarThreadControls
               v-if="isSidebarCollapsed || isMobile"
@@ -495,6 +548,9 @@
               @start-new-thread="onStartNewThreadFromToolbar"
             />
             <span v-if="isSkillsRoute" class="skills-route-header-icon" aria-hidden="true">
+              <IconTablerBolt />
+            </span>
+            <span v-else-if="isAutomationsRoute" class="skills-route-header-icon automations-route-header-icon" aria-hidden="true">
               <IconTablerBolt />
             </span>
           </template>
@@ -547,6 +603,18 @@
               @try-item="onTryDirectoryItem"
             />
           </template>
+          <template v-else-if="isAutomationsRoute">
+            <AutomationsPanel
+              ref="automationsPanelRef"
+              :groups="projectGroups"
+              :project-cwd-by-name="projectCwdByName"
+              :project-display-name-by-id="projectDisplayNameById"
+              :selected-automation-id="routeAutomationId"
+              @select-automation="onSelectAutomationInPanel"
+              @edit-automation="onEditAutomationFromPanel"
+              @create-automation="onCreateAutomationFromPanel"
+            />
+          </template>
           <template v-else-if="isHomeRoute">
             <div class="content-grid content-grid-home">
               <div class="new-thread-empty">
@@ -563,7 +631,7 @@
                   <button class="new-thread-folder-action new-thread-folder-action-primary" type="button" @click="onOpenExistingFolder">
                     {{ t('Select folder') }}
                   </button>
-                  <button class="new-thread-folder-action" type="button" @click="onCreateProject">
+                  <button class="new-thread-folder-action" type="button" @click="onOpenProjectSetupModal">
                     {{ t('Create Project') }}
                   </button>
                 </div>
@@ -669,7 +737,10 @@
                             {{ createFolderSubmitLabel }}
                           </button>
                         </div>
-                        <p v-if="createFolderError" class="new-thread-open-folder-error">{{ createFolderError }}</p>
+                        <div v-if="createFolderError" class="new-thread-open-folder-error visible-error-with-feedback">
+                          <span>{{ createFolderError }}</span>
+                          <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, createFolderError)">{{ t('Send feedback') }}</a>
+                        </div>
                       </div>
                       <input
                         ref="existingFolderFilterInputRef"
@@ -680,7 +751,10 @@
                         @keydown.esc.prevent="onCloseExistingFolderPanel"
                       />
                       <div v-if="existingFolderError" class="new-thread-open-folder-error-actions">
-                        <p class="new-thread-open-folder-error">{{ existingFolderError }}</p>
+                        <div class="new-thread-open-folder-error visible-error-with-feedback">
+                          <span>{{ existingFolderError }}</span>
+                          <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, existingFolderError)">{{ t('Send feedback') }}</a>
+                        </div>
                         <button
                           class="new-thread-folder-action"
                           type="button"
@@ -716,6 +790,93 @@
                           </button>
                         </li>
                       </ul>
+                    </div>
+                  </div>
+                </Teleport>
+                <Teleport to="body">
+                  <div v-if="isProjectSetupModalOpen" class="new-thread-open-folder-overlay" @click.self="onCloseProjectSetupModal">
+                    <div class="new-thread-project-modal" role="dialog" aria-modal="true" :aria-label="t('Create or clone project')" @keydown.esc.prevent="onCloseProjectSetupModal">
+                      <div class="new-thread-open-folder-header">
+                        <p class="new-thread-open-folder-title">{{ t('Create or clone project') }}</p>
+                        <button class="new-thread-open-folder-close" type="button" :disabled="isProjectSetupSubmitting" @click="onCloseProjectSetupModal">
+                          {{ t('Cancel') }}
+                        </button>
+                      </div>
+                      <div class="new-thread-project-mode-tabs" role="tablist" :aria-label="t('Project source')">
+                        <button
+                          class="new-thread-project-mode-tab"
+                          :class="{ 'is-active': projectSetupMode === 'create' }"
+                          type="button"
+                          role="tab"
+                          :aria-selected="projectSetupMode === 'create'"
+                          :disabled="isProjectSetupSubmitting"
+                          @click="projectSetupMode = 'create'"
+                        >
+                          {{ t('New project') }}
+                        </button>
+                        <button
+                          class="new-thread-project-mode-tab"
+                          :class="{ 'is-active': projectSetupMode === 'clone' }"
+                          type="button"
+                          role="tab"
+                          :aria-selected="projectSetupMode === 'clone'"
+                          :disabled="isProjectSetupSubmitting"
+                          @click="projectSetupMode = 'clone'"
+                        >
+                          {{ t('Clone from GitHub') }}
+                        </button>
+                      </div>
+                      <label class="new-thread-project-field">
+                        <span class="new-thread-open-folder-label">{{ t('Destination folder') }}</span>
+                        <input
+                          v-model="projectSetupBaseDir"
+                          class="new-thread-open-folder-path"
+                          type="text"
+                          :disabled="isProjectSetupSubmitting"
+                          :placeholder="t('Destination folder')"
+                        />
+                      </label>
+                      <label v-if="projectSetupMode === 'create'" class="new-thread-project-field">
+                        <span class="new-thread-open-folder-label">{{ t('Project name') }}</span>
+                        <input
+                          ref="projectSetupPrimaryInputRef"
+                          v-model="projectNameDraft"
+                          class="new-thread-open-folder-create-input"
+                          type="text"
+                          :disabled="isProjectSetupSubmitting"
+                          :placeholder="t('Project name')"
+                          @keydown.enter.prevent="onSubmitProjectSetup"
+                        />
+                      </label>
+                      <label v-else class="new-thread-project-field">
+                        <span class="new-thread-open-folder-label">{{ t('GitHub repository URL') }}</span>
+                        <input
+                          ref="projectSetupPrimaryInputRef"
+                          v-model="githubCloneUrlDraft"
+                          class="new-thread-open-folder-create-input"
+                          type="url"
+                          :disabled="isProjectSetupSubmitting"
+                          placeholder="https://github.com/owner/repo"
+                          @keydown.enter.prevent="onSubmitProjectSetup"
+                        />
+                      </label>
+                      <div v-if="projectSetupError" class="new-thread-open-folder-error visible-error-with-feedback">
+                        <span>{{ projectSetupError }}</span>
+                        <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, projectSetupError)">{{ t('Send feedback') }}</a>
+                      </div>
+                      <div class="new-thread-project-modal-actions">
+                        <button class="new-thread-folder-action" type="button" :disabled="isProjectSetupSubmitting" @click="onCloseProjectSetupModal">
+                          {{ t('Cancel') }}
+                        </button>
+                        <button
+                          class="new-thread-folder-action new-thread-folder-action-primary"
+                          type="button"
+                          :disabled="!canSubmitProjectSetup || isProjectSetupSubmitting"
+                          @click="onSubmitProjectSetup"
+                        >
+                          {{ projectSetupSubmitLabel }}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </Teleport>
@@ -763,6 +924,10 @@
               </div>
 
               <div class="composer-with-queue">
+                <div v-if="codexCliMissingError" class="composer-runtime-error" role="alert">
+                  <span>{{ t(codexCliMissingError) }}</span>
+                  <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, codexCliMissingError)">{{ t('Send feedback') }}</a>
+                </div>
                 <ThreadTerminalPanel
                   v-if="homeTerminalOpen && composerCwd"
                   ref="homeTerminalPanelRef"
@@ -812,6 +977,9 @@
                     :active-thread-id="composerThreadContextId" :cwd="composerCwd"
                     :live-overlay="liveOverlay"
                     :pending-requests="selectedThreadServerRequests"
+                    :has-more-persisted-above="hasMoreOlderMessages"
+                    :is-loading-persisted-above="isLoadingOlderMessages"
+                    :load-earlier-messages="loadOlderMessages"
                     @fork-thread="onForkThreadFromMessage"
                     @rollback="onRollback"
                     @implement-plan="onImplementPlan"
@@ -819,6 +987,10 @@
                 </div>
 
                 <div class="composer-with-queue">
+                  <div v-if="codexCliMissingError" class="composer-runtime-error" role="alert">
+                    <span>{{ t(codexCliMissingError) }}</span>
+                    <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, codexCliMissingError)">{{ t('Send feedback') }}</a>
+                  </div>
                   <QueuedMessages
                     :messages="selectedThreadQueuedMessages"
                     @edit="onEditQueuedMessage"
@@ -924,7 +1096,10 @@
         :placeholder="t('Paste localhost callback URL')"
         :disabled="isCompletingCodexLogin"
       >
-      <p v-if="accountActionError" class="codex-login-modal-error">{{ accountActionError }}</p>
+      <div v-if="accountActionError" class="codex-login-modal-error visible-error-with-feedback">
+        <span>{{ accountActionError }}</span>
+        <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
+      </div>
       <div class="codex-login-modal-actions">
         <button
           class="codex-login-modal-cancel"
@@ -961,6 +1136,7 @@ import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdow
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerCopy from './components/icons/IconTablerCopy.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
 import IconTablerTerminal from './components/icons/IconTablerTerminal.vue'
@@ -968,8 +1144,10 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { useMobile } from './composables/useMobile'
 import { useUiLanguage } from './composables/useUiLanguage'
+import { useFeedbackDiagnostics } from './composables/useFeedbackDiagnostics'
 import {
   checkoutGitBranch,
+  cloneGithubRepository,
   configureTelegramBot,
   createPermanentWorktree,
   createWorktree,
@@ -999,7 +1177,7 @@ import {
   searchThreads,
   switchAccount,
 } from './api/codexGateway'
-import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
+import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
 import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
@@ -1009,6 +1187,7 @@ const ThreadConversation = defineAsyncComponent(() => import('./components/conte
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
 const ReviewPane = defineAsyncComponent(() => import('./components/content/ReviewPane.vue'))
 const DirectoryHub = defineAsyncComponent(() => import('./components/content/DirectoryHub.vue'))
+const AutomationsPanel = defineAsyncComponent(() => import('./components/content/AutomationsPanel.vue'))
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
@@ -1192,22 +1371,29 @@ const {
   availableModelIds,
   selectedCollaborationMode,
   selectedModelId,
+  selectedProvider,
   selectedReasoningEffort,
   selectedSpeedMode,
+  codexCliMissingError,
   installedSkills,
   accountRateLimitSnapshots,
   messages,
+  hasMoreOlderMessages,
   isLoadingThreads,
   isThreadListFullyLoaded,
   isLoadingMessages,
+  isLoadingOlderMessages,
   isSendingMessage,
   isInterruptingTurn,
   isSelectedThreadInterruptPending,
   isUpdatingSpeedMode,
+  error: desktopError,
   refreshAll,
   refreshSkills,
   selectThread,
+  loadMessages,
   ensureThreadMessagesLoaded,
+  loadOlderMessages,
   setThreadTerminalOpen,
   toggleSelectedThreadTerminal,
   archiveThreadById,
@@ -1224,7 +1410,9 @@ const {
   setSelectedCollaborationMode,
   readModelIdForThread,
   setSelectedModelIdForThread,
-
+  refreshMoonBridgeModelIds,
+  refreshAncillaryState,
+  invalidateAppServerRuntimeState,
   setSelectedReasoningEffort,
   updateSelectedSpeedMode,
   respondToPendingServerRequest,
@@ -1236,11 +1424,43 @@ const {
   stopPolling,
   primeSelectedThread,
   rollbackSelectedThread,
+  setSelectedProvider,
 } = useDesktopState()
 
 const route = useRoute()
 const router = useRouter()
 const { isMobile } = useMobile()
+type SidebarThreadTreeExposed = {
+  openAutomationEditorFromPanel: (payload: AutomationEditRequest) => void
+  openAutomationCreatorFromPanel: () => void
+}
+type AutomationsPanelExposed = {
+  loadAutomations: () => Promise<void>
+}
+type AutomationEditRequest = {
+  scope: 'thread' | 'project'
+  target: string
+  automation: UiThreadAutomation
+}
+const sidebarThreadTreeRef = ref<SidebarThreadTreeExposed | null>(null)
+const automationsPanelRef = ref<AutomationsPanelExposed | null>(null)
+const {
+  hasFeedbackDiagnostics,
+  buildFeedbackMailto,
+  feedbackMailtoBase,
+  recordVisibleFailure,
+} = useFeedbackDiagnostics()
+const feedbackMailto = feedbackMailtoBase()
+
+function prepareFeedbackLink(event: MouseEvent, message?: string): void {
+  if (message) {
+    recordVisibleFailure(message)
+  }
+  const target = event.currentTarget
+  if (target instanceof HTMLAnchorElement) {
+    target.href = buildFeedbackMailto()
+  }
+}
 const homeThreadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadConversationRef = ref<{ jumpToLatest: () => void } | null>(null)
@@ -1344,7 +1564,6 @@ const freeModeHasCustomKey = ref(false)
 const freeModeCustomKeyMasked = ref<string | null>(null)
 const freeModeCustomKeySaving = ref(false)
 const providerError = ref('')
-const selectedProvider = ref<'codex' | 'openrouter' | 'opencode-zen' | 'custom'>('codex')
 const customEndpointUrl = ref('')
 const customEndpointKey = ref('')
 const customEndpointWireApi = ref<'responses' | 'chat'>('responses')
@@ -1359,6 +1578,14 @@ const isCreateFolderOpen = ref(false)
 const createFolderDraft = ref('')
 const createFolderError = ref('')
 const isCreatingFolder = ref(false)
+const isProjectSetupModalOpen = ref(false)
+const projectSetupMode = ref<'create' | 'clone'>('create')
+const projectSetupBaseDir = ref('')
+const projectNameDraft = ref('')
+const githubCloneUrlDraft = ref('')
+const projectSetupError = ref('')
+const isProjectSetupSubmitting = ref(false)
+const projectSetupPrimaryInputRef = ref<HTMLInputElement | null>(null)
 const isExistingFolderPickerOpen = ref(false)
 const existingFolderPathInputRef = ref<HTMLInputElement | null>(null)
 const existingFolderFilterInputRef = ref<HTMLInputElement | null>(null)
@@ -1371,6 +1598,18 @@ const isExistingFolderLoading = ref(false)
 const isOpeningExistingFolder = ref(false)
 const showHiddenFolders = ref(false)
 const existingFolderFilter = ref('')
+const visibleFeedbackErrors = [
+  desktopError,
+  codexCliMissingError,
+  threadBranchError,
+  threadBranchCommitsError,
+  accountActionError,
+  providerError,
+  telegramConfigError,
+  createFolderError,
+  projectSetupError,
+  existingFolderError,
+]
 const telegramStatus = ref<TelegramStatus>({
   configured: false,
   active: false,
@@ -1397,7 +1636,13 @@ const routeThreadId = computed(() => {
 
 const isHomeRoute = computed(() => route.name === 'home')
 const isSkillsRoute = computed(() => route.name === 'skills')
+const isAutomationsRoute = computed(() => route.name === 'automations')
+const routeAutomationId = computed(() => {
+  const raw = route.query.automationId
+  return typeof raw === 'string' ? raw : ''
+})
 const contentTitle = computed(() => {
+  if (isAutomationsRoute.value) return t('Automations')
   if (isSkillsRoute.value) return t('Skills')
   if (isHomeRoute.value) return t('Start new thread')
   return selectedThread.value?.title ?? t('Choose a thread')
@@ -1462,7 +1707,11 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 ))
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
-const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && selectedThreadId.value.trim().length > 0)
+const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
+const threadSessionId = computed(() => selectedThreadId.value.trim())
+const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && threadSessionId.value.length > 0)
+const copiedThreadSessionId = ref('')
+let copiedThreadSessionIdResetTimer: ReturnType<typeof setTimeout> | null = null
 const isAccountSwitchBlocked = computed(() =>
   isSendingMessage.value ||
   isInterruptingTurn.value ||
@@ -1509,6 +1758,62 @@ function onOpenPluginsHomeCard(): void {
   void router.push({ name: 'skills', query: { tab: 'plugins' } })
 }
 
+function copyTextWithSelectionFallback(text: string): boolean {
+  if (typeof document === 'undefined') return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+async function copyThreadSessionId(): Promise<void> {
+  const sessionId = threadSessionId.value
+  if (!sessionId) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(sessionId)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(sessionId)
+  }
+
+  if (!copied) return
+
+  copiedThreadSessionId.value = sessionId
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+  }
+  copiedThreadSessionIdResetTimer = setTimeout(() => {
+    if (copiedThreadSessionId.value === sessionId) {
+      copiedThreadSessionId.value = ''
+    }
+    copiedThreadSessionIdResetTimer = null
+  }, 1800)
+}
+
 const threadContextBadgeState = computed(() => {
   const remainingPercent = selectedThreadTokenUsage.value?.remainingContextPercent
   if (remainingPercent === null || typeof remainingPercent !== 'number') return 'pending'
@@ -1536,6 +1841,10 @@ const threadContextSecondaryText = computed(() => {
 })
 
 const threadContextTooltip = computed(() => buildThreadContextTooltip(selectedThreadTokenUsage.value))
+const isThreadSessionIdCopied = computed(() => copiedThreadSessionId.value === threadSessionId.value && threadSessionId.value.length > 0)
+const threadSessionCopyButtonLabel = computed(() => (
+  isThreadSessionIdCopied.value ? t('Session ID copied') : t('Copy session ID')
+))
 
 function hasDuplicateFolderLeaf(path: string, knownPaths: string[]): boolean {
   const normalizedPath = normalizePathForUi(path).trim()
@@ -1666,6 +1975,18 @@ const isCreateFolderNameValid = computed(() => {
 const canCreateFolder = computed(() => {
   return isCreateFolderNameValid.value && createFolderParentPath.value.trim().length > 0 && !existingFolderError.value
 })
+const isProjectNameDraftValid = computed(() => {
+  const draft = projectNameDraft.value.trim()
+  if (!draft) return false
+  if (draft === '.' || draft === '..') return false
+  return !/[\\/]/u.test(draft)
+})
+const canSubmitProjectSetup = computed(() => {
+  const baseDir = projectSetupBaseDir.value.trim()
+  if (!baseDir) return false
+  if (projectSetupMode.value === 'create') return isProjectNameDraftValid.value
+  return githubCloneUrlDraft.value.trim().length > 0
+})
 const resolvedExistingFolderPath = computed(() => {
   const draftedPath = normalizePathForUi(existingFolderPathDraft.value).trim()
   if (draftedPath) return draftedPath
@@ -1674,6 +1995,12 @@ const resolvedExistingFolderPath = computed(() => {
 const createFolderSubmitLabel = computed(() => {
   if (isCreatingFolder.value) return 'Creating…'
   return 'Create'
+})
+const projectSetupSubmitLabel = computed(() => {
+  if (isProjectSetupSubmitting.value) {
+    return projectSetupMode.value === 'clone' ? t('Cloning…') : t('Creating…')
+  }
+  return projectSetupMode.value === 'clone' ? t('Clone repository') : t('Create project')
 })
 const canBrowseExistingFolderParent = computed(() => {
   const current = existingFolderBrowsePath.value.trim()
@@ -1782,9 +2109,18 @@ onMounted(() => {
   void refreshDefaultProjectName()
   void refreshTelegramConfig()
   void refreshTelegramStatus()
-  void loadFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
+})
+
+watch(visibleFeedbackErrors, (values, oldValues) => {
+  values.forEach((value, index) => {
+    if (value === oldValues[index]) return
+    const message = value.trim()
+    if (message) {
+      recordVisibleFailure(message)
+    }
+  })
 })
 
 onUnmounted(() => {
@@ -1804,6 +2140,10 @@ onUnmounted(() => {
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
+  }
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+    copiedThreadSessionIdResetTimer = null
   }
   clearTerminalKeyboardFocusFallbackTimer()
   stopPolling()
@@ -1970,6 +2310,33 @@ function onSelectThread(threadId: string): void {
   if (route.name === 'thread' && routeThreadId.value === threadId) return
   void router.push({ name: 'thread', params: { threadId } })
   if (isMobile.value) setSidebarCollapsed(true)
+}
+
+function onSelectAutomationInPanel(automationId: string): void {
+  if (route.name !== 'automations') return
+  if (routeAutomationId.value === automationId) return
+  void router.replace({ name: 'automations', query: automationId ? { automationId } : {} })
+}
+
+async function onEditAutomationFromPanel(payload: AutomationEditRequest): Promise<void> {
+  if (isSidebarCollapsed.value) {
+    setSidebarCollapsed(false)
+    await nextTick()
+  }
+  sidebarThreadTreeRef.value?.openAutomationEditorFromPanel(payload)
+}
+
+async function onCreateAutomationFromPanel(): Promise<void> {
+  if (isSidebarCollapsed.value) {
+    setSidebarCollapsed(false)
+    await nextTick()
+  }
+  sidebarThreadTreeRef.value?.openAutomationCreatorFromPanel()
+}
+
+function onAutomationsChanged(): void {
+  if (route.name !== 'automations') return
+  void automationsPanelRef.value?.loadAutomations()
 }
 
 async function onExportThread(threadId: string): Promise<void> {
@@ -2322,6 +2689,14 @@ function getProjectCwd(projectName: string): string {
   const projectGroup = projectGroups.value.find((group) => group.projectName === projectName)
   return resolvePreferredLocalCwd(projectName, projectGroup?.threads[0]?.cwd?.trim() ?? '')
 }
+
+const projectCwdByName = computed<Record<string, string>>(() =>
+  Object.fromEntries(
+    projectGroups.value
+      .map((group) => [group.projectName, getProjectCwd(group.projectName).trim()] as const)
+      .filter(([, cwd]) => cwd.length > 0),
+  ),
+)
 
 function getProjectDisplayNameForWorktree(projectName: string): string {
   return (projectDisplayNameById.value[projectName] ?? projectName).trim() || projectName
@@ -3019,35 +3394,70 @@ function loadThreadBranchCommits(branch: string): void {
     })
 }
 
-async function onCreateProject(): Promise<void> {
+async function onOpenProjectSetupModal(): Promise<void> {
   const baseDir = await resolveProjectBaseDirectory()
   if (!baseDir) return
 
   await refreshDefaultProjectName()
-  const suggestedName = defaultNewProjectName.value.trim() || 'New Project (1)'
-  const projectName = window.prompt(`Create project in ${baseDir}`, suggestedName)
-  if (projectName === null) return
+  projectSetupBaseDir.value = baseDir
+  projectNameDraft.value = defaultNewProjectName.value.trim() || 'New Project (1)'
+  githubCloneUrlDraft.value = ''
+  projectSetupError.value = ''
+  projectSetupMode.value = 'create'
+  isProjectSetupModalOpen.value = true
+  void nextTick(() => projectSetupPrimaryInputRef.value?.focus())
+}
 
-  const normalizedProjectName = projectName.trim()
-  if (!normalizedProjectName) return
+function onCloseProjectSetupModal(): void {
+  if (isProjectSetupSubmitting.value) return
+  isProjectSetupModalOpen.value = false
+  projectSetupError.value = ''
+}
 
+async function createProjectFromSetupModal(): Promise<string> {
+  const baseDir = projectSetupBaseDir.value.trim()
+  const normalizedProjectName = projectNameDraft.value.trim()
+  if (!isProjectNameDraftValid.value) {
+    throw new Error('Enter a single project folder name.')
+  }
   const targetPath = normalizeAbsolutePath(joinPath(baseDir, normalizedProjectName))
-  if (!targetPath) return
+  if (!targetPath) return ''
 
+  return openProjectRoot(targetPath, {
+    createIfMissing: true,
+    label: '',
+  })
+}
+
+async function cloneGithubRepositoryFromSetupModal(): Promise<string> {
+  const baseDir = projectSetupBaseDir.value.trim()
+  const normalizedRepoUrl = githubCloneUrlDraft.value.trim()
+  if (!normalizedRepoUrl) return ''
+
+  return cloneGithubRepository(normalizedRepoUrl, baseDir)
+}
+
+async function onSubmitProjectSetup(): Promise<void> {
+  if (!canSubmitProjectSetup.value || isProjectSetupSubmitting.value) return
+
+  projectSetupError.value = ''
+  isProjectSetupSubmitting.value = true
   try {
-    const normalizedPath = await openProjectRoot(targetPath, {
-      createIfMissing: true,
-      label: '',
-    })
+    const normalizedPath =
+      projectSetupMode.value === 'clone'
+        ? await cloneGithubRepositoryFromSetupModal()
+        : await createProjectFromSetupModal()
     if (!normalizedPath) return
 
     newThreadCwd.value = normalizedPath
     pinProjectToTop(getProjectOrderNameForPath(normalizedPath))
     await loadWorkspaceRootOptionsState()
     await refreshDefaultProjectName()
+    isProjectSetupModalOpen.value = false
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to create the project.'
-    window.alert(message)
+    projectSetupError.value = error instanceof Error ? error.message : 'Failed to create or clone project.'
+  } finally {
+    isProjectSetupSubmitting.value = false
   }
 }
 
@@ -3397,6 +3807,7 @@ function onSelectSpeedMode(mode: SpeedMode): void {
 }
 
 function onInterruptTurn(): void {
+  console.warn('[DEBUG:onInterruptTurn] UI Stop button clicked — timestamp=%s', new Date().toISOString())
   void interruptSelectedThreadTurn()
 }
 
@@ -3426,7 +3837,7 @@ function onImplementPlan(payload: { turnId: string }): void {
 
 
 function onExportChat(): void {
-  if (isHomeRoute.value || isSkillsRoute.value || typeof document === 'undefined') return
+  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || typeof document === 'undefined') return
   if (!selectedThread.value || filteredMessages.value.length === 0) return
   const markdown = buildThreadMarkdown()
   const fileName = buildExportFileName()
@@ -3575,17 +3986,53 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
+type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
 
-async function onProviderChange(provider: string): Promise<void> {
-  if (freeModeLoading.value) return
-  freeModeLoading.value = true
+function normalizeProviderSelection(provider: string): ProviderSelection {
+  if (
+    provider === 'openrouter'
+    || provider === 'opencode-zen'
+    || provider === 'custom'
+    || provider === 'moon'
+  ) {
+    return provider
+  }
+  return 'codex'
+}
+
+function buildProviderStateSignature(provider: ProviderSelection = selectedProvider.value): string {
+  if (provider === 'openrouter') {
+    return `${provider}|${openRouterWireApi.value}`
+  }
+  if (provider === 'opencode-zen') {
+    return `${provider}|${opencodeZenKey.value.trim()}`
+  }
+  if (provider === 'custom') {
+    return `${provider}|${customEndpointUrl.value.trim()}|${customEndpointKey.value.trim()}|${customEndpointWireApi.value}`
+  }
+  return provider
+}
+
+let lastAppliedProviderStateSignature = ''
+
+async function applySelectedProviderState(
+  options: { force?: boolean; refreshAncillary?: boolean } = {},
+): Promise<void> {
+  const provider = selectedProvider.value
+  const signature = buildProviderStateSignature(provider)
+  if (!options.force && signature === lastAppliedProviderStateSignature) {
+    return
+  }
+
+  if (provider === 'custom' && !customEndpointUrl.value.trim()) {
+    return
+  }
+
   try {
     if (provider === 'codex') {
-      selectedProvider.value = 'codex'
       const result = await setFreeMode(false)
       freeModeEnabled.value = result.enabled
     } else if (provider === 'openrouter') {
-      selectedProvider.value = 'openrouter'
       const result = await setFreeMode(true)
       freeModeEnabled.value = result.enabled
       await setCustomProvider('', '', {
@@ -3593,26 +4040,43 @@ async function onProviderChange(provider: string): Promise<void> {
         provider: 'openrouter',
       })
     } else if (provider === 'opencode-zen') {
-      selectedProvider.value = 'opencode-zen'
       await setCustomProvider('', opencodeZenKey.value.trim(), {
-        wireApi: 'chat',
+        wireApi: 'responses',
         provider: 'opencode-zen',
       })
       freeModeEnabled.value = true
-    } else if (provider === 'custom') {
-      selectedProvider.value = 'custom'
-      if (customEndpointUrl.value.trim() && customEndpointKey.value.trim()) {
-        await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
-          wireApi: customEndpointWireApi.value,
-        })
-        freeModeEnabled.value = true
-      }
+    } else if (provider === 'moon') {
+      await setCustomProvider('', '', {
+        wireApi: 'responses',
+        provider: 'moon',
+      })
+      freeModeEnabled.value = true
+    } else {
+      await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
+        wireApi: customEndpointWireApi.value,
+      })
+      freeModeEnabled.value = true
     }
+
+    invalidateAppServerRuntimeState()
+    lastAppliedProviderStateSignature = signature
     providerError.value = ''
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
-    if (route.name === 'thread') {
-      void router.push({ name: 'home' })
+    await loadFreeModeStatus()
+    if (options.refreshAncillary !== false) {
+      await refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
     }
+  } catch (err) {
+    providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
+    throw err
+  }
+}
+
+async function onProviderChange(provider: string): Promise<void> {
+  if (freeModeLoading.value) return
+  freeModeLoading.value = true
+  try {
+    setSelectedProvider(normalizeProviderSelection(provider))
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
   } finally {
@@ -3627,11 +4091,8 @@ async function saveCustomEndpoint(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider(url, customEndpointKey.value.trim(), {
-      wireApi: customEndpointWireApi.value,
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('custom')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save custom endpoint'
   } finally {
@@ -3647,12 +4108,8 @@ async function setOpenRouterWireApi(nextWireApi: 'responses' | 'chat'): Promise<
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', '', {
-      wireApi: nextWireApi,
-      provider: 'openrouter',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('openrouter')
+    await applySelectedProviderState()
   } catch (err) {
     openRouterWireApi.value = previousWireApi
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenRouter API format'
@@ -3668,12 +4125,8 @@ async function saveOpencodeZen(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', key, {
-      wireApi: 'chat',
-      provider: 'opencode-zen',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('opencode-zen')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenCode Zen config'
   } finally {
@@ -3718,19 +4171,11 @@ async function loadFreeModeStatus(): Promise<void> {
     freeModeEnabled.value = status.enabled
     freeModeHasCustomKey.value = status.customKey ?? false
     freeModeCustomKeyMasked.value = status.maskedKey ?? null
-    if (status.enabled) {
-      if (status.provider === 'opencode-zen') {
-        selectedProvider.value = 'opencode-zen'
-      } else if (status.provider === 'custom') {
-        selectedProvider.value = 'custom'
-        customEndpointUrl.value = status.customBaseUrl ?? ''
-        customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      } else {
-        selectedProvider.value = 'openrouter'
-        openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      }
-    } else {
-      selectedProvider.value = 'codex'
+    if (status.provider === 'custom') {
+      customEndpointUrl.value = status.customBaseUrl ?? ''
+      customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
+    } else if (status.provider === 'openrouter') {
+      openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     }
   } catch {
     // Ignore — free mode status unknown
@@ -3851,14 +4296,17 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
 
 async function initialize(): Promise<void> {
   await router.isReady()
-
-  if (route.name === 'thread' && routeThreadId.value) {
-    primeSelectedThread(routeThreadId.value)
-  }
+  await refreshMoonBridgeModelIds().catch(() => {})
 
   await refreshAll({
-    includeSelectedThreadMessages: route.name === 'thread',
+    includeSelectedThreadMessages: false,
   })
+  if (route.name === 'thread' && routeThreadId.value) {
+    primeSelectedThread(routeThreadId.value)
+  } else {
+    primeSelectedThread('')
+  }
+  await applySelectedProviderState().catch(() => {})
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
@@ -3882,9 +4330,10 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
     do {
       hasPendingRouteSync = false
 
-      if (route.name === 'home' || route.name === 'skills') {
+      if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
+          await applySelectedProviderState().catch(() => {})
         }
         continue
       }
@@ -3902,10 +4351,10 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
             }
             continue
           }
-          await selectThread(threadId)
-        } else {
-          void ensureThreadMessagesLoaded(threadId, { silent: true })
         }
+        primeSelectedThread(threadId)
+        await applySelectedProviderState().catch(() => {})
+        await selectThread(threadId)
       }
     } while (hasPendingRouteSync)
 
@@ -3949,17 +4398,26 @@ watch(
   async (threadId) => {
     if (!hasInitialized.value) return
     if (isRouteSyncInProgress.value) return
-    if (isHomeRoute.value || isSkillsRoute.value) return
+    if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value) return
 
     if (!threadId) {
       if (route.name !== 'home') {
         await router.replace({ name: 'home' })
       }
-      return
+    } else if (!(route.name === 'thread' && routeThreadId.value === threadId)) {
+      await router.replace({ name: 'thread', params: { threadId } })
     }
 
-    if (route.name === 'thread' && routeThreadId.value === threadId) return
-    await router.replace({ name: 'thread', params: { threadId } })
+    if (isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
+  },
+)
+
+watch(
+  () => selectedProvider.value,
+  async () => {
+    if (!hasInitialized.value || freeModeLoading.value || isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
   },
 )
 
@@ -4274,6 +4732,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white;
 }
 
+.sidebar-automations-link-icon {
+  @apply bg-amber-500;
+}
+
 .sidebar-skills-link-icon :deep(svg) {
   @apply h-5 w-5;
 }
@@ -4296,6 +4758,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .skills-route-header-icon {
   @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-[0_16px_32px_-20px_rgba(5,150,105,0.9)];
+}
+
+.automations-route-header-icon {
+  @apply bg-amber-500 shadow-[0_16px_32px_-20px_rgba(245,158,11,0.9)];
 }
 
 .skills-route-header-icon :deep(svg) {
@@ -4359,6 +4825,18 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .composer-with-queue {
   @apply w-full shrink-0 px-2 sm:px-6 flex flex-col gap-2;
+}
+
+.composer-runtime-error {
+  @apply flex w-full items-start justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800 shadow-sm;
+}
+
+.visible-error-with-feedback {
+  @apply flex items-start justify-between gap-3;
+}
+
+.visible-error-feedback {
+  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .content-thread-terminal-panel {
@@ -4562,6 +5040,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply flex w-full max-w-3xl max-h-[90vh] flex-col gap-2 overflow-y-auto rounded-2xl border border-zinc-200 bg-white px-4 py-4 text-left shadow-xl;
 }
 
+.new-thread-project-modal {
+  @apply flex w-full max-w-xl max-h-[90vh] flex-col gap-3 overflow-y-auto rounded-2xl border border-zinc-200 bg-white px-4 py-4 text-left shadow-xl;
+}
+
 .new-thread-open-folder-header {
   @apply flex items-center justify-between gap-3;
 }
@@ -4588,6 +5070,26 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .new-thread-open-folder-actions {
   @apply flex flex-wrap items-center gap-2;
+}
+
+.new-thread-project-mode-tabs {
+  @apply grid grid-cols-2 rounded-xl border border-zinc-200 bg-zinc-50 p-1;
+}
+
+.new-thread-project-mode-tab {
+  @apply inline-flex h-9 items-center justify-center rounded-lg border-0 bg-transparent px-3 text-sm font-medium text-zinc-600 transition hover:bg-white hover:text-zinc-900 disabled:cursor-default disabled:opacity-60;
+}
+
+.new-thread-project-mode-tab.is-active {
+  @apply bg-white text-zinc-950 shadow-sm;
+}
+
+.new-thread-project-field {
+  @apply flex flex-col gap-1.5;
+}
+
+.new-thread-project-modal-actions {
+  @apply mt-1 flex flex-wrap justify-end gap-2;
 }
 
 .new-thread-open-folder-toggle {
@@ -5197,6 +5699,30 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-context-meta {
   @apply block text-[11px] font-normal text-zinc-500;
+}
+
+.sidebar-settings-session-row {
+  @apply cursor-default gap-3;
+}
+
+.sidebar-settings-session-actions {
+  @apply flex min-w-0 flex-1 items-center justify-end gap-1.5;
+}
+
+.sidebar-settings-session-value {
+  @apply min-w-0 truncate font-mono text-xs text-zinc-600;
+}
+
+.sidebar-settings-session-copy {
+  @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-default disabled:opacity-60;
+}
+
+.sidebar-settings-session-copy[data-copied='true'] {
+  @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+}
+
+.sidebar-settings-session-copy-icon {
+  @apply h-4 w-4;
 }
 
 .sidebar-settings-rate-limits {

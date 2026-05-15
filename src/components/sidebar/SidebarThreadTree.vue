@@ -929,6 +929,7 @@ const emit = defineEmits<{
   'browse-project-files': [projectName: string]
   'save-project': [projectName: string]
   'request-project-git-status': [projectName: string]
+  'project-menu-open': [projectName: string]
   'create-project-worktree': [projectName: string]
   'rename-project': [payload: { projectName: string; displayName: string }]
   'rename-thread': [payload: { threadId: string; title: string }]
@@ -2241,6 +2242,7 @@ function setChatSortMode(mode: ChatSortMode): void {
 
 function requestProjectGitStatusAndUpdateMenuDirection(projectName: string): void {
   emit('request-project-git-status', projectName)
+  emit('project-menu-open', projectName)
   nextTick(() => {
     updateProjectMenuDirection(projectName)
   })

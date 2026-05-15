@@ -95,6 +95,7 @@
             @browse-project-files="onBrowseProjectFiles"
             @save-project="onSaveProject"
             @request-project-git-status="onRequestProjectGitStatus"
+            @project-menu-open="onProjectMenuOpen"
             @create-project-worktree="onCreateProjectWorktree"
             @rename-thread="onRenameThread"
             @fork-thread="onForkThread"
@@ -1264,6 +1265,10 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
 const ACCOUNTS_SECTION_COLLAPSED_STORAGE_KEY = 'codex-web-local.accounts-section-collapsed.v1'
 const TERMINAL_QUICK_COMMAND_STORAGE_KEY = 'codex-web-local.terminal-quick-commands.v1'
 const TOGGLE_TERMINAL_COMMAND_VALUE = '__toggle_terminal__'
+const STARTUP_FAST_BACKGROUND_REFRESH_DELAY_MS = 150
+const STARTUP_SLOW_BACKGROUND_REFRESH_DELAY_MS = 900
+const DEFAULT_PROJECT_NAME_REFRESH_DELAY_MS = 350
+const GIT_REPO_STATUS_REFRESH_DELAY_MS = 750
 const worktreeName = import.meta.env.VITE_WORKTREE_NAME ?? 'unknown'
 const appVersion = import.meta.env.VITE_APP_VERSION ?? 'unknown'
 const SETTINGS_HELP = {
@@ -1586,6 +1591,11 @@ let terminalKeyboardFocusFallbackTimer: ReturnType<typeof setTimeout> | null = n
 let sidebarScrollTop = 0
 let sidebarScrollRestoreRequestId = 0
 let isRestoringSidebarScroll = false
+let startupFastBackgroundRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let startupSlowBackgroundRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let defaultProjectNameRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let gitRepoStatusRefreshTimer: ReturnType<typeof setTimeout> | null = null
+const pendingGitRepoStatusCwds = new Set<string>()
 let threadBranchesRequestId = 0
 let threadBranchCommitsRequestId = 0
 let threadCommitFilesRequestId = 0
@@ -2066,7 +2076,8 @@ const isNewThreadCwdGitRepo = computed(() => {
 const projectGitRepoByName = computed<Record<string, boolean>>(() => {
   const result: Record<string, boolean> = {}
   for (const group of projectGroups.value) {
-    const cwd = resolvePreferredLocalCwd(group.projectName, group.threads[0]?.cwd?.trim() ?? '')
+    const cwd = resolveWorkspaceRootCwd(group.projectName)
+      || resolvePreferredLocalCwd(group.projectName, group.threads[0]?.cwd?.trim() ?? '')
     result[group.projectName] = cwd ? gitRepoStatusByCwd.value[cwd] === true : false
   }
   return result
@@ -2225,14 +2236,6 @@ onMounted(() => {
   applyDarkMode()
   darkModeMediaQuery?.addEventListener('change', applyDarkMode)
   void initialize()
-  void loadHomeDirectory()
-  void loadFirstLaunchPluginsCardPreference()
-  void loadWorkspaceRootOptionsState()
-  void refreshDefaultProjectName()
-  void refreshTelegramConfig()
-  void refreshTelegramStatus()
-  void refreshThreadTerminalStatus()
-  void refreshTerminalQuickCommands()
 })
 
 watch(visibleFeedbackErrors, (values, oldValues) => {
@@ -2267,9 +2270,96 @@ onUnmounted(() => {
     clearTimeout(copiedThreadSessionIdResetTimer)
     copiedThreadSessionIdResetTimer = null
   }
+  clearStartupBackgroundRefreshTimers()
+  clearDefaultProjectNameRefreshTimer()
+  clearGitRepoStatusRefreshTimer()
   clearTerminalKeyboardFocusFallbackTimer()
   stopPolling()
 })
+
+function clearStartupBackgroundRefreshTimers(): void {
+  if (startupFastBackgroundRefreshTimer !== null) {
+    clearTimeout(startupFastBackgroundRefreshTimer)
+    startupFastBackgroundRefreshTimer = null
+  }
+  if (startupSlowBackgroundRefreshTimer !== null) {
+    clearTimeout(startupSlowBackgroundRefreshTimer)
+    startupSlowBackgroundRefreshTimer = null
+  }
+}
+
+function clearDefaultProjectNameRefreshTimer(): void {
+  if (defaultProjectNameRefreshTimer === null) return
+  clearTimeout(defaultProjectNameRefreshTimer)
+  defaultProjectNameRefreshTimer = null
+}
+
+function clearGitRepoStatusRefreshTimer(): void {
+  if (gitRepoStatusRefreshTimer === null) return
+  clearTimeout(gitRepoStatusRefreshTimer)
+  gitRepoStatusRefreshTimer = null
+}
+
+function scheduleStartupBackgroundRefreshes(): void {
+  clearStartupBackgroundRefreshTimers()
+
+  startupFastBackgroundRefreshTimer = setTimeout(() => {
+    startupFastBackgroundRefreshTimer = null
+    void Promise.allSettled([
+      refreshAncillaryState({ providerChanged: false, includeProviderModels: false }),
+      loadWorkspaceRootOptionsState(),
+      refreshThreadTerminalStatus(),
+    ])
+    scheduleDefaultProjectNameRefresh()
+  }, STARTUP_FAST_BACKGROUND_REFRESH_DELAY_MS)
+
+  startupSlowBackgroundRefreshTimer = setTimeout(() => {
+    startupSlowBackgroundRefreshTimer = null
+    void Promise.allSettled([
+      loadFirstLaunchPluginsCardPreference(),
+      refreshTelegramConfig(),
+      refreshTelegramStatus(),
+      refreshTerminalQuickCommands(),
+    ])
+  }, STARTUP_SLOW_BACKGROUND_REFRESH_DELAY_MS)
+}
+
+function scheduleDefaultProjectNameRefresh(delayMs = DEFAULT_PROJECT_NAME_REFRESH_DELAY_MS): void {
+  clearDefaultProjectNameRefreshTimer()
+  defaultProjectNameRefreshTimer = setTimeout(() => {
+    defaultProjectNameRefreshTimer = null
+    void refreshDefaultProjectName()
+  }, delayMs)
+}
+
+function flushScheduledGitRepoStatusRefreshes(): void {
+  gitRepoStatusRefreshTimer = null
+  if (pendingGitRepoStatusCwds.size === 0) return
+  if (!hasInitialized.value) {
+    gitRepoStatusRefreshTimer = setTimeout(
+      flushScheduledGitRepoStatusRefreshes,
+      GIT_REPO_STATUS_REFRESH_DELAY_MS,
+    )
+    return
+  }
+
+  const cwds = Array.from(pendingGitRepoStatusCwds)
+  pendingGitRepoStatusCwds.clear()
+  for (const cwd of cwds) {
+    void loadGitRepoStatus(cwd)
+  }
+}
+
+function scheduleGitRepoStatusRefresh(cwdOrCwds: string | string[], delayMs = GIT_REPO_STATUS_REFRESH_DELAY_MS): void {
+  const cwds = Array.isArray(cwdOrCwds) ? cwdOrCwds : [cwdOrCwds]
+  for (const cwdRaw of cwds) {
+    const cwd = cwdRaw.trim()
+    if (!cwd || Object.prototype.hasOwnProperty.call(gitRepoStatusByCwd.value, cwd)) continue
+    pendingGitRepoStatusCwds.add(cwd)
+  }
+  if (pendingGitRepoStatusCwds.size === 0 || gitRepoStatusRefreshTimer !== null) return
+  gitRepoStatusRefreshTimer = setTimeout(flushScheduledGitRepoStatusRefreshes, delayMs)
+}
 
 function updateVisualViewportState(): void {
   if (typeof window === 'undefined') return
@@ -2885,7 +2975,8 @@ function onBrowseThreadFiles(threadId: string): void {
 
 function getProjectCwd(projectName: string): string {
   const projectGroup = projectGroups.value.find((group) => group.projectName === projectName)
-  return resolvePreferredLocalCwd(projectName, projectGroup?.threads[0]?.cwd?.trim() ?? '')
+  return resolveWorkspaceRootCwd(projectName)
+    || resolvePreferredLocalCwd(projectName, projectGroup?.threads[0]?.cwd?.trim() ?? '')
 }
 
 const projectCwdByName = computed<Record<string, string>>(() =>
@@ -3017,6 +3108,12 @@ async function exportProjectZipForCwd(targetCwd: string): Promise<void> {
     const message = error instanceof Error ? error.message : 'Failed to export project.'
     window.alert(message)
   }
+}
+
+function onProjectMenuOpen(projectName: string): void {
+  const cwd = getProjectCwd(projectName)
+  if (!cwd) return
+  scheduleGitRepoStatusRefresh(cwd, 0)
 }
 
 async function onCreateProjectWorktree(projectName: string): Promise<void> {
@@ -3468,9 +3565,9 @@ function onWindowPageShow(event: PageTransitionEvent): void {
 }
 
 function onWindowFocus(): void {
-  if (route.name === 'home') {
+  if (route.name === 'home' && hasInitialized.value) {
     void loadWorkspaceRootOptionsState()
-    void refreshDefaultProjectName()
+    scheduleDefaultProjectNameRefresh()
   }
   maybeSyncAfterMobileResume()
 }
@@ -4020,6 +4117,7 @@ async function onOpenCreateFolderPanel(): Promise<void> {
     if (existingFolderError.value) return
   }
   if (existingFolderError.value) return
+  await refreshDefaultProjectName()
   createFolderDraft.value = defaultNewProjectName.value
   isCreateFolderOpen.value = true
   void nextTick(() => createFolderInputRef.value?.focus())
@@ -4135,14 +4233,6 @@ function getProjectBaseDirectory(): string {
   const first = newThreadFolderOptions.value[0]?.value?.trim() ?? ''
   if (first) return getPathParent(first)
   return homeDirectory.value.trim()
-}
-
-async function loadHomeDirectory(): Promise<void> {
-  try {
-    homeDirectory.value = await getHomeDirectory()
-  } catch {
-    homeDirectory.value = ''
-  }
 }
 
 async function loadWorkspaceRootOptionsState(): Promise<void> {
@@ -4775,9 +4865,7 @@ async function initialize(): Promise<void> {
   hasInitialized.value = true
   await syncThreadSelectionWithRoute()
   startPolling()
-  window.setTimeout(() => {
-    void refreshAncillaryState({ providerChanged: false, includeProviderModels: false })
-  }, 0)
+  scheduleStartupBackgroundRefreshes()
 }
 
 async function syncThreadSelectionWithRoute(): Promise<void> {
@@ -4840,6 +4928,7 @@ watch(
 watch(
   () => composerCwd.value,
   () => {
+    if (!hasInitialized.value) return
     void refreshTerminalQuickCommands()
   },
 )
@@ -4892,7 +4981,7 @@ watch(
   (options) => {
     if (options.length === 0) {
       newThreadCwd.value = ''
-      void refreshDefaultProjectName()
+      if (hasInitialized.value) scheduleDefaultProjectNameRefresh()
       return
     }
     const selected = newThreadCwd.value.trim()
@@ -4902,7 +4991,7 @@ watch(
         newThreadCwd.value = ''
       }
     }
-    void refreshDefaultProjectName()
+    if (hasInitialized.value) scheduleDefaultProjectNameRefresh()
   },
   { immediate: true },
 )
@@ -4911,7 +5000,7 @@ watch(
   () => newThreadCwd.value,
   () => {
     worktreeInitStatus.value = { phase: 'idle', title: '', message: '' }
-    void refreshDefaultProjectName()
+    if (hasInitialized.value) scheduleDefaultProjectNameRefresh()
   },
 )
 
@@ -4919,7 +5008,7 @@ watch(
   () => [route.name, newThreadCwd.value] as const,
   ([routeName, cwd]) => {
     if (routeName !== 'home') return
-    void loadGitRepoStatus(cwd)
+    scheduleGitRepoStatusRefresh(cwd)
   },
   { immediate: true },
 )

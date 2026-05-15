@@ -64,7 +64,7 @@
                     @click="toggleCommandExpand(cmd)"
                   >
                     <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                    <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                    <code class="cmd-label" :title="commandDisplayText(cmd)">{{ commandDisplayText(cmd) }}</code>
                     <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
                   </button>
                   <div
@@ -72,6 +72,10 @@
                     :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                   >
                     <div class="cmd-output-inner">
+                      <div class="cmd-output-command">
+                        <span class="cmd-output-command-label">Command</span>
+                        <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                      </div>
                       <pre
                         class="cmd-output"
                         :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
@@ -96,7 +100,7 @@
                 @click="toggleCommandExpand(message)"
               >
                 <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(message) }">▶</span>
-                <code class="cmd-label">{{ message.commandExecution?.command || '(command)' }}</code>
+                <code class="cmd-label" :title="commandDisplayText(message)">{{ commandDisplayText(message) }}</code>
                 <span class="cmd-status">{{ commandStatusLabel(message) }}</span>
               </button>
               <div
@@ -104,6 +108,10 @@
                 :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
               >
                 <div class="cmd-output-inner">
+                  <div class="cmd-output-command">
+                    <span class="cmd-output-command-label">Command</span>
+                    <pre class="cmd-output-command-text" v-text="commandDisplayText(message)"></pre>
+                  </div>
                   <pre
                     class="cmd-output"
                     :class="{ 'cmd-output-condensed': isCommandOutputCondensed(message) }"
@@ -276,7 +284,7 @@
                         @click="toggleCommandExpand(cmd)"
                       >
                         <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                        <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                        <code class="cmd-label" :title="commandDisplayText(cmd)">{{ commandDisplayText(cmd) }}</code>
                         <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
                       </button>
                       <div
@@ -284,6 +292,10 @@
                         :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                       >
                         <div class="cmd-output-inner">
+                          <div class="cmd-output-command">
+                            <span class="cmd-output-command-label">Command</span>
+                            <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                          </div>
                           <pre
                             class="cmd-output"
                             :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
@@ -737,6 +749,11 @@ function readPlanData(message: UiMessage): { explanation: string; steps: UiPlanS
 
 function isCommandMessage(message: UiMessage): boolean {
   return message.messageType === 'commandExecution' && !!message.commandExecution
+}
+
+function commandDisplayText(message: UiMessage): string {
+  const command = message.commandExecution?.command
+  return typeof command === 'string' && command.length > 0 ? command : '(command)'
 }
 
 function isPlanMessage(message: UiMessage): boolean {
@@ -5094,6 +5111,18 @@ onBeforeUnmount(() => {
 .cmd-output-inner {
   overflow: hidden;
   min-height: 0;
+}
+
+.cmd-output-command {
+  @apply flex flex-col gap-1 border-b border-white/10 px-3 py-2;
+}
+
+.cmd-output-command-label {
+  @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400;
+}
+
+.cmd-output-command-text {
+  @apply m-0 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs font-mono text-zinc-100;
 }
 
 .cmd-output {

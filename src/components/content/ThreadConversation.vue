@@ -14,10 +14,10 @@
         <button
           type="button"
           class="load-more-button"
-          :disabled="isLoadingMore"
+          :disabled="isLoadingMore || isLoadingPersistedAbove"
           @click="loadMoreAbove"
         >
-          {{ isLoadingMore ? 'Loading…' : 'Load earlier messages' }}
+          {{ isLoadingMore || isLoadingPersistedAbove ? 'Loading…' : 'Load earlier messages' }}
         </button>
       </li>
       <template v-for="message in visibleMessages" :key="message.id">
@@ -697,7 +697,10 @@
               >
                 {{ liveOverlay.reasoningText }}
               </p>
-              <p v-if="liveOverlay.errorText" class="live-overlay-error">{{ liveOverlay.errorText }}</p>
+              <div v-if="liveOverlay.errorText" class="live-overlay-error">
+                <span>{{ liveOverlay.errorText }}</span>
+                <a class="live-overlay-feedback" :href="feedbackMailto" @click="prepareLiveErrorFeedback($event, liveOverlay.errorText)">Send feedback</a>
+              </div>
             </article>
           </div>
         </div>
@@ -870,6 +873,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
+import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -895,6 +899,16 @@ const fileLinkContextMenuY = ref(0)
 const fileLinkContextBrowseUrl = ref('')
 const fileLinkContextEditUrl = ref('')
 const { isMobile } = useMobile()
+const { buildFeedbackMailto, feedbackMailtoBase, recordVisibleFailure } = useFeedbackDiagnostics()
+const feedbackMailto = feedbackMailtoBase()
+
+function prepareLiveErrorFeedback(event: MouseEvent, message: string): void {
+  recordVisibleFailure(message)
+  const target = event.currentTarget
+  if (target instanceof HTMLAnchorElement) {
+    target.href = buildFeedbackMailto()
+  }
+}
 
 function parsePlanFromMessageText(text: string): { explanation: string; steps: UiPlanStep[] } | null {
   const normalized = text.replace(/\r\n/g, '\n').trim()
@@ -1238,6 +1252,9 @@ const props = defineProps<{
   isLoading: boolean
   activeThreadId: string
   cwd: string
+  hasMorePersistedAbove?: boolean
+  isLoadingPersistedAbove?: boolean
+  loadEarlierMessages?: (threadId: string) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -1353,7 +1370,7 @@ const renderWindowStart = ref(0)
 const isLoadingMore = ref(false)
 
 const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value))
-const hasMoreAbove = computed(() => renderWindowStart.value > 0)
+const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMorePersistedAbove === true)
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
@@ -1566,6 +1583,57 @@ function trimLinkWrappers(value: string): { core: string; leading: string; trail
   return { core, leading, trailing }
 }
 
+function countAsterisksBefore(value: string, endIndex: number, minIndex: number): number {
+  let count = 0
+  let index = endIndex - 1
+  while (index >= minIndex && value[index] === '*') {
+    count += 1
+    index -= 1
+  }
+  return count
+}
+
+function countAsterisksAfter(value: string, startIndex: number): number {
+  let count = 0
+  let index = startIndex
+  while (index < value.length && value[index] === '*') {
+    count += 1
+    index += 1
+  }
+  return count
+}
+
+function readAsteriskLinkWrapper(
+  source: string,
+  matchStart: number,
+  matchEnd: number,
+  cursor: number,
+  matchedToken: string,
+): { segmentStart: number; segmentEnd: number; tokenEndTrim: number } | null {
+  const leadingCount = countAsterisksBefore(source, matchStart, cursor)
+  if (leadingCount < 2) return null
+
+  const trailingOutsideCount = countAsterisksAfter(source, matchEnd)
+  if (trailingOutsideCount >= leadingCount) {
+    return {
+      segmentStart: matchStart - leadingCount,
+      segmentEnd: matchEnd + leadingCount,
+      tokenEndTrim: 0,
+    }
+  }
+
+  const trailingInsideCount = countAsterisksBefore(matchedToken, matchedToken.length, 0)
+  if (trailingInsideCount >= leadingCount) {
+    return {
+      segmentStart: matchStart - leadingCount,
+      segmentEnd: matchEnd,
+      tokenEndTrim: leadingCount,
+    }
+  }
+
+  return null
+}
+
 function parseMarkdownLinkToken(value: string): { label: string; target: string } | null {
   const trimmed = value.trim()
   if (!trimmed.startsWith('[') || !trimmed.endsWith(')')) return null
@@ -1579,6 +1647,14 @@ function parseMarkdownLinkToken(value: string): { label: string; target: string 
   const target = trimLinkWrappers(targetRaw).core.trim()
   if (!target) return null
   return { label, target }
+}
+
+function toLocalThreadUrl(value: string): string | null {
+  const match = value.trim().match(/^codex:\/\/threads\/([A-Za-z0-9-]+)$/u)
+  if (!match) return null
+  if (typeof window === 'undefined') return `/#/thread/${match[1]}`
+  const basePath = window.location.pathname.replace(/\/?$/u, '/')
+  return `${window.location.origin}${basePath}#/thread/${match[1]}`
 }
 
 function headingTag(level: number): string {
@@ -2204,19 +2280,24 @@ function editMessage(messageId: string): void {
 
 function splitPlainTextByLinks(text: string): InlineSegment[] {
   const segments: InlineSegment[] = []
-  const pattern = /https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`/gu
+  const pattern = /codex:\/\/threads\/[A-Za-z0-9-]+|https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`/gu
   let cursor = 0
 
   for (const match of text.matchAll(pattern)) {
     if (typeof match.index !== 'number') continue
     const start = match.index
     const end = start + match[0].length
+    const asteriskWrapper = readAsteriskLinkWrapper(text, start, end, cursor, match[0])
+    const segmentStart = asteriskWrapper?.segmentStart ?? start
+    const segmentEnd = asteriskWrapper?.segmentEnd ?? end
 
-    if (start > cursor) {
-      segments.push({ kind: 'text', value: text.slice(cursor, start) })
+    if (segmentStart > cursor) {
+      segments.push({ kind: 'text', value: text.slice(cursor, segmentStart) })
     }
 
-    let token = match[0]
+    let token = asteriskWrapper?.tokenEndTrim
+      ? match[0].slice(0, -asteriskWrapper.tokenEndTrim)
+      : match[0]
     let trailingPunctuation = ''
     while (/[.,;:!?，。；：！？、]$/u.test(token)) {
       trailingPunctuation = token.slice(-1) + trailingPunctuation
@@ -2231,7 +2312,14 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
       segments.push({ kind: 'text', value: leading })
     }
 
-    if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+    const localThreadUrl = toLocalThreadUrl(token)
+
+    if (localThreadUrl) {
+      segments.push({ kind: 'url', value: localThreadUrl, href: localThreadUrl })
+      if (trailing) {
+        segments.push({ kind: 'text', value: trailing })
+      }
+    } else if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
       segments.push({ kind: 'bold', value: token.slice(2, -2) })
       if (trailing) {
         segments.push({ kind: 'text', value: trailing })
@@ -2259,7 +2347,7 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
       }
     }
 
-    cursor = end
+    cursor = segmentEnd
   }
 
   if (cursor < text.length) {
@@ -2418,22 +2506,28 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
     const match = findNextMarkdownLink(text, scanFrom)
     if (!match) break
     const { start, end, token } = match
+    const asteriskWrapper = readAsteriskLinkWrapper(text, start, end, cursor, token)
+    const segmentStart = asteriskWrapper?.segmentStart ?? start
+    const segmentEnd = asteriskWrapper?.segmentEnd ?? end
 
-    if (start > cursor) {
-      segments.push(...splitPlainTextByLinks(text.slice(cursor, start)))
+    if (segmentStart > cursor) {
+      segments.push(...splitPlainTextByLinks(text.slice(cursor, segmentStart)))
     }
 
     const markdownToken = parseMarkdownLinkToken(token)
     if (!markdownToken) {
-      segments.push(...splitPlainTextByLinks(text.slice(start, end)))
-      cursor = end
-      scanFrom = end
+      segments.push(...splitPlainTextByLinks(text.slice(segmentStart, segmentEnd)))
+      cursor = segmentEnd
+      scanFrom = segmentEnd
       continue
     }
     const label = markdownToken.label
     const target = markdownToken.target
+    const localThreadUrl = toLocalThreadUrl(target)
 
-    if (/^https?:\/\//u.test(target)) {
+    if (localThreadUrl) {
+      segments.push({ kind: 'url', value: label || localThreadUrl, href: localThreadUrl })
+    } else if (/^https?:\/\//u.test(target)) {
       segments.push({ kind: 'url', value: label || target, href: target })
     } else {
       const ref = parseFileReference(target)
@@ -2450,8 +2544,8 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
       }
     }
 
-    cursor = end
-    scanFrom = end
+    cursor = segmentEnd
+    scanFrom = segmentEnd
   }
 
   if (cursor < text.length) {
@@ -2518,7 +2612,14 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
       if (token.length > 0) {
         const markdownLink = parseMarkdownLinkToken(token)
         if (markdownLink) {
-          if (/^https?:\/\//u.test(markdownLink.target)) {
+          const localThreadUrl = toLocalThreadUrl(markdownLink.target)
+          if (localThreadUrl) {
+            segments.push({
+              kind: 'url',
+              value: markdownLink.label || localThreadUrl,
+              href: localThreadUrl,
+            })
+          } else if (/^https?:\/\//u.test(markdownLink.target)) {
             segments.push({
               kind: 'url',
               value: markdownLink.label || markdownLink.target,
@@ -2538,27 +2639,36 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
               segments.push({ kind: 'code', value: token })
             }
           }
-        } else if (/^https?:\/\/[^\s]+$/u.test(token)) {
-          segments.push({
-            kind: 'url',
-            value: token,
-            href: token,
-          })
         } else {
-          const fileReference = parseFileReference(token)
-          if (fileReference) {
-            const displayPath = fileReference.line
-              ? `${fileReference.path}:${String(fileReference.line)}`
-              : fileReference.path
+          const localThreadUrl = toLocalThreadUrl(token)
+          if (localThreadUrl) {
             segments.push({
-              kind: 'file',
+              kind: 'url',
+              value: localThreadUrl,
+              href: localThreadUrl,
+            })
+          } else if (/^https?:\/\/[^\s]+$/u.test(token)) {
+            segments.push({
+              kind: 'url',
               value: token,
-              path: fileReference.path,
-              displayPath,
-              downloadName: getBasename(fileReference.path),
+              href: token,
             })
           } else {
-            segments.push({ kind: 'code', value: token })
+            const fileReference = parseFileReference(token)
+            if (fileReference) {
+              const displayPath = fileReference.line
+                ? `${fileReference.path}:${String(fileReference.line)}`
+                : fileReference.path
+              segments.push({
+                kind: 'file',
+                value: token,
+                path: fileReference.path,
+                displayPath,
+                downloadName: getBasename(fileReference.path),
+              })
+            } else {
+              segments.push({ kind: 'code', value: token })
+            }
           }
         }
       } else {
@@ -4011,7 +4121,7 @@ function jumpToLatest(): void {
 
 async function loadMoreAbove(): Promise<void> {
   const container = conversationListRef.value
-  if (!container || !hasMoreAbove.value || isLoadingMore.value) return
+  if (!container || !hasMoreAbove.value || isLoadingMore.value || props.isLoadingPersistedAbove === true) return
 
   isLoadingMore.value = true
   const threadIdAtStart = props.activeThreadId
@@ -4019,13 +4129,20 @@ async function loadMoreAbove(): Promise<void> {
   const prevScrollHeight = container.scrollHeight
   const prevScrollTop = container.scrollTop
 
-  renderWindowStart.value = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
+  try {
+    if (renderWindowStart.value > 0) {
+      renderWindowStart.value = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
+    } else if (props.hasMorePersistedAbove === true) {
+      await props.loadEarlierMessages?.(threadIdAtStart)
+    }
 
-  await nextTick()
+    await nextTick()
 
-  // Discard scroll restoration if the thread changed while we were awaiting.
-  if (props.activeThreadId === threadIdAtStart) {
-    container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
+    // Discard scroll restoration if the thread changed while we were awaiting.
+    if (props.activeThreadId === threadIdAtStart) {
+      container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
+    }
+  } finally {
     isLoadingMore.value = false
   }
 }
@@ -4402,7 +4519,11 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-error {
-  @apply m-0 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
+  @apply m-0 flex items-start justify-between gap-3 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
+}
+
+.live-overlay-feedback {
+  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold leading-none text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .message-body {

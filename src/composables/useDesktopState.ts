@@ -1543,6 +1543,7 @@ export function useDesktopState() {
   const availableModelIds = ref<string[]>([])
   const moonBridgeModelIds = ref<string[]>([])
   const moonBridgeModelContextWindowById = ref<Record<string, number>>(createStringKeyedRecord<number>())
+  let moonBridgeModelIdsLoaded = false
   const availableCollaborationModes = ref<CollaborationModeOption[]>([
     { value: 'default', label: 'Default' },
     { value: 'plan', label: 'Plan' },
@@ -2200,20 +2201,26 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     return ids
   }
 
-  async function loadMoonBridgeModelIds(): Promise<string[]> {
+  async function loadMoonBridgeModelIds(options: { force?: boolean } = {}): Promise<string[]> {
+    if (moonBridgeModelIdsLoaded && !options.force) {
+      return moonBridgeModelIds.value
+    }
+
     const metadata = await getMoonBridgeModelMetadata()
     if (metadata.length > 0) {
+      moonBridgeModelIdsLoaded = true
       return applyMoonBridgeModelMetadata(metadata)
     }
 
     const ids = await getMoonBridgeModelIds()
     moonBridgeModelIds.value = ids
     moonBridgeModelContextWindowById.value = createStringKeyedRecord<number>()
+    moonBridgeModelIdsLoaded = true
     return ids
   }
 
   async function refreshMoonBridgeModelIds(): Promise<void> {
-    await loadMoonBridgeModelIds()
+    await loadMoonBridgeModelIds({ force: true })
     syncThreadProviderFromModel(selectedThreadId.value, readModelIdForThread(selectedThreadId.value))
   }
 
@@ -2242,7 +2249,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
           includeProviderModels: options?.includeProviderModels !== false || isProviderBacked,
           requireProviderModels: isProviderBacked,
         }),
-        moonBridgeModelIds.value.length > 0 && Object.keys(moonBridgeModelContextWindowById.value).length > 0
+        moonBridgeModelIdsLoaded
           ? Promise.resolve(moonBridgeModelIds.value)
           : loadMoonBridgeModelIds(),
       ])

@@ -270,6 +270,7 @@
                   <option value="codex">Codex</option>
                   <option value="openrouter">OpenRouter</option>
                   <option value="opencode-zen">OpenCode Zen</option>
+                  <option value="moon">Moon Bridge</option>
                   <option value="custom">Custom endpoint</option>
                 </select>
               </div>
@@ -480,6 +481,26 @@
                 <span class="sidebar-settings-context-value" :data-state="threadContextBadgeState">
                   {{ threadContextPrimaryText }}
                   <span class="sidebar-settings-context-meta">{{ threadContextSecondaryText }}</span>
+                </span>
+              </div>
+              <div
+                v-if="showThreadSessionIdRow"
+                class="sidebar-settings-row sidebar-settings-session-row"
+                :title="threadSessionId"
+              >
+                <span class="sidebar-settings-label">{{ t('Session ID') }}</span>
+                <span class="sidebar-settings-session-actions">
+                  <span class="sidebar-settings-session-value" :title="threadSessionId">{{ threadSessionId }}</span>
+                  <button
+                    type="button"
+                    class="sidebar-settings-session-copy"
+                    :data-copied="isThreadSessionIdCopied"
+                    :aria-label="threadSessionCopyButtonLabel"
+                    :title="threadSessionCopyButtonLabel"
+                    @click.stop="copyThreadSessionId"
+                  >
+                    <IconTablerCopy class="sidebar-settings-session-copy-icon" />
+                  </button>
                 </span>
               </div>
               <div class="sidebar-settings-rate-limits">
@@ -1115,6 +1136,7 @@ import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdow
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerCopy from './components/icons/IconTablerCopy.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
 import IconTablerTerminal from './components/icons/IconTablerTerminal.vue'
@@ -1349,6 +1371,7 @@ const {
   availableModelIds,
   selectedCollaborationMode,
   selectedModelId,
+  selectedProvider,
   selectedReasoningEffort,
   selectedSpeedMode,
   codexCliMissingError,
@@ -1368,6 +1391,7 @@ const {
   refreshAll,
   refreshSkills,
   selectThread,
+  loadMessages,
   ensureThreadMessagesLoaded,
   loadOlderMessages,
   setThreadTerminalOpen,
@@ -1386,7 +1410,9 @@ const {
   setSelectedCollaborationMode,
   readModelIdForThread,
   setSelectedModelIdForThread,
-
+  refreshMoonBridgeModelIds,
+  refreshAncillaryState,
+  invalidateAppServerRuntimeState,
   setSelectedReasoningEffort,
   updateSelectedSpeedMode,
   respondToPendingServerRequest,
@@ -1398,6 +1424,7 @@ const {
   stopPolling,
   primeSelectedThread,
   rollbackSelectedThread,
+  setSelectedProvider,
 } = useDesktopState()
 
 const route = useRoute()
@@ -1537,7 +1564,6 @@ const freeModeHasCustomKey = ref(false)
 const freeModeCustomKeyMasked = ref<string | null>(null)
 const freeModeCustomKeySaving = ref(false)
 const providerError = ref('')
-const selectedProvider = ref<'codex' | 'openrouter' | 'opencode-zen' | 'custom'>('codex')
 const customEndpointUrl = ref('')
 const customEndpointKey = ref('')
 const customEndpointWireApi = ref<'responses' | 'chat'>('responses')
@@ -1682,6 +1708,10 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
+const threadSessionId = computed(() => selectedThreadId.value.trim())
+const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && threadSessionId.value.length > 0)
+const copiedThreadSessionId = ref('')
+let copiedThreadSessionIdResetTimer: ReturnType<typeof setTimeout> | null = null
 const isAccountSwitchBlocked = computed(() =>
   isSendingMessage.value ||
   isInterruptingTurn.value ||
@@ -1728,6 +1758,62 @@ function onOpenPluginsHomeCard(): void {
   void router.push({ name: 'skills', query: { tab: 'plugins' } })
 }
 
+function copyTextWithSelectionFallback(text: string): boolean {
+  if (typeof document === 'undefined') return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+async function copyThreadSessionId(): Promise<void> {
+  const sessionId = threadSessionId.value
+  if (!sessionId) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(sessionId)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(sessionId)
+  }
+
+  if (!copied) return
+
+  copiedThreadSessionId.value = sessionId
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+  }
+  copiedThreadSessionIdResetTimer = setTimeout(() => {
+    if (copiedThreadSessionId.value === sessionId) {
+      copiedThreadSessionId.value = ''
+    }
+    copiedThreadSessionIdResetTimer = null
+  }, 1800)
+}
+
 const threadContextBadgeState = computed(() => {
   const remainingPercent = selectedThreadTokenUsage.value?.remainingContextPercent
   if (remainingPercent === null || typeof remainingPercent !== 'number') return 'pending'
@@ -1755,6 +1841,10 @@ const threadContextSecondaryText = computed(() => {
 })
 
 const threadContextTooltip = computed(() => buildThreadContextTooltip(selectedThreadTokenUsage.value))
+const isThreadSessionIdCopied = computed(() => copiedThreadSessionId.value === threadSessionId.value && threadSessionId.value.length > 0)
+const threadSessionCopyButtonLabel = computed(() => (
+  isThreadSessionIdCopied.value ? t('Session ID copied') : t('Copy session ID')
+))
 
 function hasDuplicateFolderLeaf(path: string, knownPaths: string[]): boolean {
   const normalizedPath = normalizePathForUi(path).trim()
@@ -2019,7 +2109,6 @@ onMounted(() => {
   void refreshDefaultProjectName()
   void refreshTelegramConfig()
   void refreshTelegramStatus()
-  void loadFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
 })
@@ -2051,6 +2140,10 @@ onUnmounted(() => {
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
+  }
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+    copiedThreadSessionIdResetTimer = null
   }
   clearTerminalKeyboardFocusFallbackTimer()
   stopPolling()
@@ -3714,6 +3807,7 @@ function onSelectSpeedMode(mode: SpeedMode): void {
 }
 
 function onInterruptTurn(): void {
+  console.warn('[DEBUG:onInterruptTurn] UI Stop button clicked — timestamp=%s', new Date().toISOString())
   void interruptSelectedThreadTurn()
 }
 
@@ -3892,17 +3986,53 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
+type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
 
-async function onProviderChange(provider: string): Promise<void> {
-  if (freeModeLoading.value) return
-  freeModeLoading.value = true
+function normalizeProviderSelection(provider: string): ProviderSelection {
+  if (
+    provider === 'openrouter'
+    || provider === 'opencode-zen'
+    || provider === 'custom'
+    || provider === 'moon'
+  ) {
+    return provider
+  }
+  return 'codex'
+}
+
+function buildProviderStateSignature(provider: ProviderSelection = selectedProvider.value): string {
+  if (provider === 'openrouter') {
+    return `${provider}|${openRouterWireApi.value}`
+  }
+  if (provider === 'opencode-zen') {
+    return `${provider}|${opencodeZenKey.value.trim()}`
+  }
+  if (provider === 'custom') {
+    return `${provider}|${customEndpointUrl.value.trim()}|${customEndpointKey.value.trim()}|${customEndpointWireApi.value}`
+  }
+  return provider
+}
+
+let lastAppliedProviderStateSignature = ''
+
+async function applySelectedProviderState(
+  options: { force?: boolean; refreshAncillary?: boolean } = {},
+): Promise<void> {
+  const provider = selectedProvider.value
+  const signature = buildProviderStateSignature(provider)
+  if (!options.force && signature === lastAppliedProviderStateSignature) {
+    return
+  }
+
+  if (provider === 'custom' && !customEndpointUrl.value.trim()) {
+    return
+  }
+
   try {
     if (provider === 'codex') {
-      selectedProvider.value = 'codex'
       const result = await setFreeMode(false)
       freeModeEnabled.value = result.enabled
     } else if (provider === 'openrouter') {
-      selectedProvider.value = 'openrouter'
       const result = await setFreeMode(true)
       freeModeEnabled.value = result.enabled
       await setCustomProvider('', '', {
@@ -3910,26 +4040,43 @@ async function onProviderChange(provider: string): Promise<void> {
         provider: 'openrouter',
       })
     } else if (provider === 'opencode-zen') {
-      selectedProvider.value = 'opencode-zen'
       await setCustomProvider('', opencodeZenKey.value.trim(), {
         wireApi: 'responses',
         provider: 'opencode-zen',
       })
       freeModeEnabled.value = true
-    } else if (provider === 'custom') {
-      selectedProvider.value = 'custom'
-      if (customEndpointUrl.value.trim() && customEndpointKey.value.trim()) {
-        await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
-          wireApi: customEndpointWireApi.value,
-        })
-        freeModeEnabled.value = true
-      }
+    } else if (provider === 'moon') {
+      await setCustomProvider('', '', {
+        wireApi: 'responses',
+        provider: 'moon',
+      })
+      freeModeEnabled.value = true
+    } else {
+      await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
+        wireApi: customEndpointWireApi.value,
+      })
+      freeModeEnabled.value = true
     }
+
+    invalidateAppServerRuntimeState()
+    lastAppliedProviderStateSignature = signature
     providerError.value = ''
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
-    if (route.name === 'thread') {
-      void router.push({ name: 'home' })
+    await loadFreeModeStatus()
+    if (options.refreshAncillary !== false) {
+      await refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
     }
+  } catch (err) {
+    providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
+    throw err
+  }
+}
+
+async function onProviderChange(provider: string): Promise<void> {
+  if (freeModeLoading.value) return
+  freeModeLoading.value = true
+  try {
+    setSelectedProvider(normalizeProviderSelection(provider))
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
   } finally {
@@ -3944,11 +4091,8 @@ async function saveCustomEndpoint(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider(url, customEndpointKey.value.trim(), {
-      wireApi: customEndpointWireApi.value,
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('custom')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save custom endpoint'
   } finally {
@@ -3964,12 +4108,8 @@ async function setOpenRouterWireApi(nextWireApi: 'responses' | 'chat'): Promise<
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', '', {
-      wireApi: nextWireApi,
-      provider: 'openrouter',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('openrouter')
+    await applySelectedProviderState()
   } catch (err) {
     openRouterWireApi.value = previousWireApi
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenRouter API format'
@@ -3985,12 +4125,8 @@ async function saveOpencodeZen(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', key, {
-      wireApi: 'responses',
-      provider: 'opencode-zen',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('opencode-zen')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenCode Zen config'
   } finally {
@@ -4035,19 +4171,11 @@ async function loadFreeModeStatus(): Promise<void> {
     freeModeEnabled.value = status.enabled
     freeModeHasCustomKey.value = status.customKey ?? false
     freeModeCustomKeyMasked.value = status.maskedKey ?? null
-    if (status.enabled) {
-      if (status.provider === 'opencode-zen') {
-        selectedProvider.value = 'opencode-zen'
-      } else if (status.provider === 'custom') {
-        selectedProvider.value = 'custom'
-        customEndpointUrl.value = status.customBaseUrl ?? ''
-        customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      } else {
-        selectedProvider.value = 'openrouter'
-        openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      }
-    } else {
-      selectedProvider.value = 'codex'
+    if (status.provider === 'custom') {
+      customEndpointUrl.value = status.customBaseUrl ?? ''
+      customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
+    } else if (status.provider === 'openrouter') {
+      openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     }
   } catch {
     // Ignore — free mode status unknown
@@ -4168,14 +4296,17 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
 
 async function initialize(): Promise<void> {
   await router.isReady()
-
-  if (route.name === 'thread' && routeThreadId.value) {
-    primeSelectedThread(routeThreadId.value)
-  }
+  await refreshMoonBridgeModelIds().catch(() => {})
 
   await refreshAll({
-    includeSelectedThreadMessages: route.name === 'thread',
+    includeSelectedThreadMessages: false,
   })
+  if (route.name === 'thread' && routeThreadId.value) {
+    primeSelectedThread(routeThreadId.value)
+  } else {
+    primeSelectedThread('')
+  }
+  await applySelectedProviderState().catch(() => {})
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
@@ -4202,6 +4333,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
       if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
+          await applySelectedProviderState().catch(() => {})
         }
         continue
       }
@@ -4219,10 +4351,10 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
             }
             continue
           }
-          await selectThread(threadId)
-        } else {
-          void ensureThreadMessagesLoaded(threadId, { silent: true })
         }
+        primeSelectedThread(threadId)
+        await applySelectedProviderState().catch(() => {})
+        await selectThread(threadId)
       }
     } while (hasPendingRouteSync)
 
@@ -4272,11 +4404,20 @@ watch(
       if (route.name !== 'home') {
         await router.replace({ name: 'home' })
       }
-      return
+    } else if (!(route.name === 'thread' && routeThreadId.value === threadId)) {
+      await router.replace({ name: 'thread', params: { threadId } })
     }
 
-    if (route.name === 'thread' && routeThreadId.value === threadId) return
-    await router.replace({ name: 'thread', params: { threadId } })
+    if (isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
+  },
+)
+
+watch(
+  () => selectedProvider.value,
+  async () => {
+    if (!hasInitialized.value || freeModeLoading.value || isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
   },
 )
 
@@ -5558,6 +5699,30 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-context-meta {
   @apply block text-[11px] font-normal text-zinc-500;
+}
+
+.sidebar-settings-session-row {
+  @apply cursor-default gap-3;
+}
+
+.sidebar-settings-session-actions {
+  @apply flex min-w-0 flex-1 items-center justify-end gap-1.5;
+}
+
+.sidebar-settings-session-value {
+  @apply min-w-0 truncate font-mono text-xs text-zinc-600;
+}
+
+.sidebar-settings-session-copy {
+  @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-default disabled:opacity-60;
+}
+
+.sidebar-settings-session-copy[data-copied='true'] {
+  @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+}
+
+.sidebar-settings-session-copy-icon {
+  @apply h-4 w-4;
 }
 
 .sidebar-settings-rate-limits {

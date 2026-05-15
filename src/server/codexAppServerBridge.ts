@@ -9,7 +9,8 @@ import { homedir } from 'node:os'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import { writeFile } from 'node:fs/promises'
+import { appendFile, writeFile } from 'node:fs/promises'
+import { writeDebugLog } from './debugLog.js'
 import { handleAccountRoutes } from './accountRoutes.js'
 import { buildAppServerArgs } from './appServerRuntimeConfig.js'
 import { callRpcWithRateLimitDecodeRecovery } from './rateLimitDecodeRecovery.js'
@@ -19,7 +20,6 @@ import { TelegramThreadBridge } from './telegramThreadBridge.js'
 import {
   getRandomFreeKey,
   getFreeKeyCount,
-  FREE_MODE_PROVIDER_ID,
   FREE_MODE_DEFAULT_MODEL,
   getCachedFreeModels,
   getFreeModels,
@@ -28,6 +28,10 @@ import {
   OPENCODE_ZEN_DEFAULT_MODEL,
   OPENCODE_ZEN_PROVIDER_ID,
   createDefaultOpenCodeZenFreeModeState,
+  createDefaultFreeModeState,
+  MOONBRIDGE_PROVIDER_ID,
+  getMoonBridgeModelMetadata,
+  getMoonBridgeModels,
   getFreeModeConfigArgs,
   getFreeModeEnvVars,
   shouldCreateDefaultFreeModeStateForMissingAuth,
@@ -38,12 +42,10 @@ import { handleZenProxyRequest } from './zenProxy.js'
 import { handleCustomEndpointProxyRequest } from './customEndpointProxy.js'
 import { ThreadTerminalManager } from './terminalManager.js'
 import { getSpawnInvocation } from '../utils/commandInvocation.js'
-import {
-  resolveCodexCommand,
-  resolveRipgrepCommand,
-} from '../commandResolution.js'
+import { resolveCodexCommand, resolveCodexMoonCommand } from '../commandResolution.js'
 import type { CollaborationModeKind, ReasoningEffort } from '../types/codex.js'
 import { isAbsoluteLikePath } from '../pathUtils.js'
+import { searchComposerPaths } from './composerFileSearch.js'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -904,6 +906,39 @@ function trimThreadTurnsInRpcResult(method: string, result: unknown): unknown {
   }
 }
 
+export function mergeRecoveredTurnItemsIntoThreadResult(
+  result: unknown,
+  mergeItemsIntoTurns: (threadId: string, turns: unknown[]) => unknown[],
+  sessionLogRaw?: string | null,
+): unknown {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !turns || turns.length === 0) return result
+
+  const threadId = readNonEmptyString(thread.id)
+  if (!threadId) return result
+
+  let mergedTurns = mergeItemsIntoTurns(threadId, turns)
+  if (sessionLogRaw) {
+    mergedTurns = mergeSessionCommandsIntoTurns(mergedTurns, sessionLogRaw)
+  }
+  if (
+    mergedTurns === turns ||
+    (mergedTurns.length === turns.length && mergedTurns.every((turn, index) => turn === turns[index]))
+  ) {
+    return result
+  }
+
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: mergedTurns,
+    },
+  }
+}
+
 function getErrorMessage(payload: unknown, fallback: string): string {
   if (payload instanceof Error && payload.message.trim().length > 0) {
     return payload.message
@@ -1388,6 +1423,40 @@ export async function callRpcWithArchiveRecovery(
       name: readThreadArchiveFallbackName(threadReadResult),
     })
     return appServer.rpc(method, params ?? null)
+  }
+}
+
+function readProtocolToken(value: unknown): string {
+  return readNonEmptyString(value).trim().toLowerCase()
+}
+
+type InterruptedTurnAutoContinueSnapshot = {
+  threadId: string
+  turnId: string
+}
+
+export function shouldAutoContinueInterruptedThreadFromThreadRead(
+  response: unknown,
+  intentionalInterruptTurnIds: ReadonlySet<string>,
+): InterruptedTurnAutoContinueSnapshot | null {
+  const record = asRecord(response)
+  const thread = asRecord(record?.thread)
+  if (!thread) return null
+
+  const threadStatus = asRecord(thread.status)
+  if (readProtocolToken(threadStatus?.type) !== 'idle') return null
+
+  const turns = Array.isArray(thread.turns) ? thread.turns : []
+  const latestTurn = asRecord(turns.at(-1))
+  const threadId = readNonEmptyString(thread.id).trim()
+  const turnId = readNonEmptyString(latestTurn?.id).trim()
+  if (!threadId || !turnId) return null
+  if (intentionalInterruptTurnIds.has(turnId)) return null
+  if (readProtocolToken(latestTurn?.status) !== 'interrupted') return null
+
+  return {
+    threadId,
+    turnId,
   }
 }
 
@@ -2596,14 +2665,20 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     if (!slots || slots.length === 0) return turn
 
     const existingItems = Array.isArray(turnRecord.items) ? (turnRecord.items as Record<string, unknown>[]) : []
-    const alreadyHasRecoveredItems = existingItems.some((it) => it.type === 'commandExecution' || it.type === 'fileChange')
-    if (alreadyHasRecoveredItems) return turn
-
     const agentMessages = existingItems.filter((it) => it.type === 'agentMessage')
-    const nonAgentNonUserItems = existingItems.filter((it) => it.type !== 'agentMessage' && it.type !== 'userMessage')
+    const commandMessages = existingItems.filter((it) => it.type === 'commandExecution')
+    const fileChangeMessages = existingItems.filter((it) => it.type === 'fileChange')
+    const nonAgentNonUserItems = existingItems.filter((it) => (
+      it.type !== 'agentMessage' &&
+      it.type !== 'userMessage' &&
+      it.type !== 'commandExecution' &&
+      it.type !== 'fileChange'
+    ))
     const userMessages = existingItems.filter((it) => it.type === 'userMessage')
 
     let agentIdx = 0
+    const usedCommandIndexes = new Set<number>()
+    const usedFileChangeIndexes = new Set<number>()
     const interleaved: Record<string, unknown>[] = [...userMessages]
 
     for (const slot of slots) {
@@ -2613,9 +2688,29 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
           agentIdx++
         }
       } else if (slot.type === 'commandExecution' && slot.command) {
-        interleaved.push(slot.command as unknown as Record<string, unknown>)
+        const slotCommand = slot.command.command.trim()
+        let commandIndex = commandMessages.findIndex((item, index) => {
+          if (usedCommandIndexes.has(index)) return false
+          const command = readNonEmptyString(item.command)?.trim() ?? ''
+          return slotCommand.length > 0 && command === slotCommand
+        })
+        if (commandIndex < 0) {
+          commandIndex = commandMessages.findIndex((_item, index) => !usedCommandIndexes.has(index))
+        }
+        if (commandIndex >= 0) {
+          usedCommandIndexes.add(commandIndex)
+          interleaved.push(commandMessages[commandIndex]!)
+        } else {
+          interleaved.push(slot.command as unknown as Record<string, unknown>)
+        }
       } else if (slot.type === 'fileChange' && slot.fileChange) {
-        interleaved.push(slot.fileChange as unknown as Record<string, unknown>)
+        const fileChangeIndex = fileChangeMessages.findIndex((_item, index) => !usedFileChangeIndexes.has(index))
+        if (fileChangeIndex >= 0) {
+          usedFileChangeIndexes.add(fileChangeIndex)
+          interleaved.push(fileChangeMessages[fileChangeIndex]!)
+        } else {
+          interleaved.push(slot.fileChange as unknown as Record<string, unknown>)
+        }
       }
     }
 
@@ -2624,7 +2719,20 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
       agentIdx++
     }
 
+    for (let index = 0; index < commandMessages.length; index += 1) {
+      if (!usedCommandIndexes.has(index)) interleaved.push(commandMessages[index]!)
+    }
+    for (let index = 0; index < fileChangeMessages.length; index += 1) {
+      if (!usedFileChangeIndexes.has(index)) interleaved.push(fileChangeMessages[index]!)
+    }
     interleaved.push(...nonAgentNonUserItems)
+
+    if (
+      interleaved.length === existingItems.length &&
+      interleaved.every((item, index) => item === existingItems[index])
+    ) {
+      return turn
+    }
 
     return {
       ...turnRecord,
@@ -2641,52 +2749,6 @@ function isExactPhraseMatch(query: string, doc: ThreadSearchDocument): boolean {
     doc.preview.toLowerCase().includes(q) ||
     doc.messageText.toLowerCase().includes(q)
   )
-}
-
-function scoreFileCandidate(path: string, query: string): number {
-  if (!query) return 0
-  const lowerPath = path.toLowerCase()
-  const lowerQuery = query.toLowerCase()
-  const baseName = lowerPath.slice(lowerPath.lastIndexOf('/') + 1)
-  if (baseName === lowerQuery) return 0
-  if (baseName.startsWith(lowerQuery)) return 1
-  if (baseName.includes(lowerQuery)) return 2
-  if (lowerPath.includes(`/${lowerQuery}`)) return 3
-  if (lowerPath.includes(lowerQuery)) return 4
-  return 10
-}
-
-async function listFilesWithRipgrep(cwd: string): Promise<string[]> {
-  return await new Promise<string[]>((resolve, reject) => {
-    const ripgrepCommand = resolveRipgrepCommand()
-    if (!ripgrepCommand) {
-      reject(new Error('ripgrep (rg) is not available'))
-      return
-    }
-
-    const proc = spawn(ripgrepCommand, ['--files', '--hidden', '-g', '!.git', '-g', '!node_modules'], {
-      cwd,
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('error', reject)
-    proc.on('close', (code) => {
-      if (code === 0) {
-        const rows = stdout
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-        resolve(rows)
-        return
-      }
-      const details = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
-      reject(new Error(details || 'rg --files failed'))
-    })
-  })
 }
 
 function getCodexHomeDir(): string {
@@ -3938,6 +4000,8 @@ async function writePinnedThreadIds(threadIds: string[]): Promise<void> {
 
 const FIRST_LAUNCH_PLUGINS_CARD_DISMISSED_KEY = 'first-launch-plugins-card-dismissed'
 const THREAD_QUEUE_STATE_KEY = 'thread-queue-state'
+const INTENTIONAL_INTERRUPT_TURN_IDS_KEY = 'intentional-interrupt-turn-ids'
+const MAX_INTENTIONAL_INTERRUPT_TURN_IDS = 500
 
 type StoredQueuedMessage = {
   id: string
@@ -4026,6 +4090,18 @@ function normalizeThreadQueueState(value: unknown): ThreadQueueState {
 
 let threadQueueMutationChain: Promise<unknown> = Promise.resolve()
 
+function normalizeIntentionalInterruptTurnIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const ids: string[] = []
+  for (const item of value) {
+    const id = typeof item === 'string' ? item.trim() : ''
+    if (id && !ids.includes(id)) {
+      ids.push(id)
+    }
+  }
+  return ids.slice(-MAX_INTENTIONAL_INTERRUPT_TURN_IDS)
+}
+
 async function readThreadQueueState(): Promise<ThreadQueueState> {
   const statePath = getCodexGlobalStatePath()
   try {
@@ -4052,6 +4128,37 @@ async function writeThreadQueueStateUnlocked(nextState: ThreadQueueState): Promi
   } else {
     delete payload[THREAD_QUEUE_STATE_KEY]
   }
+  await writeFile(statePath, JSON.stringify(payload), 'utf8')
+}
+
+async function readIntentionalInterruptTurnIds(): Promise<Set<string>> {
+  const statePath = getCodexGlobalStatePath()
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    const payload = asRecord(JSON.parse(raw)) ?? {}
+    return new Set(normalizeIntentionalInterruptTurnIds(payload[INTENTIONAL_INTERRUPT_TURN_IDS_KEY]))
+  } catch {
+    return new Set()
+  }
+}
+
+async function rememberIntentionalInterruptTurnId(turnId: string): Promise<void> {
+  const normalizedTurnId = turnId.trim()
+  if (!normalizedTurnId) return
+
+  const statePath = getCodexGlobalStatePath()
+  let payload: Record<string, unknown> = {}
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    payload = asRecord(JSON.parse(raw)) ?? {}
+  } catch {
+    payload = {}
+  }
+
+  const ids = normalizeIntentionalInterruptTurnIds(payload[INTENTIONAL_INTERRUPT_TURN_IDS_KEY])
+  const nextIds = ids.filter((id) => id !== normalizedTurnId)
+  nextIds.push(normalizedTurnId)
+  payload[INTENTIONAL_INTERRUPT_TURN_IDS_KEY] = nextIds.slice(-MAX_INTENTIONAL_INTERRUPT_TURN_IDS)
   await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }
 
@@ -4681,6 +4788,72 @@ const MERGEABLE_ITEM_TYPES = new Set([
   'fileChange',
 ])
 
+type AppServerConfig = {
+  command: string
+  args: string[]
+  env: Record<string, string>
+}
+
+function cloneFreeModeState(state: FreeModeState): FreeModeState {
+  return {
+    ...state,
+    providerKeys: state.providerKeys ? { ...state.providerKeys } : undefined,
+  }
+}
+
+function hasFreeModeStateChanged(current: FreeModeState, newState: FreeModeState): boolean {
+  if (current.enabled !== newState.enabled) return true
+  if (current.provider !== newState.provider) return true
+  if (current.model !== newState.model) return true
+  if (current.wireApi !== newState.wireApi) return true
+  if (current.customBaseUrl !== newState.customBaseUrl) return true
+  if (newState.provider !== 'moon' && current.apiKey !== newState.apiKey) return true
+  return false
+}
+
+function buildAppServerConfigForState(state: FreeModeState): AppServerConfig {
+  const args = [
+    'app-server',
+    '-c', 'approval_policy="never"',
+    '-c', 'sandbox_mode="danger-full-access"',
+  ]
+  let extraEnv: Record<string, string> = {}
+  const serverPort = parseInt(process.env.CODEXUI_SERVER_PORT ?? '', 10) || undefined
+  let command = resolveCodexCommand()
+  if (!command) {
+    throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
+  }
+  if (state.enabled && state.provider === MOONBRIDGE_PROVIDER_ID) {
+    command = resolveCodexMoonCommand()
+    if (!command) {
+      throw new Error('Codex Moon Bridge CLI is not available. Install codex-moon or set CODEXUI_CODEX_MOON_COMMAND.')
+    }
+  } else {
+    args.push(...getFreeModeConfigArgs(state, serverPort))
+    extraEnv = getFreeModeEnvVars(state)
+  }
+  return { command, args, env: extraEnv }
+}
+
+function getAppServerRuntimeSignature(state: FreeModeState): string {
+  const config = buildAppServerConfigForState(state)
+  const envEntries = Object.entries(config.env).sort(([left], [right]) => left.localeCompare(right))
+  return JSON.stringify({
+    command: config.command,
+    args: config.args,
+    env: envEntries,
+  })
+}
+
+function readInitialFreeModeState(): FreeModeState {
+  try {
+    return ensureDefaultFreeModeStateForMissingAuthSync(join(getCodexHomeDir(), FREE_MODE_STATE_FILE))
+      ?? createDefaultFreeModeState()
+  } catch {
+    return createDefaultFreeModeState()
+  }
+}
+
 class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
   private initialized = false
@@ -4699,35 +4872,18 @@ class AppServerProcess {
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
+  private freeModeState: FreeModeState = createDefaultFreeModeState()
 
-
-  private getCodexCommand(): string {
-    const codexCommand = resolveCodexCommand()
-    if (!codexCommand) {
-      throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
-    }
-    return codexCommand
+  getFreeModeState(): FreeModeState {
+    return cloneFreeModeState(this.freeModeState)
   }
 
-  private buildAppServerConfig(): { args: string[]; env: Record<string, string> } {
-    const args = [
-      'app-server',
-      '-c', 'approval_policy="never"',
-      '-c', 'sandbox_mode="danger-full-access"',
-    ]
-    let extraEnv: Record<string, string> = {}
-    const serverPort = parseInt(process.env.CODEXUI_SERVER_PORT ?? '', 10) || undefined
-    const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
-    try {
-      const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
-      if (state) {
-        args.push(...getFreeModeConfigArgs(state, serverPort))
-        extraEnv = getFreeModeEnvVars(state)
-      }
-    } catch {
-      // No free-mode state or invalid — use defaults
-    }
-    return { args, env: extraEnv }
+  setFreeModeState(state: FreeModeState): void {
+    this.freeModeState = cloneFreeModeState(state)
+  }
+
+  private buildAppServerConfig(): { command: string; args: string[]; env: Record<string, string> } {
+    return buildAppServerConfigForState(this.freeModeState)
   }
 
   private start(): void {
@@ -4735,7 +4891,7 @@ class AppServerProcess {
 
     this.stopping = false
     const config = this.buildAppServerConfig()
-    const invocation = getSpawnInvocation(this.getCodexCommand(), config.args)
+    const invocation = getSpawnInvocation(config.command, config.args)
     const spawnEnv = Object.keys(config.env).length > 0
       ? { ...process.env, ...config.env }
       : undefined
@@ -4769,6 +4925,8 @@ class AppServerProcess {
         return
       }
 
+      console.error('[DEBUG:AppServerProcess] codex app-server exited — stopping=%s pid=%d', this.stopping, proc.pid ?? -1)
+      writeDebugLog('app-server-exit', 'codex app-server exited', { stopping: this.stopping, pid: proc.pid ?? -1, pendingRequests: this.pending.size, pendingServerRequests: this.pendingServerRequests.size }).catch(() => {})
       const failure = new Error(this.stopping ? 'codex app-server stopped' : 'codex app-server exited unexpectedly')
       for (const request of this.pending.values()) {
         request.reject(failure)
@@ -4814,6 +4972,10 @@ class AppServerProcess {
     }
 
     if (typeof message.method === 'string' && typeof message.id !== 'number') {
+      if (message.method.startsWith('turn/') || message.method.startsWith('thread/') || message.method === 'error') {
+        console.warn('[DEBUG:AppServerProcess] notification method=%s', message.method)
+        writeDebugLog('app-server-notification', message.method, { threadId: this.extractThreadIdFromParams(message.params ?? null) }).catch(() => {})
+      }
       this.emitNotification({
         method: message.method,
         params: message.params ?? null,
@@ -5253,15 +5415,28 @@ export class BackendQueueProcessor {
   private readonly processingThreadIds = new Set<string>()
   private readonly queueDrainTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly queueDrainDueAtByThreadId = new Map<string, number>()
+  private readonly interruptedTurnCheckTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly intentionalInterruptTurnIds = new Set<string>()
+  private readonly autoContinueInFlightThreadIds = new Set<string>()
+  private readonly autoContinuedInterruptedTurnIds = new Set<string>()
   private readonly unsubscribe: () => void
+  private intentionalInterruptTurnIdsReady: Promise<void> = Promise.resolve()
 
   constructor(private readonly appServer: AppServerProcess) {
     this.unsubscribe = appServer.onNotification((notification) => {
-      if (!isTurnCompletedNotification(notification)) return
-      const threadId = extractThreadIdFromNotificationParams(notification.params)
-      if (!threadId) return
-      void this.processThreadQueue(threadId)
+      if (isTurnCompletedNotification(notification)) {
+        void this.handleTurnCompletedNotification(notification)
+        return
+      }
+
+      if (notification.method === 'thread/status/changed') {
+        const threadId = extractThreadIdFromNotificationParams(notification.params)
+        if (threadId) {
+          this.scheduleInterruptedTurnCheck(threadId)
+        }
+      }
     })
+    this.intentionalInterruptTurnIdsReady = this.loadIntentionalInterruptTurnIds()
     void this.scheduleAllQueuedThreads(1000)
   }
 
@@ -5272,7 +5447,22 @@ export class BackendQueueProcessor {
     }
     this.queueDrainTimersByThreadId.clear()
     this.queueDrainDueAtByThreadId.clear()
+    for (const timer of this.interruptedTurnCheckTimersByThreadId.values()) {
+      clearTimeout(timer)
+    }
+    this.interruptedTurnCheckTimersByThreadId.clear()
     this.processingThreadIds.clear()
+    this.intentionalInterruptTurnIds.clear()
+    this.autoContinueInFlightThreadIds.clear()
+    this.autoContinuedInterruptedTurnIds.clear()
+  }
+
+  recordIntentionalInterrupt(threadId: string, turnId: string): void {
+    const normalizedThreadId = threadId.trim()
+    const normalizedTurnId = turnId.trim()
+    if (!normalizedThreadId || !normalizedTurnId) return
+    this.intentionalInterruptTurnIds.add(normalizedTurnId)
+    rememberIntentionalInterruptTurnId(normalizedTurnId).catch(() => {})
   }
 
   async scheduleAllQueuedThreads(delayMs = 0): Promise<void> {
@@ -5308,6 +5498,20 @@ export class BackendQueueProcessor {
     this.queueDrainDueAtByThreadId.set(threadId, nextDueAt)
   }
 
+  scheduleInterruptedTurnCheck(threadId: string, delayMs = 250): void {
+    if (!threadId) return
+    const existingTimer = this.interruptedTurnCheckTimersByThreadId.get(threadId)
+    if (existingTimer) {
+      clearTimeout(existingTimer)
+    }
+    const timer = setTimeout(() => {
+      this.interruptedTurnCheckTimersByThreadId.delete(threadId)
+      void this.maybeAutoContinueInterruptedThread(threadId, 'thread/status/changed')
+    }, Math.max(0, delayMs))
+    timer.unref?.()
+    this.interruptedTurnCheckTimersByThreadId.set(threadId, timer)
+  }
+
   async processThreadQueue(threadId: string): Promise<void> {
     if (this.processingThreadIds.has(threadId)) return
     this.processingThreadIds.add(threadId)
@@ -5335,6 +5539,130 @@ export class BackendQueueProcessor {
       this.scheduleThreadQueueDrain(threadId)
     } finally {
       this.processingThreadIds.delete(threadId)
+    }
+  }
+
+  private async handleTurnCompletedNotification(notification: { method: string; params: unknown }): Promise<void> {
+    const turn = this.readCompletedTurnNotification(notification)
+    if (!turn) return
+
+    if (readProtocolToken(turn.status) === 'interrupted') {
+      const autoContinued = await this.maybeAutoContinueInterruptedThread(turn.threadId, 'turn/completed', turn.turnId)
+      if (autoContinued) {
+        return
+      }
+    }
+
+    void this.processThreadQueue(turn.threadId)
+  }
+
+  private readCompletedTurnNotification(notification: { method: string; params: unknown }): { threadId: string; turnId: string; status: string } | null {
+    if (!isTurnCompletedNotification(notification)) return null
+    const params = asRecord(notification.params)
+    if (!params) return null
+
+    const threadId = extractThreadIdFromNotificationParams(params)
+    if (!threadId) return null
+
+    const turn = asRecord(params.turn)
+    const turnId = readNonEmptyString(turn?.id) || readNonEmptyString(params.turnId) || readNonEmptyString(params.turn_id)
+    if (!turnId) return null
+
+    return {
+      threadId,
+      turnId,
+      status: readNonEmptyString(turn?.status).trim(),
+    }
+  }
+
+  private async loadIntentionalInterruptTurnIds(): Promise<void> {
+    try {
+      const ids = await readIntentionalInterruptTurnIds()
+      for (const id of ids) {
+        this.intentionalInterruptTurnIds.add(id)
+      }
+    } catch {
+      // Intentional stop recovery is best-effort; live turn/interrupt RPCs still mark stops.
+    }
+  }
+
+  private async maybeAutoContinueInterruptedThread(
+    threadId: string,
+    source: 'turn/completed' | 'thread/status/changed',
+    completedTurnId = '',
+  ): Promise<boolean> {
+    const normalizedThreadId = threadId.trim()
+    const normalizedCompletedTurnId = completedTurnId.trim()
+    if (!normalizedThreadId) return false
+    if (this.autoContinueInFlightThreadIds.has(normalizedThreadId)) return false
+    await this.intentionalInterruptTurnIdsReady
+
+    let response: unknown = null
+    try {
+      response = await this.appServer.rpc('thread/read', {
+        threadId: normalizedThreadId,
+        includeTurns: true,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[DEBUG:BackendQueueProcessor] interrupted-turn inspection failed — threadId=%s source=%s error=%s', normalizedThreadId, source, message)
+      writeDebugLog('auto-continue-interrupted-turn-read-failed', 'Interrupted turn inspection failed', {
+        threadId: normalizedThreadId,
+        source,
+        error: message,
+      }).catch(() => {})
+      return false
+    }
+
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead(response, this.intentionalInterruptTurnIds)
+    if (!snapshot) {
+      return false
+    }
+    if (normalizedCompletedTurnId && snapshot.turnId !== normalizedCompletedTurnId && source === 'turn/completed') {
+      return false
+    }
+    if (this.autoContinuedInterruptedTurnIds.has(snapshot.turnId)) {
+      return false
+    }
+
+    this.autoContinueInFlightThreadIds.add(normalizedThreadId)
+    try {
+      console.warn('[DEBUG:BackendQueueProcessor] auto-continuing interrupted turn — threadId=%s turnId=%s source=%s', snapshot.threadId, snapshot.turnId, source)
+      writeDebugLog('auto-continue-interrupted-turn', 'Auto-continuing interrupted turn', {
+        threadId: snapshot.threadId,
+        turnId: snapshot.turnId,
+        source,
+      }).catch(() => {})
+      const resumeResult = asRecord(await this.appServer.rpc('thread/resume', {
+        threadId: snapshot.threadId,
+        persistExtendedHistory: true,
+      }))
+      const turnStartParams: Record<string, unknown> = {
+        threadId: snapshot.threadId,
+        input: [{
+          type: 'text',
+          text: 'Please continue.',
+        }],
+      }
+      const resumedModel = readNonEmptyString(resumeResult?.model).trim()
+      if (resumedModel) {
+        turnStartParams.model = resumedModel
+      }
+      await this.appServer.rpc('turn/start', turnStartParams)
+      this.autoContinuedInterruptedTurnIds.add(snapshot.turnId)
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[DEBUG:BackendQueueProcessor] auto-continue interrupted turn failed — threadId=%s turnId=%s error=%s', snapshot.threadId, snapshot.turnId, message)
+      writeDebugLog('auto-continue-interrupted-turn-failed', 'Auto-continue interrupted turn failed', {
+        threadId: snapshot.threadId,
+        turnId: snapshot.turnId,
+        source,
+        error: message,
+      }).catch(() => {})
+      return false
+    } finally {
+      this.autoContinueInFlightThreadIds.delete(normalizedThreadId)
     }
   }
 
@@ -5487,8 +5815,121 @@ export class BackendQueueProcessor {
   }
 
   private async startQueuedTurn(turn: BackendQueuedTurn): Promise<void> {
-    await this.appServer.rpc('thread/resume', { threadId: turn.threadId })
+    await this.appServer.rpc('thread/resume', { threadId: turn.threadId, persistExtendedHistory: true })
     await this.appServer.rpc('turn/start', await this.buildQueuedTurnParams(turn))
+  }
+}
+
+type BridgeNotification = {
+  method: string
+  params: unknown
+  atIso: string
+}
+
+class AppServerRuntime {
+  readonly appServer: AppServerProcess
+  readonly backendQueueProcessor: BackendQueueProcessor
+  readonly signature: string
+  private readonly unsubscribeNotifications: () => void
+  private disposed = false
+
+  constructor(
+    state: FreeModeState,
+    private readonly forwardNotification: (notification: BridgeNotification) => void,
+  ) {
+    this.signature = getAppServerRuntimeSignature(state)
+    this.appServer = new AppServerProcess()
+    this.appServer.setFreeModeState(state)
+    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer)
+    this.unsubscribeNotifications = this.appServer.onNotification((notification) => {
+      this.forwardNotification({
+        ...notification,
+        atIso: new Date().toISOString(),
+      })
+    })
+    void initializeSkillsSyncOnStartup(this.appServer).catch(() => {})
+  }
+
+  setFreeModeState(state: FreeModeState): void {
+    this.appServer.setFreeModeState(state)
+  }
+
+  getFreeModeState(): FreeModeState {
+    return this.appServer.getFreeModeState()
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.unsubscribeNotifications()
+    this.backendQueueProcessor.dispose()
+    this.appServer.dispose()
+  }
+}
+
+class AppServerRuntimePool {
+  private readonly runtimesBySignature = new Map<string, AppServerRuntime>()
+  private readonly notificationListeners = new Set<(notification: BridgeNotification) => void>()
+  private activeState: FreeModeState = readInitialFreeModeState()
+
+  private emitNotification(notification: BridgeNotification): void {
+    for (const listener of this.notificationListeners) {
+      listener(notification)
+    }
+  }
+
+  private createRuntime(state: FreeModeState): AppServerRuntime {
+    const runtime = new AppServerRuntime(state, (notification) => {
+      this.emitNotification(notification)
+    })
+    this.runtimesBySignature.set(runtime.signature, runtime)
+    return runtime
+  }
+
+  private getOrCreateRuntime(state: FreeModeState): AppServerRuntime {
+    const signature = getAppServerRuntimeSignature(state)
+    const existing = this.runtimesBySignature.get(signature)
+    if (existing) {
+      existing.setFreeModeState(state)
+      return existing
+    }
+    return this.createRuntime(state)
+  }
+
+  setActiveState(state: FreeModeState): AppServerRuntime {
+    this.activeState = cloneFreeModeState(state)
+    return this.getOrCreateRuntime(this.activeState)
+  }
+
+  getActiveState(): FreeModeState {
+    return cloneFreeModeState(this.activeState)
+  }
+
+  getActiveRuntime(): AppServerRuntime {
+    return this.getOrCreateRuntime(this.activeState)
+  }
+
+  getActiveAppServer(): AppServerProcess {
+    return this.getActiveRuntime().appServer
+  }
+
+  getActiveBackendQueueProcessor(): BackendQueueProcessor {
+    return this.getActiveRuntime().backendQueueProcessor
+  }
+
+  subscribeNotifications(listener: (notification: BridgeNotification) => void): () => void {
+    this.notificationListeners.add(listener)
+    return () => {
+      this.notificationListeners.delete(listener)
+    }
+  }
+
+  dispose(): void {
+    for (const runtime of this.runtimesBySignature.values()) {
+      runtime.dispose()
+    }
+    this.runtimesBySignature.clear()
+    this.notificationListeners.clear()
   }
 }
 
@@ -5612,44 +6053,85 @@ type CodexBridgeMiddleware = ((req: IncomingMessage, res: ServerResponse, next: 
 
 type SharedBridgeState = {
   version: string
-  appServer: AppServerProcess
+  runtimePool: AppServerRuntimePool
   terminalManager: ThreadTerminalManager
   methodCatalog: MethodCatalog
   telegramBridge: TelegramThreadBridge
-  backendQueueProcessor: BackendQueueProcessor
 }
 
 const SHARED_BRIDGE_KEY = '__codexRemoteSharedBridge__'
+const SHARED_BRIDGE_EXIT_CLEANUP_KEY = '__codexRemoteSharedBridgeExitCleanup__'
 const SHARED_BRIDGE_VERSION = 'experimental-api-v2'
 
-function getSharedBridgeState(): SharedBridgeState {
-  const globalScope = globalThis as typeof globalThis & {
-    [SHARED_BRIDGE_KEY]?: SharedBridgeState
+type SharedBridgeStateLike = Partial<SharedBridgeState> & {
+  version?: string
+}
+
+type SharedBridgeGlobalScope = typeof globalThis & {
+  [SHARED_BRIDGE_KEY]?: SharedBridgeStateLike
+  [SHARED_BRIDGE_EXIT_CLEANUP_KEY]?: boolean
+}
+
+function getSharedBridgeGlobalScope(): SharedBridgeGlobalScope {
+  return globalThis as SharedBridgeGlobalScope
+}
+
+function disposeSharedBridgeState(state: SharedBridgeStateLike, globalScope = getSharedBridgeGlobalScope()): void {
+  if (globalScope[SHARED_BRIDGE_KEY] === state) {
+    delete globalScope[SHARED_BRIDGE_KEY]
   }
+  state.telegramBridge?.stop()
+  state.runtimePool?.dispose()
+  state.terminalManager?.dispose()
+}
+
+function disposeCurrentSharedBridgeState(globalScope = getSharedBridgeGlobalScope()): void {
+  const current = globalScope[SHARED_BRIDGE_KEY]
+  if (!current) return
+  disposeSharedBridgeState(current)
+}
+
+function ensureSharedBridgeExitCleanup(globalScope: SharedBridgeGlobalScope): void {
+  if (globalScope[SHARED_BRIDGE_EXIT_CLEANUP_KEY]) return
+  globalScope[SHARED_BRIDGE_EXIT_CLEANUP_KEY] = true
+  process.once('exit', () => {
+    disposeCurrentSharedBridgeState(globalScope)
+  })
+}
+
+function isCompleteSharedBridgeState(state: SharedBridgeStateLike): state is SharedBridgeState {
+  return Boolean(
+    state.runtimePool &&
+    state.terminalManager &&
+    state.methodCatalog &&
+    state.telegramBridge,
+  )
+}
+
+function getSharedBridgeState(): SharedBridgeState {
+  const globalScope = getSharedBridgeGlobalScope()
+  ensureSharedBridgeExitCleanup(globalScope)
 
   const existing = globalScope[SHARED_BRIDGE_KEY]
   if (existing) {
-    if (existing.version === SHARED_BRIDGE_VERSION && existing.terminalManager) {
+    if (existing.version === SHARED_BRIDGE_VERSION && isCompleteSharedBridgeState(existing)) {
       return existing
     }
-    existing.appServer.dispose()
-    existing.backendQueueProcessor?.dispose()
-    existing.terminalManager?.dispose()
+    disposeCurrentSharedBridgeState(globalScope)
   }
 
-  const appServer = new AppServerProcess()
+  const runtimePool = new AppServerRuntimePool()
   const terminalManager = new ThreadTerminalManager()
-  const backendQueueProcessor = new BackendQueueProcessor(appServer)
   const created: SharedBridgeState = {
     version: SHARED_BRIDGE_VERSION,
-    appServer,
+    runtimePool,
     terminalManager,
     methodCatalog: new MethodCatalog(),
-    backendQueueProcessor,
-    telegramBridge: new TelegramThreadBridge(appServer, {
+    telegramBridge: new TelegramThreadBridge(() => runtimePool.getActiveAppServer(), {
       onChatSeen: (chatId) => {
         void rememberTelegramChatId(chatId).catch(() => {})
       },
+      subscribeNotifications: (listener) => runtimePool.subscribeNotifications(listener),
     }),
   }
   globalScope[SHARED_BRIDGE_KEY] = created
@@ -5733,14 +6215,39 @@ async function buildThreadSearchIndex(appServer: AppServerProcess): Promise<Thre
 }
 
 export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
-  const { appServer, terminalManager, methodCatalog, telegramBridge, backendQueueProcessor } = getSharedBridgeState()
+  const sharedBridgeState = getSharedBridgeState()
+  const runtimePool = sharedBridgeState.runtimePool
+  const terminalManager = sharedBridgeState.terminalManager
+  const methodCatalog = sharedBridgeState.methodCatalog
+  const telegramBridge = sharedBridgeState.telegramBridge
   let threadSearchIndex: ThreadSearchIndex | null = null
   let threadSearchIndexPromise: Promise<ThreadSearchIndex> | null = null
+
+  function getActiveRuntime(): AppServerRuntime {
+    return runtimePool.getActiveRuntime()
+  }
+
+  function getActiveAppServer(): AppServerProcess {
+    return getActiveRuntime().appServer
+  }
+
+  function getActiveBackendQueueProcessor(): BackendQueueProcessor {
+    return getActiveRuntime().backendQueueProcessor
+  }
+
+  function applyActiveFreeModeState(state: FreeModeState): void {
+    const currentState = runtimePool.getActiveState()
+    runtimePool.setActiveState(state)
+    if (hasFreeModeStateChanged(currentState, state)) {
+      threadSearchIndex = null
+      threadSearchIndexPromise = null
+    }
+  }
 
   async function getThreadSearchIndex(): Promise<ThreadSearchIndex> {
     if (threadSearchIndex) return threadSearchIndex
     if (!threadSearchIndexPromise) {
-      threadSearchIndexPromise = buildThreadSearchIndex(appServer)
+      threadSearchIndexPromise = buildThreadSearchIndex(getActiveAppServer())
         .then((index) => {
           threadSearchIndex = index
           return index
@@ -5751,7 +6258,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     }
     return threadSearchIndexPromise
   }
-  void initializeSkillsSyncOnStartup(appServer)
   void readTelegramBridgeConfig()
     .then((config) => {
       if (!config.botToken) return
@@ -5810,58 +6316,48 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
       }
 
       const url = new URL(req.url, 'http://localhost')
+      const appServer = getActiveAppServer()
+      const backendQueueProcessor = getActiveBackendQueueProcessor()
 
       if (url.pathname === '/codex-api/zen-proxy/v1/responses' && req.method === 'POST') {
         if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
           setJson(res, 403, { error: 'Zen proxy is only available from localhost' })
           return
         }
-        const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
         let bearerToken = ''
         let wireApi: 'responses' | 'chat' = 'chat'
-        try {
-          const state = JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState
-          bearerToken = state.apiKey ?? ''
-          wireApi = state.wireApi === 'responses' ? 'responses' : 'chat'
-        } catch { /* use empty */ }
+        const state = appServer.getFreeModeState()
+        bearerToken = state.apiKey ?? ''
+        wireApi = state.wireApi === 'responses' ? 'responses' : 'chat'
         handleZenProxyRequest(req, res, bearerToken, wireApi)
         return
       }
 
       if (url.pathname === '/codex-api/openrouter-proxy/v1/responses' && req.method === 'POST') {
-        const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
         let bearerToken = ''
         let wireApi: 'responses' | 'chat' = 'responses'
-        try {
-          const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
-          bearerToken = state?.apiKey ?? ''
-          wireApi = state?.wireApi === 'chat' ? 'chat' : 'responses'
-        } catch { /* use empty */ }
+        const state = appServer.getFreeModeState()
+        bearerToken = state.apiKey ?? ''
+        wireApi = state.wireApi === 'chat' ? 'chat' : 'responses'
         handleOpenRouterProxyRequest(req, res, bearerToken, wireApi)
         return
       }
 
       if (url.pathname === '/codex-api/custom-proxy/v1/responses' && req.method === 'POST') {
-        const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
         let bearerToken = ''
         let wireApi: 'responses' | 'chat' = 'responses'
         let baseUrl = ''
-        try {
-          const state = JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState
-          bearerToken = state.apiKey ?? ''
-          wireApi = state.wireApi === 'chat' ? 'chat' : 'responses'
-          baseUrl = state.customBaseUrl ?? ''
-        } catch { /* use empty */ }
+        const state = appServer.getFreeModeState()
+        bearerToken = state.apiKey ?? ''
+        wireApi = state.wireApi === 'chat' ? 'chat' : 'responses'
+        baseUrl = state.customBaseUrl ?? ''
         handleCustomEndpointProxyRequest(req, res, { baseUrl, bearerToken, wireApi })
         return
       }
 
       if (url.pathname.startsWith('/codex-api/free-mode')) {
-        const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
-
         function readFreeModeState(): FreeModeState {
-          return ensureDefaultFreeModeStateForMissingAuthSync(statePath)
-            ?? { enabled: false, apiKey: null, model: FREE_MODE_DEFAULT_MODEL }
+          return appServer.getFreeModeState()
         }
 
         if (req.method === 'POST' && url.pathname === '/codex-api/free-mode') {
@@ -5877,10 +6373,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               }
 
               const prev = readFreeModeState()
-              const prevKeys = prev.providerKeys ?? {}
+              const prevKeys = { ...(prev.providerKeys ?? {}) }
               if (prev.provider && prev.apiKey) {
                 prevKeys[prev.provider] = prev.apiKey
               }
+
               const state: FreeModeState = {
                 enabled: true,
                 apiKey,
@@ -5889,8 +6386,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
                 providerKeys: prevKeys,
               }
-              await writeFile(statePath, JSON.stringify(state), 'utf8')
-              appServer.dispose()
+              applyActiveFreeModeState(state)
+
               const freeModels = await getFreeModels()
               setJson(res, 200, {
                 ok: true,
@@ -5905,6 +6402,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               if (prev.provider && prev.apiKey) {
                 prevKeys[prev.provider] = prev.apiKey
               }
+
               const state: FreeModeState = {
                 enabled: false,
                 apiKey: null,
@@ -5912,8 +6410,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 wireApi: prev.wireApi === 'chat' ? 'chat' : 'responses',
                 providerKeys: prevKeys,
               }
-              await writeFile(statePath, JSON.stringify(state), 'utf8')
-              appServer.dispose()
+              applyActiveFreeModeState(state)
+
               setJson(res, 200, { ok: true, enabled: false })
             }
           } catch (error) {
@@ -5926,9 +6424,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           try {
             const state = readFreeModeState()
             const maskedKey = state.apiKey && state.customKey
-              ? state.apiKey.substring(0, 12) + '...' + state.apiKey.substring(state.apiKey.length - 4)
+              ? `${state.apiKey.substring(0, 12)}...${state.apiKey.substring(state.apiKey.length - 4)}`
               : null
-            let models = getCachedFreeModels()
+            let models = state.provider === MOONBRIDGE_PROVIDER_ID
+              ? getMoonBridgeModels()
+              : getCachedFreeModels()
             let currentModel = state.enabled ? state.model : null
             let wireApi = state.wireApi ?? null
             if (state.provider === OPENCODE_ZEN_PROVIDER_ID) {
@@ -5954,7 +6454,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 ]
               }
               wireApi = 'responses'
-            } else {
+            } else if (state.provider !== MOONBRIDGE_PROVIDER_ID) {
               refreshFreeModelsInBackground()
             }
             setJson(res, 200, {
@@ -5964,7 +6464,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               currentModel,
               customKey: Boolean(state.customKey),
               maskedKey,
-              provider: state.provider ?? 'openrouter',
+              provider: state.enabled ? (state.provider ?? 'openrouter') : undefined,
               customBaseUrl: state.customBaseUrl ?? null,
               wireApi,
             })
@@ -5981,10 +6481,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               setJson(res, 500, { error: 'No free keys available' })
               return
             }
+
             const current = readFreeModeState()
             const state: FreeModeState = { ...current, apiKey, customKey: false }
-            await writeFile(statePath, JSON.stringify(state), 'utf8')
-            appServer.dispose()
+            applyActiveFreeModeState(state)
+
             setJson(res, 200, { ok: true })
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to rotate key') })
@@ -6007,8 +6508,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: current.wireApi === 'chat' ? 'chat' : 'responses',
               }
-              await writeFile(statePath, JSON.stringify(state), 'utf8')
-              appServer.dispose()
+              applyActiveFreeModeState(state)
               setJson(res, 200, { ok: true, customKey: true })
             } else {
               const communityKey = getRandomFreeKey()
@@ -6019,8 +6519,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 provider: 'openrouter',
                 wireApi: current.wireApi === 'chat' ? 'chat' : 'responses',
               }
-              await writeFile(statePath, JSON.stringify(state), 'utf8')
-              appServer.dispose()
+              applyActiveFreeModeState(state)
               setJson(res, 200, { ok: true, customKey: false })
             }
           } catch (error) {
@@ -6034,42 +6533,58 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const body = await readJsonBody(req) as Record<string, unknown> | null
             const baseUrl = typeof body?.baseUrl === 'string' ? body.baseUrl.trim() : ''
             const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : ''
-            const wireApi = body?.wireApi === 'chat' ? 'chat' as const : 'responses' as const
+            const wireApi = body?.wireApi === 'chat' ? 'chat' : 'responses'
             const providerType = body?.provider === 'opencode-zen'
-              ? 'opencode-zen' as const
+              ? 'opencode-zen'
               : body?.provider === 'openrouter'
-                ? 'openrouter' as const
-                : 'custom' as const
+                ? 'openrouter'
+                : body?.provider === 'moon'
+                  ? 'moon'
+                  : 'custom'
+
             if (providerType === 'custom' && !baseUrl) {
               setJson(res, 400, { error: 'baseUrl is required' })
               return
             }
+
             const current = readFreeModeState()
-            const prevKeys = current.providerKeys ?? {}
+            const prevKeys = { ...(current.providerKeys ?? {}) }
             if (current.provider && current.apiKey) {
               prevKeys[current.provider] = current.apiKey
             }
+
             const resolvedKey = apiKey || prevKeys[providerType] || ''
             if (resolvedKey) {
               prevKeys[providerType] = resolvedKey
             }
+
             const resolvedModel = providerType === 'openrouter'
               ? (current.model || FREE_MODE_DEFAULT_MODEL)
               : providerType === 'custom'
                 ? await fetchCustomEndpointDefaultModel(baseUrl, resolvedKey)
-                : OPENCODE_ZEN_DEFAULT_MODEL
+                : providerType === 'opencode-zen'
+                  ? OPENCODE_ZEN_DEFAULT_MODEL
+                  : providerType === 'moon'
+                  ? (() => {
+                      const moonModels = getMoonBridgeModels()
+                      const currentModel = current.model?.trim() ?? ''
+                      return currentModel && moonModels.includes(currentModel)
+                        ? currentModel
+                        : moonModels[0] ?? ''
+                    })()
+                  : ''
             const state: FreeModeState = {
               enabled: true,
-              apiKey: resolvedKey,
+              apiKey: providerType === 'moon' ? null : resolvedKey,
               model: resolvedModel,
-              customKey: providerType === 'openrouter' ? current.customKey : true,
+              customKey: providerType === 'openrouter' ? current.customKey : providerType !== 'moon',
               provider: providerType,
               customBaseUrl: providerType === 'custom' ? baseUrl : undefined,
-              wireApi,
+              wireApi: providerType === 'moon' ? undefined : wireApi,
               providerKeys: prevKeys,
             }
-            await writeFile(statePath, JSON.stringify(state), 'utf8')
-            appServer.dispose()
+            applyActiveFreeModeState(state)
+
             setJson(res, 200, { ok: true })
           } catch (error) {
             setJson(res, 500, { error: getErrorMessage(error, 'Failed to set custom provider') })
@@ -6204,6 +6719,20 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'POST' && url.pathname === '/codex-api/debug-log') {
+        const payload = await readJsonBody(req)
+        const record = asRecord(payload)
+        if (record) {
+          writeDebugLog(
+            typeof record.tag === 'string' ? record.tag : 'unknown',
+            typeof record.message === 'string' ? record.message : JSON.stringify(payload ?? {}),
+            asRecord(record.extra) ?? undefined,
+          ).catch(() => {})
+        }
+        setJson(res, 200, { ok: true })
+        return
+      }
+
       if (req.method === 'POST' && url.pathname === '/codex-api/rpc') {
         const payload = await readJsonBody(req)
         const body = asRecord(payload) as RpcProxyRequest | null
@@ -6212,53 +6741,87 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
         rpcMethod = body?.method && typeof body.method === 'string' ? body.method : null
 
-	        if (!body || typeof body.method !== 'string' || body.method.length === 0) {
-	          setJson(res, 400, { error: 'Invalid body: expected { method, params? }' })
-	          return
-	        }
+        if (!body || typeof body.method !== 'string' || body.method.length === 0) {
+          setJson(res, 400, { error: 'Invalid body: expected { method, params? }' })
+          return
+        }
 
-	        if (body.method === 'generate-thread-title') {
-	          setJson(res, 200, { result: { title: '' } })
-	          return
-	        }
+        if (body.method === 'generate-thread-title') {
+          setJson(res, 200, { result: { title: '' } })
+          return
+        }
 
-	        if (body.method === 'account/rateLimits/read' && !(await hasUsableCodexAuth())) {
-	          setJson(res, 200, { result: null })
-	          return
-	        }
+        if (body.method === 'account/rateLimits/read' && !(await hasUsableCodexAuth())) {
+          setJson(res, 200, { result: null })
+          return
+        }
+
+        if (body.method === 'turn/interrupt') {
+          const paramsRecord = body.params !== null && typeof body.params === 'object' && !Array.isArray(body.params)
+            ? body.params as Record<string, unknown>
+            : null
+          const threadId = typeof paramsRecord?.threadId === 'string' ? paramsRecord.threadId : ''
+          const turnId = typeof paramsRecord?.turnId === 'string' ? paramsRecord.turnId : ''
+          backendQueueProcessor.recordIntentionalInterrupt(threadId, turnId)
+          writeDebugLog('rpc-turn-interrupt', 'RPC turn/interrupt received', {
+            threadId,
+            turnId,
+          }).catch(() => {})
+        }
 
         let rpcResult: unknown
         try {
           rpcResult = await callRpcWithArchiveRecovery(appServer, body.method, body.params ?? null)
         } catch (error) {
-	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {
-	            setJson(res, 200, { result: null })
-	            return
-	          }
-	          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
-	            const params = asRecord(body.params)
-	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
-	            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
-	            if (snapshot) {
-	              setJson(res, 200, { result: snapshot })
-	              return
-	            }
-	          }
-	          throw error
-	        }
-        const trimmedResult = trimThreadTurnsInRpcResult(body.method, rpcResult)
-        const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
-        const result = THREAD_METHODS_WITH_TURNS.has(body.method)
-          ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
-          : sanitizedResult
-
-	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
-	          const rpcRecord = asRecord(result)
-	          const rpcThread = asRecord(rpcRecord?.thread)
-	          const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
-          if (rpcThreadId) {
-            appServer.storeThreadReadSnapshot(rpcThreadId, result)
+          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {
+            setJson(res, 200, { result: null })
+            return
           }
+          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
+            const params = asRecord(body.params)
+            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
+            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
+            if (snapshot) {
+              setJson(res, 200, { result: snapshot })
+              return
+            }
+          }
+          throw error
+        }
+
+        let result = rpcResult
+
+        if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
+          const resultRecord = asRecord(result)
+          const resultThread = asRecord(resultRecord?.thread)
+          const sessionPath = readNonEmptyString(resultThread?.path)
+          let sessionLogRaw: string | null = null
+          if (sessionPath && isAbsolute(sessionPath)) {
+            try {
+              sessionLogRaw = await readFile(sessionPath, 'utf8')
+            } catch {
+              sessionLogRaw = null
+            }
+          }
+
+          result = mergeRecoveredTurnItemsIntoThreadResult(
+            result,
+            (threadId, turns) => appServer.mergeItemsIntoTurns(threadId, turns),
+            sessionLogRaw,
+          )
+        }
+
+        result = trimThreadTurnsInRpcResult(body.method, result)
+        result = await sanitizeThreadTurnsInlinePayloads(body.method, result)
+        if (THREAD_METHODS_WITH_TURNS.has(body.method)) {
+          result = await mergeSessionSkillInputsIntoThreadResult(result)
+        }
+
+        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
+          const rpcRecord = asRecord(result)
+          const rpcThread = asRecord(rpcRecord?.thread)
+          const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
+          if (rpcThreadId) appServer.storeThreadReadSnapshot(rpcThreadId, result)
         }
 
         setJson(res, 200, { result })
@@ -6645,53 +7208,72 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/codex-api/moonbridge/models') {
+        setJson(res, 200, { data: getMoonBridgeModels(), source: 'moon' })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/moonbridge/model-metadata') {
+        setJson(res, 200, { data: getMoonBridgeModelMetadata(), source: 'moon' })
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/provider-models') {
-        try {
-          const fmState = ensureDefaultFreeModeStateForMissingAuthSync(join(getCodexHomeDir(), FREE_MODE_STATE_FILE))
-          if (fmState?.enabled) {
-            if (fmState.provider === 'opencode-zen') {
-              try {
-                const modelIds = sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(fmState.apiKey))
-                if (modelIds.length > 0) {
-                  setJson(res, 200, { data: modelIds, exclusive: true, source: 'opencode-zen' })
-                  return
-                }
-              } catch {
-                // OpenCode Zen model fetch failed
-              }
-              setJson(res, 200, { data: ['big-pickle', 'minimax-m2.5-free', 'nemotron-3-super-free', 'trinity-large-preview-free'], exclusive: true, source: 'opencode-zen' })
-              return
-            }
-            if (fmState.provider === 'custom' && fmState.customBaseUrl) {
-              try {
-                const modelsUrl = fmState.customBaseUrl.replace(/\/+$/, '') + '/models'
-                const headers: Record<string, string> = {}
-                if (fmState.apiKey && fmState.apiKey !== 'dummy') {
-                  headers['Authorization'] = `Bearer ${fmState.apiKey}`
-                }
-                const resp = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(8000) })
-                if (resp.ok) {
-                  const json = await resp.json() as unknown
-                  const ids = normalizeProviderModelsData(json)
-                  const currentModel = fmState.model?.trim() ?? ''
-                  const orderedIds = currentModel && ids.includes(currentModel)
-                    ? [currentModel, ...ids.filter((id) => id !== currentModel)]
-                    : ids
-                  setJson(res, 200, { data: orderedIds, exclusive: true, source: 'custom' })
-                  return
-                }
-              } catch {
-                // Custom endpoint model fetch failed — return empty list
-              }
-              setJson(res, 200, { data: [], exclusive: true, source: 'custom' })
-              return
-            }
-            const freeModels = await getFreeModels()
-            setJson(res, 200, { data: freeModels, exclusive: true })
+        const fmState = appServer.getFreeModeState()
+        if (fmState.enabled) {
+          if (fmState.provider === MOONBRIDGE_PROVIDER_ID) {
+            setJson(res, 200, { data: getMoonBridgeModels(), exclusive: true, source: 'moon' })
             return
           }
-        } catch {
-          // No free-mode state — proceed normally
+          if (fmState.provider === 'opencode-zen') {
+            try {
+              const modelsUrl = 'https://opencode.ai/zen/v1/models'
+              const headers: Record<string, string> = {}
+              if (fmState.apiKey && fmState.apiKey !== 'dummy') {
+                headers['Authorization'] = `Bearer ${fmState.apiKey}`
+              }
+              const resp = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(8000) })
+              if (resp.ok) {
+                const json = await resp.json() as { data?: Array<{ id: string }> }
+                const allIds = (json.data ?? []).map(m => m.id).filter(Boolean)
+                const freeIds = allIds.filter(id => id.endsWith('-free') || id === 'big-pickle')
+                const paidIds = allIds.filter(id => !id.endsWith('-free') && id !== 'big-pickle')
+                setJson(res, 200, { data: [...freeIds, ...paidIds], exclusive: true, source: 'opencode-zen' })
+                return
+              }
+            } catch {
+              // OpenCode Zen model fetch failed
+            }
+            setJson(res, 200, { data: ['big-pickle', 'minimax-m2.5-free', 'nemotron-3-super-free', 'trinity-large-preview-free'], exclusive: true, source: 'opencode-zen' })
+            return
+          }
+          if (fmState.provider === 'custom' && fmState.customBaseUrl) {
+            try {
+              const modelsUrl = fmState.customBaseUrl.replace(/\/+$/, '') + '/models'
+              const headers: Record<string, string> = {}
+              if (fmState.apiKey && fmState.apiKey !== 'dummy') {
+                headers['Authorization'] = `Bearer ${fmState.apiKey}`
+              }
+              const resp = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(8000) })
+              if (resp.ok) {
+                const json = await resp.json() as unknown
+                const ids = normalizeProviderModelsData(json)
+                const currentModel = fmState.model?.trim() ?? ''
+                const orderedIds = currentModel && ids.includes(currentModel)
+                  ? [currentModel, ...ids.filter((id) => id !== currentModel)]
+                  : ids
+                setJson(res, 200, { data: orderedIds, exclusive: true, source: 'custom' })
+                return
+              }
+            } catch {
+              // Custom endpoint model fetch failed — return empty list
+            }
+            setJson(res, 200, { data: [], exclusive: true, source: 'custom' })
+            return
+          }
+          const freeModels = await getFreeModels()
+          setJson(res, 200, { data: freeModels, exclusive: true })
+          return
         }
         const data = await readProviderBackedModelIds(appServer)
         setJson(res, 200, data)
@@ -7362,16 +7944,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
-          const files = await listFilesWithRipgrep(cwd)
-          const scored = files
-            .map((path) => ({ path, score: scoreFileCandidate(path, query) }))
-            .filter((row) => query.length === 0 || row.score < 10)
-            .sort((a, b) => (a.score - b.score) || a.path.localeCompare(b.path))
-            .slice(0, limit)
-            .map((row) => ({ path: row.path }))
-          setJson(res, 200, { data: scored })
+          const paths = await searchComposerPaths(cwd, query, limit)
+          setJson(res, 200, { data: paths })
         } catch (error) {
-          setJson(res, 500, { error: getErrorMessage(error, 'Failed to search files') })
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to search paths') })
         }
         return
       }
@@ -7688,19 +8264,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
   middleware.dispose = () => {
     threadSearchIndex = null
-    telegramBridge.stop()
-    terminalManager.dispose()
-    backendQueueProcessor.dispose()
-    appServer.dispose()
+    threadSearchIndexPromise = null
+    disposeSharedBridgeState(sharedBridgeState)
   }
   middleware.subscribeNotifications = (
     listener: (value: { method: string; params: unknown; atIso: string }) => void,
   ) => {
-    const unsubscribeAppServer = appServer.onNotification((notification: { method: string; params: unknown }) => {
-      listener({
-        ...notification,
-        atIso: new Date().toISOString(),
-      })
+    const unsubscribeAppServer = runtimePool.subscribeNotifications((notification) => {
+      listener(notification)
     })
     const unsubscribeTerminal = terminalManager.subscribe((notification) => {
       listener({

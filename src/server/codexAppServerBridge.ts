@@ -1027,6 +1027,40 @@ function readNonEmptyString(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : ''
 }
 
+function readProtocolToken(value: unknown): string {
+  return readNonEmptyString(value).trim().toLowerCase()
+}
+
+type InterruptedTurnAutoContinueSnapshot = {
+  threadId: string
+  turnId: string
+}
+
+export function shouldAutoContinueInterruptedThreadFromThreadRead(
+  response: unknown,
+  intentionalInterruptTurnIds: ReadonlySet<string>,
+): InterruptedTurnAutoContinueSnapshot | null {
+  const record = asRecord(response)
+  const thread = asRecord(record?.thread)
+  if (!thread) return null
+
+  const threadStatus = asRecord(thread.status)
+  if (readProtocolToken(threadStatus?.type) !== 'idle') return null
+
+  const turns = Array.isArray(thread.turns) ? thread.turns : []
+  const latestTurn = asRecord(turns.at(-1))
+  const threadId = readNonEmptyString(thread.id).trim()
+  const turnId = readNonEmptyString(latestTurn?.id).trim()
+  if (!threadId || !turnId) return null
+  if (intentionalInterruptTurnIds.has(turnId)) return null
+  if (readProtocolToken(latestTurn?.status) !== 'interrupted') return null
+
+  return {
+    threadId,
+    turnId,
+  }
+}
+
 type TerminalQuickCommand = {
   label: string
   value: string
@@ -3216,6 +3250,8 @@ async function writePinnedThreadIds(threadIds: string[]): Promise<void> {
 
 const FIRST_LAUNCH_PLUGINS_CARD_DISMISSED_KEY = 'first-launch-plugins-card-dismissed'
 const THREAD_QUEUE_STATE_KEY = 'thread-queue-state'
+const INTENTIONAL_INTERRUPT_TURN_IDS_KEY = 'intentional-interrupt-turn-ids'
+const MAX_INTENTIONAL_INTERRUPT_TURN_IDS = 500
 
 type StoredQueuedMessage = {
   id: string
@@ -3297,6 +3333,18 @@ function normalizeThreadQueueState(value: unknown): ThreadQueueState {
   return state
 }
 
+function normalizeIntentionalInterruptTurnIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const ids: string[] = []
+  for (const item of value) {
+    const id = typeof item === 'string' ? item.trim() : ''
+    if (id && !ids.includes(id)) {
+      ids.push(id)
+    }
+  }
+  return ids.slice(-MAX_INTENTIONAL_INTERRUPT_TURN_IDS)
+}
+
 async function readThreadQueueState(): Promise<ThreadQueueState> {
   const statePath = getCodexGlobalStatePath()
   try {
@@ -3306,6 +3354,37 @@ async function readThreadQueueState(): Promise<ThreadQueueState> {
   } catch {
     return {}
   }
+}
+
+async function readIntentionalInterruptTurnIds(): Promise<Set<string>> {
+  const statePath = getCodexGlobalStatePath()
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    const payload = asRecord(JSON.parse(raw)) ?? {}
+    return new Set(normalizeIntentionalInterruptTurnIds(payload[INTENTIONAL_INTERRUPT_TURN_IDS_KEY]))
+  } catch {
+    return new Set()
+  }
+}
+
+async function rememberIntentionalInterruptTurnId(turnId: string): Promise<void> {
+  const normalizedTurnId = turnId.trim()
+  if (!normalizedTurnId) return
+
+  const statePath = getCodexGlobalStatePath()
+  let payload: Record<string, unknown> = {}
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    payload = asRecord(JSON.parse(raw)) ?? {}
+  } catch {
+    payload = {}
+  }
+
+  const ids = normalizeIntentionalInterruptTurnIds(payload[INTENTIONAL_INTERRUPT_TURN_IDS_KEY])
+  const nextIds = ids.filter((id) => id !== normalizedTurnId)
+  nextIds.push(normalizedTurnId)
+  payload[INTENTIONAL_INTERRUPT_TURN_IDS_KEY] = nextIds.slice(-MAX_INTENTIONAL_INTERRUPT_TURN_IDS)
+  await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }
 
 async function writeThreadQueueState(nextState: ThreadQueueState): Promise<void> {
@@ -4411,15 +4490,28 @@ class AppServerProcess {
 class BackendQueueProcessor {
   private readonly processingThreadIds = new Set<string>()
   private readonly queueDrainTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly interruptedTurnCheckTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly intentionalInterruptTurnIds = new Set<string>()
+  private readonly autoContinueInFlightThreadIds = new Set<string>()
+  private readonly autoContinuedInterruptedTurnIds = new Set<string>()
   private readonly unsubscribe: () => void
+  private intentionalInterruptTurnIdsReady: Promise<void> = Promise.resolve()
 
   constructor(private readonly appServer: AppServerProcess) {
     this.unsubscribe = appServer.onNotification((notification) => {
-      if (!isTurnCompletedNotification(notification)) return
-      const threadId = extractThreadIdFromNotificationParams(notification.params)
-      if (!threadId) return
-      void this.processThreadQueue(threadId)
+      if (isTurnCompletedNotification(notification)) {
+        void this.handleTurnCompletedNotification(notification)
+        return
+      }
+
+      if (notification.method === 'thread/status/changed') {
+        const threadId = extractThreadIdFromNotificationParams(notification.params)
+        if (threadId) {
+          this.scheduleInterruptedTurnCheck(threadId)
+        }
+      }
     })
+    this.intentionalInterruptTurnIdsReady = this.loadIntentionalInterruptTurnIds()
     void this.scheduleAllQueuedThreads(1000)
   }
 
@@ -4429,7 +4521,22 @@ class BackendQueueProcessor {
       clearTimeout(timer)
     }
     this.queueDrainTimersByThreadId.clear()
+    for (const timer of this.interruptedTurnCheckTimersByThreadId.values()) {
+      clearTimeout(timer)
+    }
+    this.interruptedTurnCheckTimersByThreadId.clear()
     this.processingThreadIds.clear()
+    this.intentionalInterruptTurnIds.clear()
+    this.autoContinueInFlightThreadIds.clear()
+    this.autoContinuedInterruptedTurnIds.clear()
+  }
+
+  recordIntentionalInterrupt(threadId: string, turnId: string): void {
+    const normalizedThreadId = threadId.trim()
+    const normalizedTurnId = turnId.trim()
+    if (!normalizedThreadId || !normalizedTurnId) return
+    this.intentionalInterruptTurnIds.add(normalizedTurnId)
+    rememberIntentionalInterruptTurnId(normalizedTurnId).catch(() => {})
   }
 
   async scheduleAllQueuedThreads(delayMs = 0): Promise<void> {
@@ -4451,6 +4558,20 @@ class BackendQueueProcessor {
     }, Math.max(0, delayMs))
     timer.unref?.()
     this.queueDrainTimersByThreadId.set(threadId, timer)
+  }
+
+  scheduleInterruptedTurnCheck(threadId: string, delayMs = 250): void {
+    if (!threadId) return
+    const existingTimer = this.interruptedTurnCheckTimersByThreadId.get(threadId)
+    if (existingTimer) {
+      clearTimeout(existingTimer)
+    }
+    const timer = setTimeout(() => {
+      this.interruptedTurnCheckTimersByThreadId.delete(threadId)
+      void this.maybeAutoContinueInterruptedThread(threadId, 'thread/status/changed')
+    }, Math.max(0, delayMs))
+    timer.unref?.()
+    this.interruptedTurnCheckTimersByThreadId.set(threadId, timer)
   }
 
   async processThreadQueue(threadId: string): Promise<void> {
@@ -4480,6 +4601,130 @@ class BackendQueueProcessor {
       this.scheduleThreadQueueDrain(threadId)
     } finally {
       this.processingThreadIds.delete(threadId)
+    }
+  }
+
+  private async handleTurnCompletedNotification(notification: { method: string; params: unknown }): Promise<void> {
+    const turn = this.readCompletedTurnNotification(notification)
+    if (!turn) return
+
+    if (readProtocolToken(turn.status) === 'interrupted') {
+      const autoContinued = await this.maybeAutoContinueInterruptedThread(turn.threadId, 'turn/completed', turn.turnId)
+      if (autoContinued) {
+        return
+      }
+    }
+
+    void this.processThreadQueue(turn.threadId)
+  }
+
+  private readCompletedTurnNotification(notification: { method: string; params: unknown }): { threadId: string; turnId: string; status: string } | null {
+    if (!isTurnCompletedNotification(notification)) return null
+    const params = asRecord(notification.params)
+    if (!params) return null
+
+    const threadId = extractThreadIdFromNotificationParams(params)
+    if (!threadId) return null
+
+    const turn = asRecord(params.turn)
+    const turnId = readNonEmptyString(turn?.id) || readNonEmptyString(params.turnId) || readNonEmptyString(params.turn_id)
+    if (!turnId) return null
+
+    return {
+      threadId,
+      turnId,
+      status: readNonEmptyString(turn?.status).trim(),
+    }
+  }
+
+  private async loadIntentionalInterruptTurnIds(): Promise<void> {
+    try {
+      const ids = await readIntentionalInterruptTurnIds()
+      for (const id of ids) {
+        this.intentionalInterruptTurnIds.add(id)
+      }
+    } catch {
+      // Intentional stop recovery is best-effort; live turn/interrupt RPCs still mark stops.
+    }
+  }
+
+  private async maybeAutoContinueInterruptedThread(
+    threadId: string,
+    source: 'turn/completed' | 'thread/status/changed',
+    completedTurnId = '',
+  ): Promise<boolean> {
+    const normalizedThreadId = threadId.trim()
+    const normalizedCompletedTurnId = completedTurnId.trim()
+    if (!normalizedThreadId) return false
+    if (this.autoContinueInFlightThreadIds.has(normalizedThreadId)) return false
+    await this.intentionalInterruptTurnIdsReady
+
+    let response: unknown = null
+    try {
+      response = await this.appServer.rpc('thread/read', {
+        threadId: normalizedThreadId,
+        includeTurns: true,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[DEBUG:BackendQueueProcessor] interrupted-turn inspection failed — threadId=%s source=%s error=%s', normalizedThreadId, source, message)
+      writeDebugLog('auto-continue-interrupted-turn-read-failed', 'Interrupted turn inspection failed', {
+        threadId: normalizedThreadId,
+        source,
+        error: message,
+      }).catch(() => {})
+      return false
+    }
+
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead(response, this.intentionalInterruptTurnIds)
+    if (!snapshot) {
+      return false
+    }
+    if (normalizedCompletedTurnId && snapshot.turnId !== normalizedCompletedTurnId && source === 'turn/completed') {
+      return false
+    }
+    if (this.autoContinuedInterruptedTurnIds.has(snapshot.turnId)) {
+      return false
+    }
+
+    this.autoContinueInFlightThreadIds.add(normalizedThreadId)
+    try {
+      console.warn('[DEBUG:BackendQueueProcessor] auto-continuing interrupted turn — threadId=%s turnId=%s source=%s', snapshot.threadId, snapshot.turnId, source)
+      writeDebugLog('auto-continue-interrupted-turn', 'Auto-continuing interrupted turn', {
+        threadId: snapshot.threadId,
+        turnId: snapshot.turnId,
+        source,
+      }).catch(() => {})
+      const resumeResult = asRecord(await this.appServer.rpc('thread/resume', {
+        threadId: snapshot.threadId,
+        persistExtendedHistory: true,
+      }))
+      const turnStartParams: Record<string, unknown> = {
+        threadId: snapshot.threadId,
+        input: [{
+          type: 'text',
+          text: 'Please continue.',
+        }],
+      }
+      const resumedModel = readNonEmptyString(resumeResult?.model).trim()
+      if (resumedModel) {
+        turnStartParams.model = resumedModel
+      }
+      await this.appServer.rpc('turn/start', turnStartParams)
+      this.autoContinuedInterruptedTurnIds.add(snapshot.turnId)
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[DEBUG:BackendQueueProcessor] auto-continue interrupted turn failed — threadId=%s turnId=%s error=%s', snapshot.threadId, snapshot.turnId, message)
+      writeDebugLog('auto-continue-interrupted-turn-failed', 'Auto-continue interrupted turn failed', {
+        threadId: snapshot.threadId,
+        turnId: snapshot.turnId,
+        source,
+        error: message,
+      }).catch(() => {})
+      return false
+    } finally {
+      this.autoContinueInFlightThreadIds.delete(normalizedThreadId)
     }
   }
 
@@ -5401,9 +5646,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           const paramsRecord = body.params !== null && typeof body.params === 'object' && !Array.isArray(body.params)
             ? body.params as Record<string, unknown>
             : null
+          const threadId = typeof paramsRecord?.threadId === 'string' ? paramsRecord.threadId : ''
+          const turnId = typeof paramsRecord?.turnId === 'string' ? paramsRecord.turnId : ''
+          backendQueueProcessor.recordIntentionalInterrupt(threadId, turnId)
           writeDebugLog('rpc-turn-interrupt', 'RPC turn/interrupt received', {
-            threadId: typeof paramsRecord?.threadId === 'string' ? paramsRecord.threadId : '',
-            turnId: typeof paramsRecord?.turnId === 'string' ? paramsRecord.turnId : '',
+            threadId,
+            turnId,
           }).catch(() => {})
         }
 

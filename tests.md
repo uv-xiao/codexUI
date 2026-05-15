@@ -5120,3 +5120,30 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No cleanup is required.
+
+### Feature: Auto-continue unexpectedly interrupted Codex turns
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread has an active Codex turn that can be interrupted by the backend or by a transient browser/session reconnect.
+- Debug logging is available for the local run if deeper inspection is needed.
+
+#### Steps
+1. Start a long-running turn in a thread.
+2. Trigger a non-user interruption condition such as refreshing the page or switching sessions while the turn is active.
+3. Wait for the app-server thread status to return to idle.
+4. Confirm the bridge starts a follow-up turn with `Please continue.` automatically.
+5. Start another long-running turn and click the UI stop button.
+6. Confirm the stopped turn does not auto-continue.
+7. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/api/normalizers/v2.test.ts`.
+
+#### Expected Results
+- Latest interrupted turns on idle threads are detected from `thread/read` snapshots.
+- Interruptions caused by `turn/interrupt` are recorded as intentional stops and skipped.
+- The automatic continuation resumes the thread before calling `turn/start`.
+- The automatic continuation reuses the model returned by `thread/resume` when available.
+- The targeted Vitest suite passes.
+
+#### Rollback/Cleanup
+- Stop any disposable test turn from the UI if it is still running.
+- Remove only temporary test threads if they were created solely for validation.

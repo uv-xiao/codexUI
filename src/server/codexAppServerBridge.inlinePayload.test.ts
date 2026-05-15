@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { mergeRecoveredTurnItemsIntoThreadResult, sanitizeThreadTurnsInlinePayloads } from './codexAppServerBridge'
+import {
+  mergeRecoveredTurnItemsIntoThreadResult,
+  sanitizeThreadTurnsInlinePayloads,
+  shouldAutoContinueInterruptedThreadFromThreadRead,
+} from './codexAppServerBridge'
 
 const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 const pngDataUrl = `data:image/png;base64,${pngBase64}`
@@ -224,6 +228,59 @@ describe('thread inline media sanitization', () => {
     const result = await sanitizeThreadTurnsInlinePayloads('thread/list', payload)
 
     expect(result).toBe(payload)
+  })
+})
+
+describe('interrupted turn auto-continue detection', () => {
+  it('detects the latest interrupted turn on an idle thread', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: ' thread-1 ',
+        status: { type: ' idle ' },
+        turns: [
+          { id: 'turn-1', status: 'completed' },
+          { id: ' turn-2 ', status: ' interrupted ' },
+        ],
+      },
+    }, new Set())
+
+    expect(snapshot).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-2',
+    })
+  })
+
+  it('ignores user-stopped interrupted turns', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [{ id: 'turn-1', status: 'interrupted' }],
+      },
+    }, new Set(['turn-1']))
+
+    expect(snapshot).toBeNull()
+  })
+
+  it('ignores active threads and non-interrupted latest turns', () => {
+    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'inProgress' },
+        turns: [{ id: 'turn-1', status: 'interrupted' }],
+      },
+    }, new Set())).toBeNull()
+
+    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [
+          { id: 'turn-1', status: 'interrupted' },
+          { id: 'turn-2', status: 'completed' },
+        ],
+      },
+    }, new Set())).toBeNull()
   })
 })
 

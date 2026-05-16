@@ -7197,7 +7197,12 @@ export class BackendQueueProcessor {
     this.queueDrainDueAtByThreadId.set(threadId, nextDueAt)
   }
 
-  scheduleInterruptedTurnCheck(threadId: string, delayMs = 250): void {
+  scheduleInterruptedTurnCheck(
+    threadId: string,
+    delayMs = 250,
+    source: 'turn/completed' | 'thread/status/changed' = 'thread/status/changed',
+    completedTurnId = '',
+  ): void {
     if (!threadId) return
     const existingTimer = this.interruptedTurnCheckTimersByThreadId.get(threadId)
     if (existingTimer) {
@@ -7205,7 +7210,7 @@ export class BackendQueueProcessor {
     }
     const timer = setTimeout(() => {
       this.interruptedTurnCheckTimersByThreadId.delete(threadId)
-      void this.maybeAutoContinueInterruptedThread(threadId, 'thread/status/changed')
+      void this.maybeAutoContinueInterruptedThread(threadId, source, completedTurnId)
     }, Math.max(0, delayMs))
     timer.unref?.()
     this.interruptedTurnCheckTimersByThreadId.set(threadId, timer)
@@ -7246,10 +7251,8 @@ export class BackendQueueProcessor {
     if (!turn) return
 
     if (readProtocolToken(turn.status) === 'interrupted') {
-      const autoContinued = await this.maybeAutoContinueInterruptedThread(turn.threadId, 'turn/completed', turn.turnId)
-      if (autoContinued) {
-        return
-      }
+      this.scheduleInterruptedTurnCheck(turn.threadId, 250, 'turn/completed', turn.turnId)
+      return
     }
 
     void this.processThreadQueue(turn.threadId)

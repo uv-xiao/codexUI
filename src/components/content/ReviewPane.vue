@@ -1,5 +1,5 @@
 <template>
-  <section class="review-pane" :class="{ 'is-mobile': isMobile }" @pointerdown.stop @click.stop>
+  <section class="review-pane" :class="{ 'is-mobile': isMobile }" @click.stop>
     <header class="review-pane-header">
       <div class="review-pane-heading">
         <p class="review-pane-eyebrow">{{ t('Review') }}</p>
@@ -7,7 +7,7 @@
       </div>
       <div class="review-pane-header-actions">
         <button
-          v-if="isMobile && snapshot?.files.length"
+          v-if="isMobile && activeTab === 'changes' && snapshot?.files.length"
           type="button"
           class="review-pane-mobile-files-button"
           @click="isFileSheetOpen = true"
@@ -21,8 +21,23 @@
     </header>
 
     <div class="review-pane-toolbar">
+      <div class="review-pane-toolbar-tabs">
+        <div class="review-pane-segmented review-pane-segmented-primary">
+          <button
+            v-for="tab in reviewTabs"
+            :key="tab.value"
+            type="button"
+            class="review-pane-segmented-button review-pane-tab"
+            :data-active="activeTab === tab.value"
+            @click="activeTab = tab.value"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+      </div>
+
       <div class="review-pane-toolbar-controls">
-        <div v-if="!isCommitReview" class="review-pane-control-cluster">
+        <div class="review-pane-control-cluster">
           <span class="review-pane-control-label">{{ t('Compare') }}</span>
           <div class="review-pane-segmented">
             <button
@@ -45,7 +60,7 @@
           </div>
         </div>
 
-        <div v-if="!isCommitReview && activeScope === 'baseBranch' && snapshot?.baseBranchOptions.length" class="review-pane-control-cluster">
+        <div v-if="activeScope === 'baseBranch' && snapshot?.baseBranchOptions.length" class="review-pane-control-cluster">
           <span class="review-pane-control-label">{{ t('Branch') }}</span>
           <label class="review-pane-branch-select-wrap">
             <select
@@ -63,7 +78,7 @@
           </label>
         </div>
 
-        <div v-if="!isCommitReview && activeScope === 'workspace'" class="review-pane-control-cluster">
+        <div v-if="activeScope === 'workspace'" class="review-pane-control-cluster">
           <span class="review-pane-control-label">{{ t('Changes') }}</span>
           <div class="review-pane-segmented">
             <button
@@ -87,6 +102,14 @@
       </div>
 
       <div class="review-pane-toolbar-actions">
+        <button
+          type="button"
+          class="review-pane-run"
+          :disabled="!canRunReview || isRunningReview"
+          @click="runReview"
+        >
+          {{ isRunningReview ? t('Reviewing…') : t('Run review') }}
+        </button>
         <button type="button" class="review-pane-refresh" :disabled="isLoadingSnapshot" @click="reloadAll">
           {{ t('Refresh') }}
         </button>
@@ -102,11 +125,10 @@
       <span class="review-pane-summary-pill review-pane-summary-pill-add">+{{ snapshot.summary.addedLineCount }}</span>
       <span class="review-pane-summary-pill review-pane-summary-pill-remove">-{{ snapshot.summary.removedLineCount }}</span>
       <span v-if="snapshot.headBranch">{{ snapshot.headBranch }}</span>
-      <span v-if="isCommitReview && snapshot.commitSha">{{ shortCommitSha(snapshot.commitSha) }}</span>
-      <span v-if="!isCommitReview && activeScope === 'baseBranch' && snapshot.baseBranch">vs {{ snapshot.baseBranch }}</span>
+      <span v-if="activeScope === 'baseBranch' && snapshot.baseBranch">vs {{ snapshot.baseBranch }}</span>
     </div>
 
-    <div class="review-pane-content">
+    <div v-if="activeTab === 'changes'" class="review-pane-content">
       <template v-if="!snapshot">
         <div class="review-pane-empty">
           <p class="review-pane-empty-title">{{ t('Loading review state') }}</p>
@@ -123,7 +145,7 @@
         </div>
       </template>
 
-      <template v-else-if="!isCommitReview && activeScope === 'baseBranch' && !snapshot.baseBranch">
+      <template v-else-if="activeScope === 'baseBranch' && !snapshot.baseBranch">
         <div class="review-pane-empty">
           <p class="review-pane-empty-title">{{ t('Base branch unavailable') }}</p>
           <p class="review-pane-empty-text">{{ t('Could not resolve `origin/HEAD`, `main`, or `master` for this repository.') }}</p>
@@ -147,7 +169,7 @@
         <div v-if="!snapshot.files.length" class="review-pane-empty">
           <p class="review-pane-empty-title">{{ t('No changes in this scope') }}</p>
           <p class="review-pane-empty-text">
-            {{ emptyReviewMessage }}
+            {{ activeScope === 'workspace' ? t('Your current workspace is clean.') : t('No merge diff found against the base branch.') }}
           </p>
         </div>
 
@@ -171,15 +193,18 @@
                 v-else
                 type="button"
                 class="review-pane-file review-pane-tree-file"
-                :style="treeFileIndentStyle()"
+                :style="treeIndentStyle(node.depth)"
                 :data-active="selectedFile?.id === node.file.id"
                 :title="node.file.path"
                 @click="selectFile(node.file.id)"
               >
                 <span class="review-pane-file-meta-row">
-                  <span class="review-pane-file-path">
-                    {{ node.name }}
-                    <template v-if="node.file.previousPath"> ← {{ fileBaseName(node.file.previousPath) }}</template>
+                  <span class="review-pane-file-main">
+                    <span class="review-pane-file-op" :data-operation="node.file.operation">{{ formatOperation(node.file.operation) }}</span>
+                    <span class="review-pane-file-path">
+                      {{ node.name }}
+                      <template v-if="node.file.previousPath"> ← {{ fileBaseName(node.file.previousPath) }}</template>
+                    </span>
                   </span>
                   <span class="review-pane-file-delta">
                     <span class="review-pane-delta-add">+{{ node.file.addedLineCount }}</span>
@@ -187,7 +212,6 @@
                     <span class="review-pane-delta-remove">-{{ node.file.removedLineCount }}</span>
                   </span>
                 </span>
-                <span class="review-pane-file-op" :data-operation="node.file.operation">{{ formatOperation(node.file.operation) }}</span>
               </button>
             </template>
           </aside>
@@ -235,6 +259,7 @@
                 <article
                   v-for="hunk in selectedFile.hunks"
                   :key="hunk.id"
+                  :ref="(element) => bindHunkRef(hunk.id, element)"
                   class="review-pane-hunk"
                   :data-active="selectedHunkId === hunk.id"
                   @click="selectedHunkId = hunk.id"
@@ -279,6 +304,36 @@
       </template>
     </div>
 
+    <div v-else class="review-pane-findings">
+      <div v-if="currentReviewResult?.summary" class="review-pane-summary-card">
+        <p class="review-pane-summary-title">Summary</p>
+        <pre class="review-pane-summary-text">{{ currentReviewResult.summary }}</pre>
+      </div>
+
+      <div v-if="currentReviewResult?.findings.length" class="review-pane-findings-list">
+        <button
+          v-for="finding in currentReviewResult.findings"
+          :key="finding.id"
+          type="button"
+          class="review-pane-finding"
+          @click="openFinding(finding)"
+        >
+          <span class="review-pane-finding-title">{{ finding.title }}</span>
+          <span v-if="finding.absolutePath" class="review-pane-finding-location">
+            {{ formatFindingLocation(finding) }}
+          </span>
+          <span v-if="finding.body" class="review-pane-finding-body">{{ finding.body }}</span>
+        </button>
+      </div>
+
+      <div v-else class="review-pane-empty">
+        <p class="review-pane-empty-title">No structured findings yet</p>
+        <p class="review-pane-empty-text">
+          {{ currentReviewResult?.summary ? 'The latest review only returned summary text.' : 'Run review to populate this pane.' }}
+        </p>
+      </div>
+    </div>
+
     <Transition name="review-pane-sheet">
       <div
         v-if="isMobile && isFileSheetOpen && snapshot?.files.length"
@@ -310,15 +365,18 @@
                 v-else
                 type="button"
                 class="review-pane-file review-pane-tree-file"
-                :style="treeFileIndentStyle()"
+                :style="treeIndentStyle(node.depth)"
                 :data-active="selectedFile?.id === node.file.id"
                 :title="node.file.path"
                 @click="selectFile(node.file.id)"
               >
                 <span class="review-pane-file-meta-row">
-                  <span class="review-pane-file-path">
-                    {{ node.name }}
-                    <template v-if="node.file.previousPath"> ← {{ fileBaseName(node.file.previousPath) }}</template>
+                  <span class="review-pane-file-main">
+                    <span class="review-pane-file-op" :data-operation="node.file.operation">{{ formatOperation(node.file.operation) }}</span>
+                    <span class="review-pane-file-path">
+                      {{ node.name }}
+                      <template v-if="node.file.previousPath"> ← {{ fileBaseName(node.file.previousPath) }}</template>
+                    </span>
                   </span>
                   <span class="review-pane-file-delta">
                     <span class="review-pane-delta-add">+{{ node.file.addedLineCount }}</span>
@@ -326,7 +384,6 @@
                     <span class="review-pane-delta-remove">-{{ node.file.removedLineCount }}</span>
                   </span>
                 </span>
-                <span class="review-pane-file-op" :data-operation="node.file.operation">{{ formatOperation(node.file.operation) }}</span>
               </button>
             </template>
           </div>
@@ -337,11 +394,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   applyReviewAction,
   getReviewSnapshot,
+  getThreadReviewResult,
   initializeReviewGit,
+  startThreadReview,
   subscribeCodexNotifications,
   type RpcNotification,
 } from '../../api/codexGateway'
@@ -349,8 +408,11 @@ import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import type {
   UiReviewAction,
+  UiReviewFinding,
+  UiReviewResult,
   UiReviewScope,
   UiReviewSnapshot,
+  UiReviewTab,
   UiReviewWorkspaceView,
   UiReviewFile,
   UiReviewHunk,
@@ -361,8 +423,6 @@ const props = defineProps<{
   threadId: string
   cwd: string
   isThreadInProgress: boolean
-  initialFilePath?: string
-  commitSha?: string
 }>()
 
 defineEmits<{
@@ -372,6 +432,7 @@ defineEmits<{
 const { isMobile } = useMobile()
 const { t } = useUiLanguage()
 
+const activeTab = ref<UiReviewTab>('changes')
 const activeScope = ref<UiReviewScope>('workspace')
 const workspaceView = ref<UiReviewWorkspaceView>('unstaged')
 const snapshot = ref<UiReviewSnapshot | null>(null)
@@ -382,12 +443,21 @@ const selectedHunkId = ref('')
 const isFileSheetOpen = ref(false)
 const isLoadingSnapshot = ref(false)
 const isApplyingAction = ref(false)
+const isRunningReview = ref(false)
 const isInitializingGit = ref(false)
 const snapshotError = ref('')
 const reviewError = ref('')
 const reviewStatusLabel = ref('')
+const reviewResultsByKey = ref<Record<string, UiReviewResult | null>>({})
+const pendingReviewKey = ref('')
+const hunkRefs = new Map<string, HTMLElement>()
 let stopNotifications: (() => void) | null = null
 let stopResizeTracking: (() => void) | null = null
+
+const reviewTabs = [
+  { value: 'changes' as const, label: t('Changes') },
+  { value: 'findings' as const, label: t('Findings') },
+]
 
 type ReviewTreeFolderNode = {
   kind: 'folder'
@@ -423,56 +493,29 @@ type MutableReviewTreeFolder = {
   files: MutableReviewTreeFile[]
 }
 
+const reviewKey = computed(() => `${activeScope.value}:${workspaceView.value}`)
+const currentReviewResult = computed(() => reviewResultsByKey.value[reviewKey.value] ?? null)
 const selectedFile = computed(() => snapshot.value?.files.find((file) => file.id === selectedFileId.value) ?? snapshot.value?.files[0] ?? null)
 const folderExpansionState = ref<Record<string, boolean>>({})
-const isCommitReview = computed(() => Boolean(props.commitSha?.trim()))
-const emptyReviewMessage = computed(() => {
-  if (snapshot.value?.scope === 'commit' || isCommitReview.value) {
-    return t('No file changes in this commit.')
-  }
-  return activeScope.value === 'workspace'
-    ? t('Your current workspace is clean.')
-    : t('No merge diff found against the base branch.')
-})
-
-function normalizeReviewPath(filePath: string): string {
-  return filePath.trim().replace(/\\/g, '/')
-}
-
-function findFileByPath(filePath: string): UiReviewFile | null {
-  const targetPath = normalizeReviewPath(filePath)
-  if (!targetPath || !snapshot.value) return null
-  return snapshot.value.files.find((file) => {
-    return [
-      file.path,
-      file.absolutePath,
-      file.previousPath,
-      file.previousAbsolutePath,
-    ].some((candidate) => typeof candidate === 'string' && normalizeReviewPath(candidate) === targetPath)
-  }) ?? null
-}
-
-function selectInitialFilePath(): boolean {
-  const targetFile = findFileByPath(props.initialFilePath ?? '')
-  if (!targetFile) return false
-  selectFile(targetFile.id)
-  return true
-}
 
 const headerTitle = computed(() => {
   if (!snapshot.value?.isGitRepo) return t('Repository review')
-  if (isCommitReview.value) {
-    return snapshot.value.commitSha ? `${t('Commit')} ${shortCommitSha(snapshot.value.commitSha)}` : t('Commit')
-  }
   if (activeScope.value === 'workspace') {
     return workspaceView.value === 'staged' ? t('Staged changes') : t('Workspace changes')
   }
   return snapshot.value?.baseBranch ? `${t('Against')} ${snapshot.value.baseBranch}` : t('Base branch')
 })
 
+const canRunReview = computed(() => (
+  props.threadId.trim().length > 0
+  && props.cwd.trim().length > 0
+  && snapshot.value?.isGitRepo === true
+  && !props.isThreadInProgress
+  && !(activeScope.value === 'baseBranch' && !snapshot.value?.baseBranch)
+))
+
 const showBulkActions = computed(() => (
-  !isCommitReview.value
-  && activeScope.value === 'workspace'
+  activeScope.value === 'workspace'
   && snapshot.value?.isGitRepo === true
   && snapshot.value.files.length > 0
 ))
@@ -715,17 +758,19 @@ function treeIndentStyle(depth: number): Record<string, string> {
   }
 }
 
-function treeFileIndentStyle(): Record<string, string> {
-  return {
-    paddingLeft: isMobile.value ? '8px' : '10px',
-  }
-}
-
 function formatOperation(operation: string): string {
   if (operation === 'add') return 'Added'
   if (operation === 'delete') return 'Deleted'
   if (operation === 'rename') return 'Renamed'
   return 'Modified'
+}
+
+function bindHunkRef(hunkId: string, element: unknown): void {
+  if (!(element instanceof HTMLElement)) {
+    hunkRefs.delete(hunkId)
+    return
+  }
+  hunkRefs.set(hunkId, element)
 }
 
 function extractNotificationThreadId(notification: RpcNotification): string {
@@ -741,13 +786,11 @@ async function loadSnapshot(): Promise<void> {
   snapshotError.value = ''
   try {
     const desiredBaseBranch = activeScope.value === 'baseBranch' ? selectedBaseBranch.value.trim() : ''
-    const desiredCommitSha = props.commitSha?.trim() ?? ''
     const nextSnapshot = await getReviewSnapshot(
       props.cwd,
-      isCommitReview.value ? 'commit' : activeScope.value,
+      activeScope.value,
       workspaceView.value,
       desiredBaseBranch || null,
-      desiredCommitSha || null,
     )
     if (nextSnapshot.baseBranchOptions.length > 0) {
       const normalizedBaseBranch = nextSnapshot.baseBranch ?? nextSnapshot.baseBranchOptions[0] ?? ''
@@ -763,7 +806,7 @@ async function loadSnapshot(): Promise<void> {
     }
     snapshot.value = nextSnapshot
     const hasSelectedFile = nextSnapshot.files.some((file) => file.id === selectedFileId.value)
-    if (!selectInitialFilePath() && !hasSelectedFile) {
+    if (!hasSelectedFile) {
       selectedFileId.value = nextSnapshot.files[0]?.id ?? ''
       selectedHunkId.value = nextSnapshot.files[0]?.hunks[0]?.id ?? ''
     }
@@ -774,8 +817,26 @@ async function loadSnapshot(): Promise<void> {
   }
 }
 
+async function loadLatestReviewResult(): Promise<void> {
+  if (!props.threadId.trim()) return
+  try {
+    const reviewState = await getThreadReviewResult(props.threadId)
+    if (reviewState.result) {
+      reviewResultsByKey.value = {
+        ...reviewResultsByKey.value,
+        [reviewKey.value]: reviewState.result,
+      }
+    }
+  } catch {
+    // Keep the pane usable even if thread history refresh fails.
+  }
+}
+
 async function reloadAll(): Promise<void> {
-  await loadSnapshot()
+  await Promise.all([
+    loadSnapshot(),
+    loadLatestReviewResult(),
+  ])
 }
 
 function selectFile(fileId: string): void {
@@ -786,10 +847,6 @@ function selectFile(fileId: string): void {
   if (isMobile.value) {
     isFileSheetOpen.value = false
   }
-}
-
-function shortCommitSha(value: string): string {
-  return value.trim().slice(0, 7)
 }
 
 async function applyAction(action: UiReviewAction, level: 'all' | 'file' | 'hunk', patch = ''): Promise<void> {
@@ -845,6 +902,77 @@ async function initializeGit(): Promise<void> {
   }
 }
 
+async function runReview(): Promise<void> {
+  if (!canRunReview.value || isRunningReview.value) return
+  reviewError.value = ''
+  reviewStatusLabel.value = activeScope.value === 'workspace'
+    ? 'Reviewing current changes'
+    : `Reviewing against ${snapshot.value?.baseBranch ?? 'base branch'}`
+  isRunningReview.value = true
+  pendingReviewKey.value = reviewKey.value
+
+  try {
+    await startThreadReview(
+      props.threadId,
+      activeScope.value,
+      workspaceView.value,
+      selectedBaseBranch.value || (snapshot.value?.baseBranch ?? null),
+    )
+  } catch (error) {
+    isRunningReview.value = false
+    reviewStatusLabel.value = ''
+    reviewError.value = error instanceof Error ? error.message : 'Failed to start review'
+  }
+}
+
+function formatFindingLocation(finding: UiReviewFinding): string {
+  if (!finding.absolutePath) return ''
+  const lineSuffix = finding.startLine ? `:${finding.startLine}${finding.endLine && finding.endLine !== finding.startLine ? `-${finding.endLine}` : ''}` : ''
+  return `${finding.absolutePath}${lineSuffix}`
+}
+
+function findMatchingHunk(file: UiReviewFile, finding: UiReviewFinding): UiReviewHunk | null {
+  if (!finding.startLine) return file.hunks[0] ?? null
+  for (const hunk of file.hunks) {
+    if (hunk.newStart !== null) {
+      const newEnd = hunk.newStart + Math.max(hunk.newLineCount, 1) - 1
+      if (finding.startLine >= hunk.newStart && finding.startLine <= newEnd) {
+        return hunk
+      }
+    }
+    if (hunk.oldStart !== null) {
+      const oldEnd = hunk.oldStart + Math.max(hunk.oldLineCount, 1) - 1
+      if (finding.startLine >= hunk.oldStart && finding.startLine <= oldEnd) {
+        return hunk
+      }
+    }
+  }
+  return file.hunks[0] ?? null
+}
+
+async function scrollToHunk(hunkId: string): Promise<void> {
+  await nextTick()
+  const element = hunkRefs.get(hunkId)
+  element?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+async function openFinding(finding: UiReviewFinding): Promise<void> {
+  activeTab.value = 'changes'
+  const file = snapshot.value?.files.find((entry) => (
+    entry.absolutePath === finding.absolutePath
+    || entry.previousAbsolutePath === finding.absolutePath
+  )) ?? null
+  if (!file) return
+
+  expandFileAncestors(file.id)
+  selectedFileId.value = file.id
+  const matchedHunk = findMatchingHunk(file, finding)
+  selectedHunkId.value = matchedHunk?.id ?? ''
+  if (matchedHunk?.id) {
+    await scrollToHunk(matchedHunk.id)
+  }
+}
+
 function handleNotification(notification: RpcNotification): void {
   if (extractNotificationThreadId(notification) !== props.threadId) return
   const params = notification.params !== null && typeof notification.params === 'object' && !Array.isArray(notification.params)
@@ -856,33 +984,45 @@ function handleNotification(notification: RpcNotification): void {
   const itemType = typeof item?.type === 'string' ? item.type : ''
 
   if (notification.method === 'item/started' && itemType === 'enteredReviewMode') {
+    isRunningReview.value = true
     reviewStatusLabel.value = typeof item?.review === 'string' ? item.review : 'Review in progress'
     return
   }
 
   if (notification.method === 'item/completed' && itemType === 'exitedReviewMode') {
+    const targetKey = pendingReviewKey.value || reviewKey.value
+    isRunningReview.value = false
     reviewStatusLabel.value = ''
+    void getThreadReviewResult(props.threadId)
+      .then((reviewState) => {
+        if (!reviewState.result) return
+        reviewResultsByKey.value = {
+          ...reviewResultsByKey.value,
+          [targetKey]: reviewState.result,
+        }
+        activeTab.value = 'findings'
+      })
+      .catch((error) => {
+        reviewError.value = error instanceof Error ? error.message : 'Failed to load review result'
+      })
+      .finally(() => {
+        pendingReviewKey.value = ''
+      })
   }
 }
 
 watch(
-  () => [props.threadId, props.cwd, props.commitSha] as const,
+  () => [props.threadId, props.cwd] as const,
   () => {
-    if (isCommitReview.value) activeScope.value = 'workspace'
     selectedFileId.value = ''
     selectedHunkId.value = ''
+    reviewResultsByKey.value = {}
+    pendingReviewKey.value = ''
     reviewError.value = ''
     reviewStatusLabel.value = ''
     void reloadAll()
   },
   { immediate: true },
-)
-
-watch(
-  () => [props.initialFilePath, props.commitSha] as const,
-  () => {
-    selectInitialFilePath()
-  },
 )
 
 watch(
@@ -914,6 +1054,11 @@ watch(selectedFile, (file) => {
   }
 })
 
+watch(selectedHunkId, (hunkId) => {
+  if (!hunkId) return
+  void scrollToHunk(hunkId)
+})
+
 onMounted(() => {
   stopNotifications = subscribeCodexNotifications(handleNotification)
 })
@@ -931,11 +1076,11 @@ onBeforeUnmount(() => {
 @reference "tailwindcss";
 
 .review-pane {
-  @apply fixed inset-3 z-[1200] flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl;
+  @apply flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white;
 }
 
 .review-pane.is-mobile {
-  @apply inset-0 rounded-none border-0;
+  @apply fixed inset-0 z-40 rounded-none border-0;
 }
 
 .review-pane-header {
@@ -943,7 +1088,7 @@ onBeforeUnmount(() => {
 }
 
 .review-pane-heading {
-  @apply min-w-0 flex-1;
+  @apply min-w-0;
 }
 
 .review-pane-eyebrow {
@@ -955,12 +1100,13 @@ onBeforeUnmount(() => {
 }
 
 .review-pane-header-actions {
-  @apply flex shrink-0 items-center gap-2;
+  @apply flex items-center gap-2;
 }
 
 .review-pane-close,
 .review-pane-mobile-files-button,
 .review-pane-refresh,
+.review-pane-run,
 .review-pane-bulk-button,
 .review-pane-row-button,
 .review-pane-primary-cta {
@@ -968,11 +1114,15 @@ onBeforeUnmount(() => {
 }
 
 .review-pane-close {
-  @apply flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-full p-0;
+  @apply flex h-7.5 w-7.5 items-center justify-center rounded-full p-0;
 }
 
 .review-pane-toolbar {
   @apply flex flex-col gap-2 border-b border-zinc-100 px-3 py-2.5;
+}
+
+.review-pane-toolbar-tabs {
+  @apply min-w-0;
 }
 
 .review-pane-toolbar-controls {
@@ -999,6 +1149,10 @@ onBeforeUnmount(() => {
   @apply inline-flex min-w-0 items-center gap-1 rounded-full bg-zinc-100 p-1;
 }
 
+.review-pane-segmented-primary {
+  @apply flex-1 bg-zinc-100/80;
+}
+
 .review-pane-segmented-button {
   @apply relative min-w-0 rounded-full border border-transparent px-2.5 py-1.25 text-[11px] font-medium text-zinc-500 transition-colors;
 }
@@ -1022,6 +1176,10 @@ onBeforeUnmount(() => {
 
 .review-pane-toolbar-actions {
   @apply flex shrink-0 items-center gap-1.5;
+}
+
+.review-pane-run {
+  @apply border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700;
 }
 
 .review-pane-refresh {
@@ -1052,7 +1210,8 @@ onBeforeUnmount(() => {
   @apply bg-rose-100 text-rose-700;
 }
 
-.review-pane-content {
+.review-pane-content,
+.review-pane-findings {
   @apply min-h-0 flex-1 overflow-hidden;
 }
 
@@ -1066,7 +1225,6 @@ onBeforeUnmount(() => {
 
 .review-pane-file-list {
   @apply hidden min-w-0 overflow-y-auto border-r border-zinc-100 bg-zinc-50/60 p-2 md:flex md:flex-col md:gap-1.5;
-  container-type: inline-size;
 }
 
 .review-pane-tree-folder {
@@ -1116,7 +1274,8 @@ onBeforeUnmount(() => {
   @apply bg-sky-500;
 }
 
-.review-pane-file {
+.review-pane-file,
+.review-pane-finding {
   @apply flex w-full flex-col gap-0.75 rounded-xl border border-transparent px-2.5 py-2 text-left transition hover:border-zinc-200 hover:bg-white;
 }
 
@@ -1125,7 +1284,11 @@ onBeforeUnmount(() => {
 }
 
 .review-pane-file-meta-row {
-  @apply flex min-w-0 items-start justify-between gap-2;
+  @apply flex items-start justify-between gap-2;
+}
+
+.review-pane-file-main {
+  @apply flex min-w-0 items-center gap-1.5;
 }
 
 .review-pane-file[data-active='true'] {
@@ -1153,21 +1316,11 @@ onBeforeUnmount(() => {
 }
 
 .review-pane-file-path {
-  @apply min-w-0 truncate text-sm text-zinc-800;
+  @apply min-w-0 break-all text-sm text-zinc-800;
 }
 
 .review-pane-file-delta {
   @apply inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px];
-}
-
-@container (max-width: 14rem) {
-  .review-pane-file-list .review-pane-file-meta-row {
-    @apply flex-col items-stretch gap-1;
-  }
-
-  .review-pane-file-list .review-pane-file-delta {
-    @apply self-start;
-  }
 }
 
 .review-pane-delta-add {
@@ -1200,7 +1353,8 @@ onBeforeUnmount(() => {
 }
 
 .review-pane-file-subtitle,
-.review-pane-hunk-meta {
+.review-pane-hunk-meta,
+.review-pane-finding-location {
   @apply m-0 text-[11px] text-zinc-500;
 }
 
@@ -1278,8 +1432,33 @@ onBeforeUnmount(() => {
   @apply overflow-x-auto rounded-2xl border border-zinc-200 bg-zinc-950 p-3 text-xs text-zinc-100;
 }
 
-.review-pane-raw-diff pre {
+.review-pane-raw-diff pre,
+.review-pane-summary-text {
   @apply m-0 whitespace-pre-wrap break-all font-mono;
+}
+
+.review-pane-summary-card {
+  @apply mx-3 mt-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-3 py-2.5;
+}
+
+.review-pane-summary-title {
+  @apply m-0 mb-2 text-sm font-medium text-zinc-900;
+}
+
+.review-pane-findings-list {
+  @apply flex h-full flex-col gap-2.5 overflow-y-auto px-3 py-3;
+}
+
+.review-pane-finding {
+  @apply border-zinc-200 bg-white hover:border-zinc-300;
+}
+
+.review-pane-finding-title {
+  @apply text-sm font-medium text-zinc-900;
+}
+
+.review-pane-finding-body {
+  @apply text-sm text-zinc-600 whitespace-pre-wrap;
 }
 
 .review-pane-empty {
@@ -1365,7 +1544,8 @@ onBeforeUnmount(() => {
 
   .review-pane-close,
   .review-pane-mobile-files-button,
-  .review-pane-refresh {
+  .review-pane-refresh,
+  .review-pane-run {
     @apply px-2.5 py-1 text-[12px];
   }
 
@@ -1409,7 +1589,8 @@ onBeforeUnmount(() => {
     @apply w-auto gap-1;
   }
 
-  .review-pane-refresh {
+  .review-pane-refresh,
+  .review-pane-run {
     @apply px-2.5 py-1 text-[12px];
   }
 
@@ -1434,7 +1615,7 @@ onBeforeUnmount(() => {
   }
 
   .review-pane-main {
-    @apply flex h-full min-h-0 flex-col;
+    @apply block;
   }
 
   .review-pane-resizer {
@@ -1442,9 +1623,7 @@ onBeforeUnmount(() => {
   }
 
   .review-pane-diff {
-    @apply min-h-0 flex-1 overflow-y-auto px-2 py-2.5;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
+    @apply px-2 py-2.5;
   }
 
   .review-pane-file-header,
@@ -1496,6 +1675,10 @@ onBeforeUnmount(() => {
     @apply px-1.5 py-0.25 text-[9px];
   }
 
+  .review-pane-sheet-list .review-pane-file-main {
+    @apply gap-1;
+  }
+
   .review-pane-sheet-list .review-pane-file-path {
     @apply text-[13px] leading-5;
   }
@@ -1508,6 +1691,10 @@ onBeforeUnmount(() => {
 @media (min-width: 768px) {
   .review-pane-toolbar {
     @apply flex-row items-center gap-2.5;
+  }
+
+  .review-pane-toolbar-tabs {
+    @apply flex-1;
   }
 
   .review-pane-toolbar-controls {

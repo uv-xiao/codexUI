@@ -315,8 +315,13 @@ function parseCloudflaredUrl(chunk: string): string | null {
   return urlMatch[urlMatch.length - 1] ?? null
 }
 
-function getAccessibleUrls(port: number): string[] {
-  const urls = new Set<string>([`http://localhost:${String(port)}`])
+function getAccessibleUrls(port: number, host: string): string[] {
+  const urls = new Set<string>()
+  if (host === '0.0.0.0' || host === '::') {
+    urls.add(`http://localhost:${String(port)}`)
+  } else {
+    urls.add(`http://${host}:${String(port)}`)
+  }
   try {
     const interfaces = networkInterfaces()
     for (const entries of Object.values(interfaces)) {
@@ -328,6 +333,9 @@ function getAccessibleUrls(port: number): string[] {
           continue
         }
         if (entry.family === 'IPv4') {
+          if (host !== '0.0.0.0' && host !== entry.address) {
+            continue
+          }
           urls.add(`http://${entry.address}:${String(port)}`)
         }
       }
@@ -409,7 +417,7 @@ async function startCloudflaredTunnel(command: string, localPort: number): Promi
   })
 }
 
-function listenWithFallback(server: ReturnType<typeof createServer>, startPort: number): Promise<number> {
+function listenWithFallback(server: ReturnType<typeof createServer>, startPort: number, host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const attempt = (port: number) => {
       const onError = (error: NodeJS.ErrnoException) => {
@@ -427,7 +435,7 @@ function listenWithFallback(server: ReturnType<typeof createServer>, startPort: 
 
       server.once('error', onError)
       server.once('listening', onListening)
-      server.listen(port, '0.0.0.0')
+      server.listen(port, host)
     }
 
     attempt(startPort)
@@ -495,11 +503,11 @@ async function addProjectOnly(projectPath: string): Promise<void> {
 
 async function startServer(options: {
   port: string
+  host: string
   password: string | boolean
   tunnel: boolean
   open: boolean
   login: boolean
-  memories: boolean
   sandboxMode?: string
   approvalPolicy?: string
   projectPath?: string
@@ -529,6 +537,7 @@ async function startServer(options: {
     console.log('\nCodex is not logged in. You can log in later via settings or run `codexui login`.\n')
   }
   const requestedPort = parseInt(options.port, 10)
+  const host = options.host.trim() || '0.0.0.0'
   const passwordResolution = resolvePassword(options.password)
   const password = passwordResolution.password
   const generatedPasswordPath = password && passwordResolution.generated
@@ -537,7 +546,7 @@ async function startServer(options: {
   const { app, dispose, attachWebSocket } = createApp({ password })
   const server = createServer(app)
   attachWebSocket(server)
-  const port = await listenWithFallback(server, requestedPort)
+  const port = await listenWithFallback(server, requestedPort, host)
   process.env.CODEXUI_SERVER_PORT = String(port)
   let tunnelChild: ReturnType<typeof spawn> | null = null
   let tunnelUrl: string | null = null
@@ -563,11 +572,11 @@ async function startServer(options: {
     `  Version:  ${version}`,
     '  GitHub:   https://github.com/friuns2/codexui',
     '',
-    `  Bind:     http://0.0.0.0:${String(port)}`,
+    `  Bind:     http://${host}:${String(port)}`,
     `  Codex sandbox: ${runtimeConfig.sandboxMode}`,
     `  Approval policy: ${runtimeConfig.approvalPolicy}`,
   ]
-  const accessUrls = getAccessibleUrls(port)
+  const accessUrls = getAccessibleUrls(port, host)
   if (accessUrls.length > 0) {
     lines.push(`  Local:    ${accessUrls[0]}`)
     for (const accessUrl of accessUrls.slice(1)) {
@@ -630,6 +639,7 @@ program
   .argument('[projectPath]', 'project directory to open on launch')
   .option('--open-project <path>', 'open project directory on launch (Codex desktop parity)')
   .option('-p, --port <port>', 'port to listen on', '5900')
+  .option('--host <host>', 'host address to bind', '0.0.0.0')
   .option('--password <pass>', 'set a specific password')
   .option('--no-password', 'disable password protection')
   .option('--tunnel', 'start cloudflared tunnel (default is auto by Tailscale detection)', true)
@@ -638,19 +648,17 @@ program
   .option('--no-open', 'do not open browser on startup')
   .option('--login', 'run automatic Codex login bootstrap', true)
   .option('--no-login', 'skip automatic Codex login bootstrap')
-  .option('--memories', 'enable Codex memories for spawned app-server processes', true)
-  .option('--no-memories', 'disable Codex memories for spawned app-server processes')
   .option('--sandbox-mode <mode>', 'Codex sandbox mode: read-only, workspace-write, danger-full-access')
   .option('--approval-policy <policy>', 'Codex approval policy: untrusted, on-failure, on-request, never')
   .action(async (
     projectPath: string | undefined,
     opts: {
       port: string
+      host: string
       password: string | boolean
       tunnel: boolean
       open: boolean
       login: boolean
-      memories: boolean
       sandboxMode?: string
       approvalPolicy?: string
       openProject?: string
@@ -664,16 +672,7 @@ program
       || arg.startsWith('--tunnel=')
       || arg.startsWith('--no-tunnel=')
     ))
-    const memoriesFlagExplicit = rawArgv.some((arg) => (
-      arg === '--memories'
-      || arg === '--no-memories'
-      || arg.startsWith('--memories=')
-      || arg.startsWith('--no-memories=')
-    ))
     const effectiveTunnel = tunnelFlagExplicit ? opts.tunnel : hasDetectedTailscaleIp()
-    if (memoriesFlagExplicit) {
-      process.env.CODEXUI_MEMORIES = opts.memories ? 'true' : 'false'
-    }
 
     let openProjectOnly = (opts.openProject ?? '').trim()
     if (!openProjectOnly && openProjectFlagIndex >= 0 && projectPath?.trim()) {

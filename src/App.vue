@@ -250,7 +250,7 @@
                 <span class="sidebar-settings-toggle" :class="{ 'is-on': dictationAutoSend }" />
               </button>
               <a
-                v-if="hasVisibleFeedbackError"
+                v-if="hasFeedbackDiagnostics"
                 class="sidebar-settings-row sidebar-settings-feedback-row"
                 :href="feedbackMailto"
                 @click="prepareFeedbackLink"
@@ -270,6 +270,7 @@
                   <option value="codex">Codex</option>
                   <option value="openrouter">OpenRouter</option>
                   <option value="opencode-zen">OpenCode Zen</option>
+                  <option value="moon">Moon Bridge</option>
                   <option value="custom">Custom endpoint</option>
                 </select>
               </div>
@@ -482,6 +483,26 @@
                   <span class="sidebar-settings-context-meta">{{ threadContextSecondaryText }}</span>
                 </span>
               </div>
+              <div
+                v-if="showThreadSessionIdRow"
+                class="sidebar-settings-row sidebar-settings-session-row"
+                :title="threadSessionId"
+              >
+                <span class="sidebar-settings-label">{{ t('Session ID') }}</span>
+                <span class="sidebar-settings-session-actions">
+                  <span class="sidebar-settings-session-value" :title="threadSessionId">{{ threadSessionId }}</span>
+                  <button
+                    type="button"
+                    class="sidebar-settings-session-copy"
+                    :data-copied="isThreadSessionIdCopied"
+                    :aria-label="threadSessionCopyButtonLabel"
+                    :title="threadSessionCopyButtonLabel"
+                    @click.stop="copyThreadSessionId"
+                  >
+                    <IconTablerCopy class="sidebar-settings-session-copy-icon" />
+                  </button>
+                </span>
+              </div>
               <div class="sidebar-settings-rate-limits">
                 <RateLimitStatus :snapshots="accountRateLimitSnapshots" />
               </div>
@@ -555,25 +576,19 @@
               :head-date="currentThreadHeadDate"
               :detached="isThreadDetachedHead"
               :dirty="isThreadWorktreeDirty"
-              :worktree-change-summary="threadWorktreeChangeSummary"
               :branches="threadBranchOptions"
               :commits-by-branch="threadBranchCommitsByBranch"
               :commits-loading-for="threadBranchCommitsLoadingFor"
               :commits-error="threadBranchCommitsError"
-              :commit-files-by-sha="threadCommitFilesBySha"
-              :commit-files-loading-for="threadCommitFilesLoadingFor"
-              :commit-files-error="threadCommitFilesError"
               :loading="isLoadingThreadBranches"
               :busy="isSwitchingThreadBranch"
               :error="threadBranchError"
               :review-open="isReviewPaneOpen"
               :show-review="route.name === 'thread' && selectedThreadId.length > 0"
-              @toggle-review="onToggleContentHeaderReview"
+              @toggle-review="isReviewPaneOpen = !isReviewPaneOpen"
               @checkout-branch="onCheckoutContentHeaderBranch"
               @reset-branch-to-commit="onResetContentHeaderBranchToCommit"
               @load-commits="loadThreadBranchCommits"
-              @load-commit-files="loadThreadCommitFiles"
-              @open-commit-file="onOpenContentHeaderCommitFile"
             />
           </template>
         </ContentHeader>
@@ -953,8 +968,6 @@
                 :thread-id="selectedThreadId"
                 :cwd="composerCwd"
                 :is-thread-in-progress="isSelectedThreadInProgress"
-                :initial-file-path="reviewInitialFilePath"
-                :commit-sha="reviewInitialCommitSha"
                 @close="isReviewPaneOpen = false"
               />
 
@@ -1123,6 +1136,7 @@ import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdow
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerCopy from './components/icons/IconTablerCopy.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
 import IconTablerTerminal from './components/icons/IconTablerTerminal.vue'
@@ -1140,9 +1154,7 @@ import {
   createProjectlessThreadDirectory,
   getGitBranchState,
   getGitBranchCommits,
-  getGitCommitFiles,
   getGitRepositoryStatus,
-  getReviewSummary,
   getWorktreeBranchOptions,
   getAccounts,
   completeCodexLogin,
@@ -1167,7 +1179,7 @@ import {
 } from './api/codexGateway'
 import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
-import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
+import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 
@@ -1359,6 +1371,7 @@ const {
   availableModelIds,
   selectedCollaborationMode,
   selectedModelId,
+  selectedProvider,
   selectedReasoningEffort,
   selectedSpeedMode,
   codexCliMissingError,
@@ -1378,6 +1391,7 @@ const {
   refreshAll,
   refreshSkills,
   selectThread,
+  loadMessages,
   ensureThreadMessagesLoaded,
   loadOlderMessages,
   setThreadTerminalOpen,
@@ -1396,7 +1410,9 @@ const {
   setSelectedCollaborationMode,
   readModelIdForThread,
   setSelectedModelIdForThread,
-
+  refreshMoonBridgeModelIds,
+  refreshAncillaryState,
+  invalidateAppServerRuntimeState,
   setSelectedReasoningEffort,
   updateSelectedSpeedMode,
   respondToPendingServerRequest,
@@ -1408,6 +1424,7 @@ const {
   stopPolling,
   primeSelectedThread,
   rollbackSelectedThread,
+  setSelectedProvider,
 } = useDesktopState()
 
 const route = useRoute()
@@ -1428,6 +1445,7 @@ type AutomationEditRequest = {
 const sidebarThreadTreeRef = ref<SidebarThreadTreeExposed | null>(null)
 const automationsPanelRef = ref<AutomationsPanelExposed | null>(null)
 const {
+  hasFeedbackDiagnostics,
   buildFeedbackMailto,
   feedbackMailtoBase,
   recordVisibleFailure,
@@ -1489,15 +1507,11 @@ let threadSearchTimer: ReturnType<typeof setTimeout> | null = null
 let terminalKeyboardFocusFallbackTimer: ReturnType<typeof setTimeout> | null = null
 let threadBranchesRequestId = 0
 let threadBranchCommitsRequestId = 0
-let threadCommitFilesRequestId = 0
-let threadWorktreeSummaryRequestId = 0
 const defaultNewProjectName = ref('New Project (1)')
 const homeDirectory = ref('')
 const isSettingsOpen = ref(false)
 const isAccountsSectionCollapsed = ref(loadAccountsSectionCollapsed())
 const isReviewPaneOpen = ref(false)
-const reviewInitialFilePath = ref('')
-const reviewInitialCommitSha = ref('')
 const threadBranchOptions = ref<WorktreeBranchOption[]>([])
 const currentThreadBranch = ref<string | null>(null)
 const currentThreadHeadSha = ref<string | null>(null)
@@ -1505,21 +1519,12 @@ const currentThreadHeadSubject = ref<string | null>(null)
 const currentThreadHeadDate = ref<string | null>(null)
 const isThreadDetachedHead = ref(false)
 const isThreadWorktreeDirty = ref(false)
-const threadWorktreeChangeSummary = ref({ addedLineCount: 0, removedLineCount: 0 })
 const threadBranchError = ref('')
 const threadBranchCommitsByBranch = ref<Record<string, GitCommitOption[]>>({})
 const threadBranchCommitsLoadingFor = ref('')
 const threadBranchCommitsError = ref('')
-const threadCommitFilesBySha = ref<Record<string, GitCommitFileChange[]>>({})
-const threadCommitFilesLoadingFor = ref('')
-const threadCommitFilesError = ref('')
 const isLoadingThreadBranches = ref(false)
 const isSwitchingThreadBranch = ref(false)
-
-function toThreadBranchCommitsKey(branch: string, includeResetHistory: boolean): string {
-  return `${branch}\u0000${includeResetHistory ? 'with-reset-history' : 'without-reset-history'}`
-}
-
 const createFolderInputRef = ref<HTMLInputElement | null>(null)
 const accounts = ref<UiAccountEntry[]>([])
 const isRefreshingAccounts = ref(false)
@@ -1559,7 +1564,6 @@ const freeModeHasCustomKey = ref(false)
 const freeModeCustomKeyMasked = ref<string | null>(null)
 const freeModeCustomKeySaving = ref(false)
 const providerError = ref('')
-const selectedProvider = ref<'codex' | 'openrouter' | 'opencode-zen' | 'custom'>('codex')
 const customEndpointUrl = ref('')
 const customEndpointKey = ref('')
 const customEndpointWireApi = ref<'responses' | 'chat'>('responses')
@@ -1606,7 +1610,6 @@ const visibleFeedbackErrors = [
   projectSetupError,
   existingFolderError,
 ]
-const hasVisibleFeedbackError = computed(() => visibleFeedbackErrors.some((entry) => entry.value.trim().length > 0))
 const telegramStatus = ref<TelegramStatus>({
   configured: false,
   active: false,
@@ -1624,8 +1627,6 @@ const visualViewportOffsetTop = ref(typeof window !== 'undefined' ? window.visua
 const layoutViewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 0)
 let accountStatePollTimer: number | null = null
 let isAccountStatePollInFlight = false
-let externalCodexAuthAvailable = false
-let externalAuthImportAttempted = false
 let existingFolderBrowseRequestId = 0
 
 const routeThreadId = computed(() => {
@@ -1707,6 +1708,10 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
+const threadSessionId = computed(() => selectedThreadId.value.trim())
+const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && threadSessionId.value.length > 0)
+const copiedThreadSessionId = ref('')
+let copiedThreadSessionIdResetTimer: ReturnType<typeof setTimeout> | null = null
 const isAccountSwitchBlocked = computed(() =>
   isSendingMessage.value ||
   isInterruptingTurn.value ||
@@ -1753,6 +1758,62 @@ function onOpenPluginsHomeCard(): void {
   void router.push({ name: 'skills', query: { tab: 'plugins' } })
 }
 
+function copyTextWithSelectionFallback(text: string): boolean {
+  if (typeof document === 'undefined') return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+async function copyThreadSessionId(): Promise<void> {
+  const sessionId = threadSessionId.value
+  if (!sessionId) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(sessionId)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(sessionId)
+  }
+
+  if (!copied) return
+
+  copiedThreadSessionId.value = sessionId
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+  }
+  copiedThreadSessionIdResetTimer = setTimeout(() => {
+    if (copiedThreadSessionId.value === sessionId) {
+      copiedThreadSessionId.value = ''
+    }
+    copiedThreadSessionIdResetTimer = null
+  }, 1800)
+}
+
 const threadContextBadgeState = computed(() => {
   const remainingPercent = selectedThreadTokenUsage.value?.remainingContextPercent
   if (remainingPercent === null || typeof remainingPercent !== 'number') return 'pending'
@@ -1780,6 +1841,10 @@ const threadContextSecondaryText = computed(() => {
 })
 
 const threadContextTooltip = computed(() => buildThreadContextTooltip(selectedThreadTokenUsage.value))
+const isThreadSessionIdCopied = computed(() => copiedThreadSessionId.value === threadSessionId.value && threadSessionId.value.length > 0)
+const threadSessionCopyButtonLabel = computed(() => (
+  isThreadSessionIdCopied.value ? t('Session ID copied') : t('Copy session ID')
+))
 
 function hasDuplicateFolderLeaf(path: string, knownPaths: string[]): boolean {
   const normalizedPath = normalizePathForUi(path).trim()
@@ -2044,7 +2109,6 @@ onMounted(() => {
   void refreshDefaultProjectName()
   void refreshTelegramConfig()
   void refreshTelegramStatus()
-  void loadFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
 })
@@ -2076,6 +2140,10 @@ onUnmounted(() => {
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
+  }
+  if (copiedThreadSessionIdResetTimer) {
+    clearTimeout(copiedThreadSessionIdResetTimer)
+    copiedThreadSessionIdResetTimer = null
   }
   clearTerminalKeyboardFocusFallbackTimer()
   stopPolling()
@@ -2136,35 +2204,6 @@ watch(accounts, () => {
     })
   }, 1500)
 }, { deep: true })
-
-watch(accountRateLimitSnapshots, () => {
-  void maybeImportExternalCodexAuthAccount().then((imported) => {
-    if (!imported) return
-    void refreshAll({
-      includeSelectedThreadMessages: false,
-      providerChanged: true,
-      awaitAncillaryRefreshes: true,
-    })
-  })
-}, { deep: true })
-
-async function maybeImportExternalCodexAuthAccount(): Promise<boolean> {
-  if (!externalCodexAuthAvailable) return false
-  if (externalAuthImportAttempted) return false
-  if (selectedProvider.value !== 'codex') return false
-  if (accounts.value.length > 0) return false
-  if (accountRateLimitSnapshots.value.length === 0) return false
-  externalAuthImportAttempted = true
-  const previousAccountsJson = JSON.stringify(accounts.value.map((account) => account.accountId).sort())
-  try {
-    const result = await refreshAccountsFromAuth()
-    accounts.value = result.accounts
-  } catch {
-    await loadAccountsState({ silent: true })
-  }
-  const nextAccountsJson = JSON.stringify(accounts.value.map((account) => account.accountId).sort())
-  return previousAccountsJson !== nextAccountsJson
-}
 
 function onSkillsChanged(): void {
   void refreshSkills()
@@ -3215,8 +3254,6 @@ function canLoadBranchStateForCwd(cwd: string): boolean {
 function resetThreadBranchState(): void {
   threadBranchesRequestId += 1
   threadBranchCommitsRequestId += 1
-  threadCommitFilesRequestId += 1
-  threadWorktreeSummaryRequestId += 1
   threadBranchOptions.value = []
   currentThreadBranch.value = null
   currentThreadHeadSha.value = null
@@ -3224,36 +3261,11 @@ function resetThreadBranchState(): void {
   currentThreadHeadDate.value = null
   isThreadDetachedHead.value = false
   isThreadWorktreeDirty.value = false
-  threadWorktreeChangeSummary.value = { addedLineCount: 0, removedLineCount: 0 }
   threadBranchCommitsByBranch.value = {}
   threadBranchCommitsLoadingFor.value = ''
   threadBranchCommitsError.value = ''
-  threadCommitFilesBySha.value = {}
-  threadCommitFilesLoadingFor.value = ''
-  threadCommitFilesError.value = ''
   threadBranchError.value = ''
   isLoadingThreadBranches.value = false
-}
-
-function loadThreadWorktreeChangeSummary(cwd: string): void {
-  const targetCwd = cwd.trim()
-  if (!targetCwd) {
-    threadWorktreeChangeSummary.value = { addedLineCount: 0, removedLineCount: 0 }
-    return
-  }
-  const requestId = ++threadWorktreeSummaryRequestId
-  void getReviewSummary(targetCwd, 'unstaged')
-    .then((summary) => {
-      if (requestId !== threadWorktreeSummaryRequestId || !canLoadBranchStateForCwd(targetCwd)) return
-      threadWorktreeChangeSummary.value = {
-        addedLineCount: summary.addedLineCount,
-        removedLineCount: summary.removedLineCount,
-      }
-    })
-    .catch(() => {
-      if (requestId !== threadWorktreeSummaryRequestId || !canLoadBranchStateForCwd(targetCwd)) return
-      threadWorktreeChangeSummary.value = { addedLineCount: 0, removedLineCount: 0 }
-    })
 }
 
 async function loadThreadBranches(cwd: string): Promise<void> {
@@ -3275,9 +3287,6 @@ async function loadThreadBranches(cwd: string): Promise<void> {
     currentThreadHeadDate.value = state.headDate
     isThreadDetachedHead.value = state.detached
     isThreadWorktreeDirty.value = state.dirty
-    loadThreadWorktreeChangeSummary(targetCwd)
-    const defaultBranchForCommits = state.currentBranch?.trim() || state.options[0]?.value?.trim() || ''
-    if (defaultBranchForCommits) loadThreadBranchCommits({ branch: defaultBranchForCommits, includeResetHistory: true })
   } catch {
     if (requestId !== threadBranchesRequestId || !canLoadBranchStateForCwd(targetCwd)) return
     threadBranchOptions.value = []
@@ -3287,7 +3296,6 @@ async function loadThreadBranches(cwd: string): Promise<void> {
     currentThreadHeadDate.value = null
     isThreadDetachedHead.value = false
     isThreadWorktreeDirty.value = false
-    threadWorktreeChangeSummary.value = { addedLineCount: 0, removedLineCount: 0 }
   } finally {
     if (requestId === threadBranchesRequestId) {
       isLoadingThreadBranches.value = false
@@ -3302,7 +3310,6 @@ function applyThreadGitState(state: { currentBranch: string | null; headSha: str
   currentThreadHeadDate.value = state.headDate
   isThreadDetachedHead.value = state.detached
   isThreadWorktreeDirty.value = state.dirty
-  loadThreadWorktreeChangeSummary(composerCwd.value)
 }
 
 function onCheckoutContentHeaderBranch(value: string): void {
@@ -3360,22 +3367,20 @@ function onResetContentHeaderBranchToCommit(payload: { branch: string; sha: stri
     })
 }
 
-function loadThreadBranchCommits(payload: string | { branch: string; includeResetHistory?: boolean }): void {
-  const targetBranch = (typeof payload === 'string' ? payload : payload.branch).trim()
-  const includeResetHistory = typeof payload === 'string' ? true : payload.includeResetHistory !== false
+function loadThreadBranchCommits(branch: string): void {
+  const targetBranch = branch.trim()
   const cwd = composerCwd.value.trim()
-  const cacheKey = toThreadBranchCommitsKey(targetBranch, includeResetHistory)
-  if (!targetBranch || !cwd || threadBranchCommitsLoadingFor.value === cacheKey) return
-  threadBranchCommitsError.value = ''
-  if (threadBranchCommitsByBranch.value[cacheKey]) return
+  if (!targetBranch || !cwd || threadBranchCommitsLoadingFor.value === targetBranch) return
+  if (threadBranchCommitsByBranch.value[targetBranch]) return
   const requestId = ++threadBranchCommitsRequestId
-  threadBranchCommitsLoadingFor.value = cacheKey
-  void getGitBranchCommits(cwd, targetBranch, { includeResetHistory })
+  threadBranchCommitsLoadingFor.value = targetBranch
+  threadBranchCommitsError.value = ''
+  void getGitBranchCommits(cwd, targetBranch)
     .then((commits) => {
       if (requestId !== threadBranchCommitsRequestId || !canLoadBranchStateForCwd(cwd)) return
       threadBranchCommitsByBranch.value = {
         ...threadBranchCommitsByBranch.value,
-        [cacheKey]: commits,
+        [targetBranch]: commits,
       }
     })
     .catch((error: unknown) => {
@@ -3383,59 +3388,10 @@ function loadThreadBranchCommits(payload: string | { branch: string; includeRese
       threadBranchCommitsError.value = error instanceof Error ? error.message : 'Failed to load branch commits'
     })
     .finally(() => {
-      if (requestId === threadBranchCommitsRequestId && threadBranchCommitsLoadingFor.value === cacheKey) {
+      if (requestId === threadBranchCommitsRequestId && threadBranchCommitsLoadingFor.value === targetBranch) {
         threadBranchCommitsLoadingFor.value = ''
       }
     })
-}
-
-function loadThreadCommitFiles(sha: string): void {
-  const targetSha = sha.trim()
-  const cwd = composerCwd.value.trim()
-  if (!targetSha || !cwd || threadCommitFilesLoadingFor.value === targetSha) return
-  threadCommitFilesError.value = ''
-  if (threadCommitFilesBySha.value[targetSha]) return
-  const requestId = ++threadCommitFilesRequestId
-  threadCommitFilesLoadingFor.value = targetSha
-  void getGitCommitFiles(cwd, targetSha)
-    .then((files) => {
-      if (requestId !== threadCommitFilesRequestId || !canLoadBranchStateForCwd(cwd)) return
-      threadCommitFilesBySha.value = {
-        ...threadCommitFilesBySha.value,
-        [targetSha]: files,
-      }
-    })
-    .catch((error: unknown) => {
-      if (requestId !== threadCommitFilesRequestId || !canLoadBranchStateForCwd(cwd)) return
-      threadCommitFilesError.value = error instanceof Error ? error.message : 'Failed to load commit files'
-    })
-    .finally(() => {
-      if (requestId === threadCommitFilesRequestId && threadCommitFilesLoadingFor.value === targetSha) {
-        threadCommitFilesLoadingFor.value = ''
-      }
-    })
-}
-
-function onOpenContentHeaderCommitFile(payload: { sha: string; path: string }): void {
-  const targetPath = payload.path.trim()
-  const targetSha = payload.sha.trim()
-  if (!targetPath || !targetSha) return
-  reviewInitialFilePath.value = targetPath
-  reviewInitialCommitSha.value = targetSha
-  isReviewPaneOpen.value = true
-}
-
-function onToggleContentHeaderReview(): void {
-  reviewInitialFilePath.value = ''
-  reviewInitialCommitSha.value = ''
-  isReviewPaneOpen.value = !isReviewPaneOpen.value
-}
-
-function clearCommitReviewContext(): void {
-  if (!reviewInitialFilePath.value && !reviewInitialCommitSha.value) return
-  reviewInitialFilePath.value = ''
-  reviewInitialCommitSha.value = ''
-  isReviewPaneOpen.value = false
 }
 
 async function onOpenProjectSetupModal(): Promise<void> {
@@ -3851,6 +3807,7 @@ function onSelectSpeedMode(mode: SpeedMode): void {
 }
 
 function onInterruptTurn(): void {
+  console.warn('[DEBUG:onInterruptTurn] UI Stop button clicked — timestamp=%s', new Date().toISOString())
   void interruptSelectedThreadTurn()
 }
 
@@ -4029,17 +3986,53 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
+type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
 
-async function onProviderChange(provider: string): Promise<void> {
-  if (freeModeLoading.value) return
-  freeModeLoading.value = true
+function normalizeProviderSelection(provider: string): ProviderSelection {
+  if (
+    provider === 'openrouter'
+    || provider === 'opencode-zen'
+    || provider === 'custom'
+    || provider === 'moon'
+  ) {
+    return provider
+  }
+  return 'codex'
+}
+
+function buildProviderStateSignature(provider: ProviderSelection = selectedProvider.value): string {
+  if (provider === 'openrouter') {
+    return `${provider}|${openRouterWireApi.value}`
+  }
+  if (provider === 'opencode-zen') {
+    return `${provider}|${opencodeZenKey.value.trim()}`
+  }
+  if (provider === 'custom') {
+    return `${provider}|${customEndpointUrl.value.trim()}|${customEndpointKey.value.trim()}|${customEndpointWireApi.value}`
+  }
+  return provider
+}
+
+let lastAppliedProviderStateSignature = ''
+
+async function applySelectedProviderState(
+  options: { force?: boolean; refreshAncillary?: boolean } = {},
+): Promise<void> {
+  const provider = selectedProvider.value
+  const signature = buildProviderStateSignature(provider)
+  if (!options.force && signature === lastAppliedProviderStateSignature) {
+    return
+  }
+
+  if (provider === 'custom' && !customEndpointUrl.value.trim()) {
+    return
+  }
+
   try {
     if (provider === 'codex') {
-      selectedProvider.value = 'codex'
       const result = await setFreeMode(false)
       freeModeEnabled.value = result.enabled
     } else if (provider === 'openrouter') {
-      selectedProvider.value = 'openrouter'
       const result = await setFreeMode(true)
       freeModeEnabled.value = result.enabled
       await setCustomProvider('', '', {
@@ -4047,23 +4040,43 @@ async function onProviderChange(provider: string): Promise<void> {
         provider: 'openrouter',
       })
     } else if (provider === 'opencode-zen') {
-      selectedProvider.value = 'opencode-zen'
       await setCustomProvider('', opencodeZenKey.value.trim(), {
         wireApi: 'responses',
         provider: 'opencode-zen',
       })
       freeModeEnabled.value = true
-    } else if (provider === 'custom') {
-      selectedProvider.value = 'custom'
-      if (customEndpointUrl.value.trim() && customEndpointKey.value.trim()) {
-        await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
-          wireApi: customEndpointWireApi.value,
-        })
-        freeModeEnabled.value = true
-      }
+    } else if (provider === 'moon') {
+      await setCustomProvider('', '', {
+        wireApi: 'responses',
+        provider: 'moon',
+      })
+      freeModeEnabled.value = true
+    } else {
+      await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
+        wireApi: customEndpointWireApi.value,
+      })
+      freeModeEnabled.value = true
     }
+
+    invalidateAppServerRuntimeState()
+    lastAppliedProviderStateSignature = signature
     providerError.value = ''
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    await loadFreeModeStatus()
+    if (options.refreshAncillary !== false) {
+      await refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
+    }
+  } catch (err) {
+    providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
+    throw err
+  }
+}
+
+async function onProviderChange(provider: string): Promise<void> {
+  if (freeModeLoading.value) return
+  freeModeLoading.value = true
+  try {
+    setSelectedProvider(normalizeProviderSelection(provider))
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
   } finally {
@@ -4078,11 +4091,8 @@ async function saveCustomEndpoint(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider(url, customEndpointKey.value.trim(), {
-      wireApi: customEndpointWireApi.value,
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('custom')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save custom endpoint'
   } finally {
@@ -4098,12 +4108,8 @@ async function setOpenRouterWireApi(nextWireApi: 'responses' | 'chat'): Promise<
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', '', {
-      wireApi: nextWireApi,
-      provider: 'openrouter',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('openrouter')
+    await applySelectedProviderState()
   } catch (err) {
     openRouterWireApi.value = previousWireApi
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenRouter API format'
@@ -4119,12 +4125,8 @@ async function saveOpencodeZen(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
-    await setCustomProvider('', key, {
-      wireApi: 'responses',
-      provider: 'opencode-zen',
-    })
-    freeModeEnabled.value = true
-    await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
+    setSelectedProvider('opencode-zen')
+    await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to save OpenCode Zen config'
   } finally {
@@ -4165,44 +4167,15 @@ async function clearFreeModeCustomKey(): Promise<void> {
 
 async function loadFreeModeStatus(): Promise<void> {
   try {
-    const previousProvider = selectedProvider.value
     const status = await getFreeModeStatus()
     freeModeEnabled.value = status.enabled
     freeModeHasCustomKey.value = status.customKey ?? false
     freeModeCustomKeyMasked.value = status.maskedKey ?? null
-    if (status.enabled) {
-      if (status.provider === 'opencode-zen') {
-        selectedProvider.value = 'opencode-zen'
-      } else if (status.provider === 'custom') {
-        selectedProvider.value = 'custom'
-        customEndpointUrl.value = status.customBaseUrl ?? ''
-        customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      } else {
-        selectedProvider.value = 'openrouter'
-        openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-      }
-    } else {
-      selectedProvider.value = 'codex'
-    }
-    externalCodexAuthAvailable = status.hasCodexAuth === true
-    if (!externalCodexAuthAvailable) {
-      externalAuthImportAttempted = false
-    }
-    const providerChanged = selectedProvider.value !== previousProvider
-    if (providerChanged) {
-      await refreshAll({
-        includeSelectedThreadMessages: false,
-        providerChanged: true,
-        awaitAncillaryRefreshes: true,
-      })
-    }
-    const importedExternalAuth = await maybeImportExternalCodexAuthAccount()
-    if (importedExternalAuth) {
-      await refreshAll({
-        includeSelectedThreadMessages: false,
-        providerChanged: providerChanged || importedExternalAuth,
-        awaitAncillaryRefreshes: true,
-      })
+    if (status.provider === 'custom') {
+      customEndpointUrl.value = status.customBaseUrl ?? ''
+      customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
+    } else if (status.provider === 'openrouter') {
+      openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     }
   } catch {
     // Ignore — free mode status unknown
@@ -4323,19 +4296,27 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
 
 async function initialize(): Promise<void> {
   await router.isReady()
-
-  if (route.name === 'thread' && routeThreadId.value) {
-    primeSelectedThread(routeThreadId.value)
-  }
+  await refreshMoonBridgeModelIds().catch(() => {})
 
   await refreshAll({
-    includeSelectedThreadMessages: route.name === 'thread',
+    includeSelectedThreadMessages: false,
   })
+  if (route.name === 'thread' && routeThreadId.value) {
+    primeSelectedThread(routeThreadId.value)
+  } else {
+    primeSelectedThread('')
+  }
+  await applySelectedProviderState().catch(() => {})
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
   await syncThreadSelectionWithRoute()
   startPolling()
+}
+
+function threadExistsInSidebar(threadId: string): boolean {
+  if (!threadId) return false
+  return projectGroups.value.some((group) => group.threads.some((thread) => thread.id === threadId))
 }
 
 async function syncThreadSelectionWithRoute(): Promise<void> {
@@ -4352,6 +4333,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
       if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
+          await applySelectedProviderState().catch(() => {})
         }
         continue
       }
@@ -4361,15 +4343,18 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
         if (!threadId) continue
 
         if (selectedThreadId.value !== threadId) {
-          const result = await selectThread(threadId)
-          if (result === 'not-found') {
+          if (!threadExistsInSidebar(threadId)) {
+            if (selectedThreadId.value) {
+              await router.replace({ name: 'thread', params: { threadId: selectedThreadId.value } })
+            } else {
+              await router.replace({ name: 'home' })
+            }
             continue
           }
-        } else {
-          void ensureThreadMessagesLoaded(threadId, { silent: true }).catch(() => {
-            // The conversation overlay receives the error from useDesktopState.
-          })
         }
+        primeSelectedThread(threadId)
+        await applySelectedProviderState().catch(() => {})
+        await selectThread(threadId)
       }
     } while (hasPendingRouteSync)
 
@@ -4400,13 +4385,6 @@ watch(
 )
 
 watch(
-  () => [selectedThreadId.value, composerCwd.value] as const,
-  () => {
-    clearCommitReviewContext()
-  },
-)
-
-watch(
   () => [route.name, composerCwd.value] as const,
   ([routeName, cwd]) => {
     if (routeName !== 'thread') return
@@ -4426,11 +4404,20 @@ watch(
       if (route.name !== 'home') {
         await router.replace({ name: 'home' })
       }
-      return
+    } else if (!(route.name === 'thread' && routeThreadId.value === threadId)) {
+      await router.replace({ name: 'thread', params: { threadId } })
     }
 
-    if (route.name === 'thread' && routeThreadId.value === threadId) return
-    await router.replace({ name: 'thread', params: { threadId } })
+    if (isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
+  },
+)
+
+watch(
+  () => selectedProvider.value,
+  async () => {
+    if (!hasInitialized.value || freeModeLoading.value || isRouteSyncInProgress.value) return
+    await applySelectedProviderState().catch(() => {})
   },
 )
 
@@ -5712,6 +5699,30 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-context-meta {
   @apply block text-[11px] font-normal text-zinc-500;
+}
+
+.sidebar-settings-session-row {
+  @apply cursor-default gap-3;
+}
+
+.sidebar-settings-session-actions {
+  @apply flex min-w-0 flex-1 items-center justify-end gap-1.5;
+}
+
+.sidebar-settings-session-value {
+  @apply min-w-0 truncate font-mono text-xs text-zinc-600;
+}
+
+.sidebar-settings-session-copy {
+  @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-default disabled:opacity-60;
+}
+
+.sidebar-settings-session-copy[data-copied='true'] {
+  @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+}
+
+.sidebar-settings-session-copy-icon {
+  @apply h-4 w-4;
 }
 
 .sidebar-settings-rate-limits {

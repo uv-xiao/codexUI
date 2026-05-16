@@ -2,9 +2,11 @@ import { existsSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
+  mergeRecoveredTurnItemsIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
+  shouldAutoContinueInterruptedThreadFromThreadRead,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
 
@@ -415,5 +417,228 @@ describe('automation TOML handling', () => {
 
     expect(automation).toBeTruthy()
     expect(toAutomationApiRecord(automation as NonNullable<typeof automation>)).not.toHaveProperty('extraTomlLines')
+  })
+})
+
+describe('interrupted turn auto-continue detection', () => {
+  it('detects the latest interrupted turn on an idle thread', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: ' thread-1 ',
+        status: { type: ' idle ' },
+        turns: [
+          { id: 'turn-1', status: 'completed' },
+          { id: ' turn-2 ', status: ' interrupted ' },
+        ],
+      },
+    }, new Set())
+
+    expect(snapshot).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-2',
+    })
+  })
+
+  it('ignores user-stopped interrupted turns', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [{ id: 'turn-1', status: 'interrupted' }],
+      },
+    }, new Set(['turn-1']))
+
+    expect(snapshot).toBeNull()
+  })
+
+  it('ignores active threads and non-interrupted latest turns', () => {
+    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'inProgress' },
+        turns: [{ id: 'turn-1', status: 'interrupted' }],
+      },
+    }, new Set())).toBeNull()
+
+    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [
+          { id: 'turn-1', status: 'interrupted' },
+          { id: 'turn-2', status: 'completed' },
+        ],
+      },
+    }, new Set())).toBeNull()
+  })
+})
+
+describe('thread recovered item merge', () => {
+  it('adds captured command executions back into thread turn results', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        turns: [
+          {
+            id: 'turn-1',
+            items: [
+              { id: 'user-1', type: 'userMessage', text: 'run tests' },
+            ],
+          },
+        ],
+      },
+    }
+
+    const result = mergeRecoveredTurnItemsIntoThreadResult(payload, (threadId, turns) => {
+      expect(threadId).toBe('thread-1')
+      return turns.map((turn) => {
+        const record = turn as { id: string, items: Record<string, unknown>[] }
+        if (record.id !== 'turn-1') return turn
+        return {
+          ...record,
+          items: [
+            ...record.items,
+            {
+              id: 'cmd-1',
+              type: 'commandExecution',
+              command: 'npm test',
+              status: 'completed',
+              aggregatedOutput: 'ok',
+              exitCode: 0,
+            },
+          ],
+        }
+      })
+    }) as {
+      thread: {
+        turns: Array<{
+          items: Array<Record<string, unknown>>
+        }>
+      }
+    }
+
+    expect(result.thread.turns[0].items).toEqual([
+      { id: 'user-1', type: 'userMessage', text: 'run tests' },
+      {
+        id: 'cmd-1',
+        type: 'commandExecution',
+        command: 'npm test',
+        status: 'completed',
+        aggregatedOutput: 'ok',
+        exitCode: 0,
+      },
+    ])
+  })
+
+  it('repositions recovered command executions using the session log order', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        turns: [
+          {
+            id: 'turn-1',
+            items: [
+              { id: 'user-1', type: 'userMessage', text: 'run tests' },
+              { id: 'agent-1', type: 'agentMessage', text: 'thinking' },
+              {
+                id: 'cmd-1',
+                type: 'commandExecution',
+                command: 'npm test',
+                status: 'completed',
+                aggregatedOutput: 'ok',
+                exitCode: 0,
+              },
+              { id: 'agent-2', type: 'agentMessage', text: 'done' },
+            ],
+          },
+        ],
+      },
+    }
+
+    const sessionLogRaw = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'thinking' }] },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'exec_command',
+          call_id: 'call-1',
+          arguments: '{"cmd":"npm test"}',
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call_output',
+          call_id: 'call-1',
+          output: 'Process exited with code 0\nWall time: 0.1 seconds\nOutput:\nok',
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] },
+      }),
+    ].join('\n')
+
+    const result = mergeRecoveredTurnItemsIntoThreadResult(
+      payload,
+      (_threadId, turns) => turns,
+      sessionLogRaw,
+    ) as {
+      thread: {
+        turns: Array<{
+          items: Array<Record<string, unknown>>
+        }>
+      }
+    }
+
+    expect(result.thread.turns[0].items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'cmd-1',
+      'agent-2',
+    ])
+  })
+
+  it('keeps the original result when no recovered items are available', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        turns: [
+          {
+            id: 'turn-1',
+            items: [],
+          },
+        ],
+      },
+    }
+
+    const result = mergeRecoveredTurnItemsIntoThreadResult(payload, (_threadId, turns) => turns)
+
+    expect(result).toBe(payload)
+  })
+
+  it('keeps the original result when the merger only recreates the turn array', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        turns: [
+          {
+            id: 'turn-1',
+            items: [
+              { id: 'cmd-1', type: 'commandExecution' },
+            ],
+          },
+        ],
+      },
+    }
+
+    const result = mergeRecoveredTurnItemsIntoThreadResult(payload, (_threadId, turns) => [...turns])
+
+    expect(result).toBe(payload)
   })
 })

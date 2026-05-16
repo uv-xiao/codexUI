@@ -65,6 +65,7 @@ export type UiThread = {
   title: string
   projectName: string
   cwd: string
+  modelProvider?: string
   hasWorktree: boolean
   createdAtIso: string
   updatedAtIso: string
@@ -112,7 +113,8 @@ export type UiFileChange = {
   removedLineCount: number
 }
 
-export type UiReviewScope = 'workspace' | 'baseBranch' | 'commit'
+export type UiReviewTab = 'changes' | 'findings'
+export type UiReviewScope = 'workspace' | 'baseBranch'
 export type UiReviewWorkspaceView = 'unstaged' | 'staged'
 export type UiReviewAction = 'stage' | 'unstage' | 'revert'
 export type UiReviewActionLevel = 'all' | 'file' | 'hunk'
@@ -160,7 +162,6 @@ export type UiReviewSnapshot = {
   workspaceView: UiReviewWorkspaceView
   baseBranch: string | null
   baseBranchOptions: string[]
-  commitSha: string | null
   headBranch: string | null
   mergeBaseSha: string | null
   generatedAtIso: string
@@ -171,8 +172,6 @@ export type UiReviewSnapshot = {
   }
   files: UiReviewFile[]
 }
-
-export type UiReviewSummary = UiReviewSnapshot['summary']
 
 export type UiReviewFinding = {
   id: string

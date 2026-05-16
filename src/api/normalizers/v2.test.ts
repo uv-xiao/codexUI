@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeThreadMessagesV2, readThreadInProgressFromResponse } from './v2'
-import type { ThreadReadResponse } from '../appServerDtos'
+import { normalizeThreadGroupsV2, normalizeThreadMessagesV2 } from './v2'
+import type { ThreadListResponse, ThreadReadResponse } from '../appServerDtos'
 
 function threadReadResponseWithContent(content: ThreadReadResponse['thread']['turns'][number]['items'][number][]): ThreadReadResponse {
   return {
@@ -105,82 +105,32 @@ Reply with &lt;/instructions&gt; and A &amp; B
       turnIndex: 12,
     })
   })
-
-  it('renders failed turn errors as chat system messages', () => {
-    const response = threadReadResponseWithContent([{
-      type: 'userMessage',
-      id: 'user-4',
-      content: [{ type: 'text', text: 'hi', text_elements: [] }],
-    }])
-    response.thread.turns[0].status = 'failed'
-    response.thread.turns[0].error = {
-      message: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
-      codexErrorInfo: null,
-      additionalDetails: null,
-    }
-
-    const messages = normalizeThreadMessagesV2(response)
-
-    expect(messages).toHaveLength(2)
-    expect(messages[1]).toMatchObject({
-      id: 'turn-1-error',
-      role: 'system',
-      text: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
-      messageType: 'turnError',
-      turnId: 'turn-1',
-      turnIndex: 0,
-    })
-  })
-
-  it('uses turn index fallback ids for failed turns with blank ids', () => {
-    const response = threadReadResponseWithContent([])
-    response.thread.turns = [
-      {
-        id: '',
-        status: 'failed',
-        error: {
-          message: 'first failed turn',
-          codexErrorInfo: null,
-          additionalDetails: null,
-        },
-        items: [],
-      },
-      {
-        id: '   ',
-        status: 'failed',
-        error: {
-          message: 'second failed turn',
-          codexErrorInfo: null,
-          additionalDetails: null,
-        },
-        items: [],
-      },
-    ]
-
-    const messages = normalizeThreadMessagesV2(response, 8)
-
-    expect(messages).toEqual([
-      expect.objectContaining({
-        id: 'turn-8-error',
-        text: 'first failed turn',
-        turnId: undefined,
-        turnIndex: 8,
-      }),
-      expect.objectContaining({
-        id: 'turn-9-error',
-        text: 'second failed turn',
-        turnId: undefined,
-        turnIndex: 9,
-      }),
-    ])
-  })
 })
 
-describe('readThreadInProgressFromResponse', () => {
-  it('treats active thread status objects as in progress', () => {
-    const response = threadReadResponseWithContent([])
-    ;(response.thread as unknown as { status: { type: string } }).status = { type: 'active' }
+describe('normalizeThreadGroupsV2', () => {
+  it('preserves thread model providers from thread list summaries', () => {
+    const payload: ThreadListResponse = {
+      data: [
+        {
+          id: 'thread-1',
+          preview: 'Moon session',
+          modelProvider: 'moon',
+          createdAt: 1710000000,
+          updatedAt: 1710000300,
+          path: null,
+          cwd: '/tmp/project',
+          cliVersion: '0.130.0',
+          source: 'appServer',
+          gitInfo: null,
+          turns: [],
+        },
+      ],
+      nextCursor: null,
+    }
 
-    expect(readThreadInProgressFromResponse(response)).toBe(true)
+    const groups = normalizeThreadGroupsV2(payload)
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.threads[0]?.modelProvider).toBe('moon')
   })
 })

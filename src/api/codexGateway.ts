@@ -49,7 +49,6 @@ import type {
   UiReviewResult,
   UiReviewScope,
   UiReviewSnapshot,
-  UiReviewSummary,
   UiReviewWorkspaceView,
   UiRateLimitSnapshot,
   UiRateLimitWindow,
@@ -249,7 +248,11 @@ type DirectoryComposioConnectorPage = {
 
 type ProviderModelsResponse = {
   data?: unknown
-  exclusive?: unknown
+}
+
+export type MoonBridgeModelMetadata = {
+  id: string
+  contextWindow: number | null
 }
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
@@ -296,6 +299,8 @@ export type ThreadQueueState = Record<string, StoredQueuedMessage[]>
 
 export type ComposerFileSuggestion = {
   path: string
+  kind: 'file' | 'directory'
+  isSymlink: boolean
 }
 
 const DEFAULT_COLLABORATION_MODE_OPTIONS: CollaborationModeOption[] = [
@@ -332,15 +337,6 @@ export type GitCommitOption = {
   shortSha: string
   subject: string
   date: string
-}
-
-export type GitCommitFileChange = {
-  path: string
-  previousPath: string | null
-  status: string
-  label: string
-  addedLineCount: number | null
-  removedLineCount: number | null
 }
 
 export type GitRepositoryStatus = {
@@ -431,6 +427,19 @@ function readString(value: unknown): string | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readPositiveInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value)
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.trunc(parsed)
+    }
+  }
+  return null
 }
 
 function readBoolean(value: unknown): boolean | null {
@@ -753,8 +762,6 @@ async function getThreadSummaryV2(threadId: string): Promise<UiThread> {
 }
 
 async function getThreadDetailV2(threadId: string): Promise<{
-  model: string
-  modelProvider: string
   messages: UiMessage[]
   inProgress: boolean
   activeTurnId: string
@@ -768,8 +775,6 @@ async function getThreadDetailV2(threadId: string): Promise<{
   const startTurnIndex = readThreadTurnStartIndex(payload)
   const normalized = normalizeThreadMessagesV2(payload, startTurnIndex)
   return {
-    model: normalizeThreadModelFromPayload(payload),
-    modelProvider: normalizeThreadModelProviderFromPayload(payload),
     messages: normalized,
     inProgress: readThreadInProgressFromResponse(payload),
     activeTurnId: readActiveTurnIdFromResponse(payload),
@@ -848,8 +853,6 @@ export async function getThreadSummary(threadId: string): Promise<UiThread> {
 }
 
 export async function getThreadDetail(threadId: string): Promise<{
-  model: string
-  modelProvider: string
   messages: UiMessage[]
   inProgress: boolean
   activeTurnId: string
@@ -954,8 +957,7 @@ function normalizeReviewSnapshot(payload: unknown): UiReviewSnapshot {
   const envelope = asRecord(payload)
   const data = asRecord(envelope?.data)
   const summaryRecord = asRecord(data?.summary)
-  const rawScope = readString(data?.scope)
-  const scope = rawScope === 'baseBranch' || rawScope === 'commit' ? rawScope : 'workspace'
+  const scope = readString(data?.scope) === 'baseBranch' ? 'baseBranch' : 'workspace'
   const workspaceView = readString(data?.workspaceView) === 'staged' ? 'staged' : 'unstaged'
 
   return {
@@ -970,7 +972,6 @@ function normalizeReviewSnapshot(payload: unknown): UiReviewSnapshot {
         .map((entry) => readString(entry))
         .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
       : [],
-    commitSha: readString(data?.commitSha),
     headBranch: readString(data?.headBranch),
     mergeBaseSha: readString(data?.mergeBaseSha),
     generatedAtIso: readString(data?.generatedAtIso) ?? '',
@@ -984,16 +985,6 @@ function normalizeReviewSnapshot(payload: unknown): UiReviewSnapshot {
         .map((entry) => normalizeReviewFile(entry))
         .filter((entry): entry is UiReviewFile => entry !== null)
       : [],
-  }
-}
-
-function normalizeReviewSummary(payload: unknown): UiReviewSummary {
-  const envelope = asRecord(payload)
-  const data = asRecord(envelope?.data)
-  return {
-    fileCount: readNumber(data?.fileCount) ?? 0,
-    addedLineCount: readNumber(data?.addedLineCount) ?? 0,
-    removedLineCount: readNumber(data?.removedLineCount) ?? 0,
   }
 }
 
@@ -1495,43 +1486,33 @@ export type ResumedThread = {
   turnIndexByTurnId: ThreadTurnIndexById
 }
 
-const RESUME_THREAD_COALESCE_TTL_MS = 30_000
-const recentResumeThreadById = new Map<string, Promise<ResumedThread>>()
-
-export async function resumeThread(threadId: string): Promise<ResumedThread> {
-  const existing = recentResumeThreadById.get(threadId)
-  if (existing) return existing
-
-  const promise = (async () => {
-    const payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
-    const startTurnIndex = readThreadTurnStartIndex(payload)
-    const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
-    return {
-      model: normalizeThreadModelFromPayload(payload),
-      modelProvider: normalizeThreadModelProviderFromPayload(payload),
-      messages,
-      inProgress: readThreadInProgressFromResponse(payload),
-      activeTurnId: readActiveTurnIdFromResponse(payload),
-      hasMoreOlder: startTurnIndex > 0,
-      turnIndexByTurnId: buildTurnIndexByTurnId(payload, startTurnIndex),
-    }
-  })()
-
-  recentResumeThreadById.set(threadId, promise)
-  const hardEvictionTimer = globalThis.setTimeout(() => {
-    if (recentResumeThreadById.get(threadId) === promise) {
-      recentResumeThreadById.delete(threadId)
-    }
-  }, RESUME_THREAD_COALESCE_TTL_MS)
-  void promise.finally(() => {
-    globalThis.clearTimeout(hardEvictionTimer)
-    globalThis.setTimeout(() => {
-      if (recentResumeThreadById.get(threadId) === promise) {
-        recentResumeThreadById.delete(threadId)
-      }
-    }, 2000)
-  }).catch(() => undefined)
-  return promise
+export async function resumeThread(
+  threadId: string,
+  model?: string,
+  modelProvider?: string,
+): Promise<ResumedThread> {
+  const params: Record<string, unknown> = {
+    threadId,
+    persistExtendedHistory: true,
+  }
+  if (typeof model === 'string' && model.trim().length > 0) {
+    params.model = model.trim()
+  }
+  if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+    params.modelProvider = modelProvider.trim()
+  }
+  const payload = await callRpc<ThreadResumeResponse>('thread/resume', params)
+  const startTurnIndex = readThreadTurnStartIndex(payload)
+  const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
+  return {
+    model: normalizeThreadModelFromPayload(payload),
+    modelProvider: normalizeThreadModelProviderFromPayload(payload),
+    messages,
+    inProgress: readThreadInProgressFromResponse(payload),
+    activeTurnId: readActiveTurnIdFromResponse(payload),
+    hasMoreOlder: startTurnIndex > 0,
+    turnIndexByTurnId: buildTurnIndexByTurnId(payload, startTurnIndex),
+  }
 }
 
 export async function archiveThread(threadId: string): Promise<void> {
@@ -1596,12 +1577,23 @@ function normalizeThreadModelFromPayload(payload: unknown): string {
 }
 
 function normalizeThreadModelProviderFromPayload(payload: unknown): string {
-  const record = asRecord(payload)
-  if (!record) return ''
-  const modelProvider = readString(record.modelProvider)?.trim() ?? ''
-  if (modelProvider) return modelProvider
+  if (!payload || typeof payload !== 'object') return ''
+  const record = payload as Record<string, unknown>
   const thread = asRecord(record.thread)
-  return readString(thread?.modelProvider)?.trim() ?? ''
+  const candidates = [
+    record.modelProvider,
+    record.model_provider,
+    thread?.modelProvider,
+    thread?.model_provider,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim()
+    }
+  }
+
+  return ''
 }
 
 export type StartedThread = {
@@ -1614,17 +1606,23 @@ export type ForkedThread = {
   threadId: string
   cwd: string
   model: string
+  modelProvider: string
   messages: UiMessage[]
 }
 
-export async function startThread(cwd?: string, model?: string): Promise<StartedThread> {
+export async function startThread(cwd?: string, model?: string, modelProvider?: string): Promise<StartedThread> {
   try {
-    const params: Record<string, unknown> = {}
+    const params: Record<string, unknown> = {
+      persistExtendedHistory: true,
+    }
     if (typeof cwd === 'string' && cwd.trim().length > 0) {
       params.cwd = cwd.trim()
     }
     if (typeof model === 'string' && model.trim().length > 0) {
       params.model = model.trim()
+    }
+    if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+      params.modelProvider = modelProvider.trim()
     }
     const payload = await callRpc<ThreadStartResponse>('thread/start', params)
     const threadId = normalizeThreadIdFromPayload(payload)
@@ -1645,8 +1643,15 @@ export async function forkThread(threadId: string): Promise<ForkedThread>
 export async function forkThread(threadId: string, cwd: string | undefined, model: string | undefined): Promise<StartedThread>
 export async function forkThread(
   threadId: string,
+  cwd: string | undefined,
+  model: string | undefined,
+  modelProvider: string | undefined,
+): Promise<StartedThread>
+export async function forkThread(
+  threadId: string,
   cwd?: string,
   model?: string,
+  modelProvider?: string,
 ): Promise<StartedThread | ForkedThread> {
   if (arguments.length <= 1) {
     try {
@@ -1662,6 +1667,7 @@ export async function forkThread(
         threadId: forkedThreadId,
         cwd: normalizeThreadCwdFromPayload(payload),
         model: normalizeThreadModelFromPayload(payload),
+        modelProvider: normalizeThreadModelProviderFromPayload(payload),
         messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
       }
     } catch (error) {
@@ -1676,12 +1682,16 @@ export async function forkThread(
     }
     const params: Record<string, unknown> = {
       threadId: normalizedThreadId,
+      persistExtendedHistory: true,
     }
     if (typeof cwd === 'string' && cwd.trim().length > 0) {
       params.cwd = cwd.trim()
     }
     if (typeof model === 'string' && model.trim().length > 0) {
       params.model = model.trim()
+    }
+    if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
+      params.modelProvider = modelProvider.trim()
     }
     const payload = await callRpc<ThreadForkResponse>('thread/fork', params)
     const nextThreadId = normalizeThreadIdFromPayload(payload)
@@ -1699,6 +1709,11 @@ export async function forkThread(
 }
 
 export type FileAttachmentParam = { label: string; path: string; fsPath: string }
+
+type BuiltUserInputPayload = {
+  input: Array<Record<string, unknown>>
+  attachments: FileAttachmentParam[]
+}
 
 function extractLocalImagePathFromUrl(value: string): string | null {
   if (!value) return null
@@ -1728,6 +1743,59 @@ function fileNameFromPath(pathValue: string): string {
   const normalized = pathValue.replace(/\\/g, '/')
   const segments = normalized.split('/').filter(Boolean)
   return segments.at(-1) ?? normalized
+}
+
+function buildUserInputPayload(
+  text: string,
+  imageUrls: string[],
+  skills: Array<{ name: string; path: string }> | undefined,
+  fileAttachments: FileAttachmentParam[],
+): BuiltUserInputPayload {
+  const localImageAttachments: FileAttachmentParam[] = []
+  for (const imageUrl of imageUrls) {
+    const localImagePath = extractLocalImagePathFromUrl(imageUrl.trim())
+    if (!localImagePath) continue
+    localImageAttachments.push({
+      label: fileNameFromPath(localImagePath),
+      path: localImagePath,
+      fsPath: localImagePath,
+    })
+  }
+
+  const allFileAttachments = [...fileAttachments, ...localImageAttachments]
+  const dedupedFileAttachments = allFileAttachments.filter((entry, index) =>
+    allFileAttachments.findIndex((candidate) => candidate.fsPath === entry.fsPath) === index)
+  const finalText = buildTextWithAttachments(text, dedupedFileAttachments)
+  const input: Array<Record<string, unknown>> = [{ type: 'text', text: finalText }]
+
+  for (const imageUrl of imageUrls) {
+    const normalizedUrl = imageUrl.trim()
+    if (!normalizedUrl) continue
+    const localImagePath = extractLocalImagePathFromUrl(normalizedUrl)
+    if (localImagePath) {
+      input.push({
+        type: 'localImage',
+        path: localImagePath,
+      })
+      continue
+    }
+    input.push({
+      type: 'image',
+      url: normalizedUrl,
+      image_url: normalizedUrl,
+    })
+  }
+
+  if (skills) {
+    for (const skill of skills) {
+      input.push({ type: 'skill', name: skill.name, path: skill.path })
+    }
+  }
+
+  return {
+    input,
+    attachments: dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath })),
+  }
 }
 
 async function resolveCollaborationModeSettings(
@@ -1794,44 +1862,7 @@ export async function startThreadTurn(
 ): Promise<string> {
   try {
     const normalizedModel = model?.trim() ?? ''
-    const localImageAttachments: FileAttachmentParam[] = []
-    for (const imageUrl of imageUrls) {
-      const localImagePath = extractLocalImagePathFromUrl(imageUrl.trim())
-      if (!localImagePath) continue
-      localImageAttachments.push({
-        label: fileNameFromPath(localImagePath),
-        path: localImagePath,
-        fsPath: localImagePath,
-      })
-    }
-    const allFileAttachments = [...fileAttachments, ...localImageAttachments]
-    const dedupedFileAttachments = allFileAttachments.filter((entry, index) =>
-      allFileAttachments.findIndex((candidate) => candidate.fsPath === entry.fsPath) === index)
-    const finalText = buildTextWithAttachments(text, dedupedFileAttachments)
-    const input: Array<Record<string, unknown>> = [{ type: 'text', text: finalText }]
-    for (const imageUrl of imageUrls) {
-      const normalizedUrl = imageUrl.trim()
-      if (!normalizedUrl) continue
-      const localImagePath = extractLocalImagePathFromUrl(normalizedUrl)
-      if (localImagePath) {
-        input.push({
-          type: 'localImage',
-          path: localImagePath,
-        })
-        continue
-      }
-      input.push({
-        type: 'image',
-        url: normalizedUrl,
-        image_url: normalizedUrl,
-      })
-    }
-    if (skills) {
-      for (const skill of skills) {
-        input.push({ type: 'skill', name: skill.name, path: skill.path })
-      }
-    }
-    const attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
+    const { input, attachments } = buildUserInputPayload(text, imageUrls, skills, fileAttachments)
     const params: Record<string, unknown> = {
       threadId,
       input,
@@ -1858,6 +1889,37 @@ export async function startThreadTurn(
     return typeof payload?.turn?.id === 'string' ? payload.turn.id.trim() : ''
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to start turn for thread ${threadId}`, 'turn/start')
+  }
+}
+
+export async function steerThreadTurn(
+  threadId: string,
+  expectedTurnId: string,
+  text: string,
+  imageUrls: string[] = [],
+  skills?: Array<{ name: string; path: string }>,
+  fileAttachments: FileAttachmentParam[] = [],
+): Promise<string> {
+  const normalizedThreadId = threadId.trim()
+  const normalizedExpectedTurnId = expectedTurnId.trim()
+  if (!normalizedThreadId) return ''
+
+  try {
+    if (!normalizedExpectedTurnId) {
+      throw new Error('turn/steer requires expectedTurnId')
+    }
+
+    const { input } = buildUserInputPayload(text, imageUrls, skills, fileAttachments)
+    const payload = await callRpc<{ turnId?: string }>('turn/steer', {
+      threadId: normalizedThreadId,
+      expectedTurnId: normalizedExpectedTurnId,
+      input,
+    })
+    return typeof payload?.turnId === 'string' && payload.turnId.trim()
+      ? payload.turnId.trim()
+      : normalizedExpectedTurnId
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to steer active turn for thread ${normalizedThreadId}`, 'turn/steer')
   }
 }
 
@@ -1902,13 +1964,12 @@ export async function setCodexSpeedMode(mode: SpeedMode): Promise<void> {
 
 export interface FreeModeStatus {
   enabled: boolean
-  hasCodexAuth?: boolean
   keyCount: number
   models: string[]
   currentModel: string | null
   customKey: boolean
   maskedKey: string | null
-  provider?: 'openrouter' | 'custom' | 'opencode-zen'
+  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon'
   customBaseUrl?: string
   wireApi?: 'responses' | 'chat' | null
 }
@@ -1939,7 +2000,7 @@ export async function setFreeModeCustomKey(key: string): Promise<{ ok: boolean; 
 export async function setCustomProvider(
   baseUrl: string,
   apiKey: string,
-  options?: { wireApi?: 'responses' | 'chat'; provider?: 'custom' | 'opencode-zen' | 'openrouter' },
+  options?: { wireApi?: 'responses' | 'chat'; provider?: 'custom' | 'opencode-zen' | 'openrouter' | 'moon' },
 ): Promise<{ ok: boolean }> {
   const response = await fetch('/codex-api/free-mode/custom-provider', {
     method: 'POST',
@@ -1954,45 +2015,7 @@ export async function setCustomProvider(
   return await response.json() as { ok: boolean }
 }
 
-async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string[], exclusive: boolean } | null> {
-  try {
-    const normalizedProviderId = providerId?.trim() ?? ''
-    const url = normalizedProviderId
-      ? `/codex-api/provider-models?provider=${encodeURIComponent(normalizedProviderId)}`
-      : '/codex-api/provider-models'
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
-    })
-    let providerPayload: ProviderModelsResponse | null = null
-    try {
-      providerPayload = await response.json() as ProviderModelsResponse
-    } catch {
-      providerPayload = null
-    }
-
-    if (response.ok && Array.isArray(providerPayload?.data)) {
-      return {
-        ids: providerPayload.data
-          .map((candidate) => typeof candidate === 'string' ? candidate.trim() : '')
-          .filter((candidate, index, candidates): candidate is string =>
-            candidate.length > 0 && candidates.indexOf(candidate) === index),
-        exclusive: providerPayload.exclusive === true,
-      }
-    }
-  } catch {
-    // Keep Codex usable when the provider-models endpoint is unavailable.
-  }
-  return null
-}
-
-export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
-  const shouldIncludeProviderModels = options.includeProviderModels !== false
-  const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
-
-  if (providerModels?.exclusive || options.requireProviderModels) {
-    return providerModels?.ids ?? []
-  }
-
+export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean } = {}): Promise<string[]> {
   const payload = await callRpc<ModelListResponse>('model/list', {})
   const ids: string[] = []
   for (const row of payload.data) {
@@ -2001,12 +2024,118 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
     ids.push(candidate)
   }
 
-  if (!shouldIncludeProviderModels || !providerModels) return ids
-
-  for (const candidate of providerModels.ids) {
-    if (!ids.includes(candidate)) ids.push(candidate)
+  if (options.includeProviderModels === false) {
+    return ids
   }
+
+  let sawProviderModels = false
+  try {
+    const response = await fetch('/codex-api/provider-models', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    let providerPayload: (ProviderModelsResponse & { exclusive?: boolean }) | null = null
+    try {
+      providerPayload = await response.json() as ProviderModelsResponse & { exclusive?: boolean }
+    } catch {
+      providerPayload = null
+    }
+
+    if (response.ok && Array.isArray(providerPayload?.data)) {
+      sawProviderModels = true
+      if (providerPayload.exclusive) {
+        return providerPayload.data.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+      }
+      for (const candidate of providerPayload.data) {
+        if (typeof candidate !== 'string') continue
+        const normalized = candidate.trim()
+        if (!normalized || ids.includes(normalized)) continue
+        ids.push(normalized)
+      }
+    }
+  } catch {
+    // Keep Codex usable when the provider-models endpoint is unavailable.
+  }
+
+  if (options.requireProviderModels && !sawProviderModels) {
+    return []
+  }
+
   return ids
+}
+
+export async function getMoonBridgeModelIds(): Promise<string[]> {
+  try {
+    const response = await fetch('/codex-api/moonbridge/models', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+
+    const payload = (await response.json()) as unknown
+    const record = asRecord(payload)
+    const rows = Array.isArray(record?.data) ? record.data : []
+    const ids: string[] = []
+    for (const row of rows) {
+      if (typeof row !== 'string') continue
+      const normalized = row.trim()
+      if (!normalized || ids.includes(normalized)) continue
+      ids.push(normalized)
+    }
+    return ids
+  } catch {
+    return []
+  }
+}
+
+function normalizeMoonBridgeModelMetadataRow(value: unknown): MoonBridgeModelMetadata | null {
+  if (typeof value === 'string') {
+    const id = value.trim()
+    return id ? { id, contextWindow: null } : null
+  }
+
+  const record = asRecord(value)
+  if (!record) return null
+
+  const id = (
+    readString(record.id)
+    ?? readString(record.slug)
+    ?? readString(record.model)
+    ?? readString(record.name)
+    ?? readString(record.display_name)
+    ?? ''
+  ).trim()
+  if (!id) return null
+
+  return {
+    id,
+    contextWindow: readPositiveInteger(
+      record.contextWindow
+        ?? record.context_window
+        ?? record.maxContextWindow
+        ?? record.max_context_window,
+    ),
+  }
+}
+
+export async function getMoonBridgeModelMetadata(): Promise<MoonBridgeModelMetadata[]> {
+  try {
+    const response = await fetch('/codex-api/moonbridge/model-metadata', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+
+    const payload = (await response.json()) as unknown
+    const record = asRecord(payload)
+    const rows = Array.isArray(record?.data) ? record.data : []
+    const models: MoonBridgeModelMetadata[] = []
+    for (const row of rows) {
+      const model = normalizeMoonBridgeModelMetadataRow(row)
+      if (!model || models.some((existing) => existing.id === model.id)) continue
+      models.push(model)
+    }
+    return models
+  } catch {
+    return []
+  }
 }
 
 export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {
@@ -2754,15 +2883,11 @@ export async function checkoutGitBranch(cwd: string, branch: string): Promise<st
   return typeof branchName === 'string' && branchName.trim() ? branchName.trim() : null
 }
 
-export async function getGitBranchCommits(cwd: string, branch: string, options: { includeResetHistory?: boolean } = {}): Promise<GitCommitOption[]> {
+export async function getGitBranchCommits(cwd: string, branch: string): Promise<GitCommitOption[]> {
   const normalizedCwd = cwd.trim()
   const normalizedBranch = branch.trim()
   if (!normalizedCwd || !normalizedBranch) return []
-  const query = new URLSearchParams({
-    cwd: normalizedCwd,
-    branch: normalizedBranch,
-    includeResetHistory: options.includeResetHistory === false ? 'false' : 'true',
-  })
+  const query = new URLSearchParams({ cwd: normalizedCwd, branch: normalizedBranch })
   const response = await fetch(`/codex-api/git/branch-commits?${query.toString()}`)
   const payload = (await response.json()) as { data?: unknown; error?: string }
   if (!response.ok) {
@@ -2778,34 +2903,6 @@ export async function getGitBranchCommits(cwd: string, branch: string, options: 
     const date = typeof record.date === 'string' ? record.date.trim() : ''
     if (!sha || !shortSha) return []
     return [{ sha, shortSha, subject: subject || shortSha, date }]
-  })
-}
-
-export async function getGitCommitFiles(cwd: string, sha: string): Promise<GitCommitFileChange[]> {
-  const normalizedCwd = cwd.trim()
-  const normalizedSha = sha.trim()
-  if (!normalizedCwd || !normalizedSha) return []
-  const query = new URLSearchParams({
-    cwd: normalizedCwd,
-    sha: normalizedSha,
-  })
-  const response = await fetch(`/codex-api/git/commit-files?${query.toString()}`)
-  const payload = (await response.json()) as { data?: unknown; error?: string }
-  if (!response.ok) {
-    throw new Error(payload.error || 'Failed to load commit files')
-  }
-  const rawList = Array.isArray(payload.data) ? payload.data : []
-  return rawList.flatMap((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
-    const record = item as Record<string, unknown>
-    const path = typeof record.path === 'string' ? record.path : ''
-    const previousPath = typeof record.previousPath === 'string' && record.previousPath.length > 0 ? record.previousPath : null
-    const status = typeof record.status === 'string' ? record.status.trim() : ''
-    const label = typeof record.label === 'string' ? record.label.trim() : ''
-    const addedLineCount = typeof record.addedLineCount === 'number' && Number.isFinite(record.addedLineCount) ? record.addedLineCount : null
-    const removedLineCount = typeof record.removedLineCount === 'number' && Number.isFinite(record.removedLineCount) ? record.removedLineCount : null
-    if (!path || !status) return []
-    return [{ path, previousPath, status, label: label || status, addedLineCount, removedLineCount }]
   })
 }
 
@@ -2843,14 +2940,10 @@ export async function getReviewSnapshot(
   scope: UiReviewScope,
   workspaceView: UiReviewWorkspaceView,
   baseBranch?: string | null,
-  commitSha?: string | null,
 ): Promise<UiReviewSnapshot> {
   const query = new URLSearchParams({ cwd, scope, workspaceView })
   if (baseBranch && baseBranch.trim()) {
     query.set('baseBranch', baseBranch.trim())
-  }
-  if (commitSha && commitSha.trim()) {
-    query.set('commitSha', commitSha.trim())
   }
   const response = await fetch(`/codex-api/review/snapshot?${query.toString()}`)
   const payload = (await response.json()) as unknown
@@ -2858,19 +2951,6 @@ export async function getReviewSnapshot(
     throw new Error(getErrorMessageFromPayload(payload, 'Failed to load review snapshot'))
   }
   return normalizeReviewSnapshot(payload)
-}
-
-export async function getReviewSummary(
-  cwd: string,
-  workspaceView: UiReviewWorkspaceView,
-): Promise<UiReviewSummary> {
-  const query = new URLSearchParams({ cwd, workspaceView })
-  const response = await fetch(`/codex-api/review/summary?${query.toString()}`)
-  const payload = (await response.json()) as unknown
-  if (!response.ok) {
-    throw new Error(getErrorMessageFromPayload(payload, 'Failed to load review summary'))
-  }
-  return normalizeReviewSummary(payload)
 }
 
 export async function applyReviewAction(payload: {
@@ -3142,7 +3222,7 @@ export async function searchComposerFiles(cwd: string, query: string, limit = 20
   })
   const payload = (await response.json()) as unknown
   if (!response.ok) {
-    const message = getErrorMessageFromPayload(payload, 'Failed to search files')
+    const message = getErrorMessageFromPayload(payload, 'Failed to search paths')
     throw new Error(message)
   }
   const record =
@@ -3157,7 +3237,12 @@ export async function searchComposerFiles(cwd: string, query: string, limit = 20
     const rawPath = row.path
     const value = typeof rawPath === 'string' ? rawPath.trim() : ''
     if (!value) continue
-    suggestions.push({ path: value })
+    const kind = row.kind === 'directory' ? 'directory' : 'file'
+    suggestions.push({
+      path: value,
+      kind,
+      isSymlink: row.isSymlink === true,
+    })
   }
   return suggestions
 }

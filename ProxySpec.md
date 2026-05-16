@@ -57,11 +57,11 @@ model_providers.custom-endpoint.wire_api = "responses"
 model_providers.custom-endpoint.experimental_bearer_token = "custom-proxy-token"
 ```
 
-The token in Codex config is only a local proxy placeholder. The real provider key is read by the app server from `~/.codex/webui-free-mode.json`.
+The token in Codex config is only a local proxy placeholder. The real provider key lives in the running app server's session-local provider state.
 
 ## Mode Selection
 
-The persisted provider state contains `wireApi`:
+The session-local provider state contains `wireApi`:
 
 ```ts
 type WireApi = 'responses' | 'chat'

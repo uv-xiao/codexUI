@@ -1,12 +1,14 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
-import { createDirectoryListingHtml, createTextEditorHtml, decodeBrowsePath, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath } from "./src/server/localBrowseUi";
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
+import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from "./src/server/katexAssets";
 import tailwindcss from "@tailwindcss/vite";
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { stat, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute } from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import pkg from "./package.json";
 
@@ -32,6 +34,22 @@ function normalizeLocalImagePath(rawPath: string): string {
     }
   }
   return trimmed;
+}
+
+function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(payload));
+}
+
+async function readJsonRequestBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) return {};
+  return JSON.parse(raw);
 }
 
 function getWorktreeName(): string {
@@ -211,6 +229,31 @@ export default defineConfig({
         server.middlewares.use((req, res, next) => {
           if (!req.url || (req.method !== "GET" && req.method !== "HEAD")) return next();
           const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith(`${KATEX_ASSET_ROUTE}/`)) return next();
+
+          const assetPath = resolveKatexAssetPath(url.pathname.slice(KATEX_ASSET_ROUTE.length));
+          if (!assetPath) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "KaTeX asset not found." }));
+            return;
+          }
+
+          res.statusCode = 200;
+          res.setHeader("Content-Type", getKatexAssetContentType(assetPath));
+          res.setHeader("Cache-Control", "private, max-age=86400");
+          const stream = createReadStream(assetPath);
+          stream.on("error", () => {
+            if (res.headersSent) return;
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "KaTeX asset not found." }));
+          });
+          stream.pipe(res);
+        });
+        server.middlewares.use((req, res, next) => {
+          if (!req.url || (req.method !== "GET" && req.method !== "HEAD")) return next();
+          const url = new URL(req.url, "http://localhost");
           if (url.pathname !== "/codex-local-file") return next();
 
           const localPath = normalizeLocalPath(url.searchParams.get("path") ?? "");
@@ -268,12 +311,52 @@ export default defineConfig({
           }
         });
         server.middlewares.use(async (req, res, next) => {
+          if (!req.url || (req.method !== "POST" && req.method !== "DELETE")) return next();
+          const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith("/codex-local-browse/")) return next();
+
+          const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-browse".length));
+          if (!localPath || !isAbsolute(localPath)) {
+            sendJson(res, 400, { error: "Expected absolute local file path." });
+            return;
+          }
+
+          if (req.method === "POST") {
+            let payload: unknown;
+            try {
+              payload = await readJsonRequestBody(req);
+            } catch {
+              sendJson(res, 400, { error: "Invalid JSON body." });
+              return;
+            }
+            const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
+            const name = typeof record?.name === "string" ? record.name : "";
+            try {
+              const filePath = await createLocalBrowseFile(localPath, name);
+              sendJson(res, 201, { data: { path: filePath } });
+            } catch (error) {
+              const mutationError = error instanceof LocalBrowseMutationError ? error : null;
+              sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Create file failed." });
+            }
+            return;
+          }
+
+          try {
+            await deleteLocalBrowseFile(localPath);
+            sendJson(res, 200, { ok: true });
+          } catch (error) {
+            const mutationError = error instanceof LocalBrowseMutationError ? error : null;
+            sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Delete file failed." });
+          }
+        });
+        server.middlewares.use(async (req, res, next) => {
           if (!req.url || (req.method !== "GET" && req.method !== "HEAD")) return next();
           const url = new URL(req.url, "http://localhost");
           if (!url.pathname.startsWith("/codex-local-browse/")) return next();
 
           const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-browse".length));
           const newProjectName = url.searchParams.get("newProjectName") ?? "";
+          const lineRange = url.searchParams.get("line") ?? "";
           if (!localPath || !isAbsolute(localPath)) {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
@@ -289,6 +372,13 @@ export default defineConfig({
               res.statusCode = 200;
               res.setHeader("Content-Type", "text/html; charset=utf-8");
               res.end(html);
+              return;
+            }
+
+            if (await isTextEditableFile(localPath)) {
+              res.statusCode = 302;
+              res.setHeader("Location", toEditHref(localPath, newProjectName, lineRange));
+              res.end();
               return;
             }
 
@@ -337,6 +427,44 @@ export default defineConfig({
           }
         });
         server.middlewares.use(async (req, res, next) => {
+          if (!req.url || req.method !== "POST") return next();
+          const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith("/codex-local-preview/")) return next();
+          const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-preview".length));
+          if (!localPath || !isAbsolute(localPath)) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Expected absolute local file path." }));
+            return;
+          }
+          try {
+            const fileStat = await stat(localPath);
+            if (!fileStat.isFile()) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Expected file path." }));
+              return;
+            }
+            const chunks: Buffer[] = [];
+            req.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+            req.on("end", () => {
+              const html = createMarkdownPreviewHtml(localPath, Buffer.concat(chunks).toString("utf8"));
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              res.end(html);
+            });
+            req.on("error", () => {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Preview failed." }));
+            });
+          } catch {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "File not found." }));
+          }
+        });
+        server.middlewares.use(async (req, res, next) => {
           if (!req.url || req.method !== "PUT") return next();
           const url = new URL(req.url, "http://localhost");
           if (!url.pathname.startsWith("/codex-local-edit/")) return next();
@@ -374,9 +502,6 @@ export default defineConfig({
           });
         });
         server.middlewares.use(bridge);
-        server.httpServer?.once("close", () => {
-          bridge.dispose();
-        });
       },
     },
   ],

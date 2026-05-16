@@ -6501,7 +6501,7 @@ function hasFreeModeStateChanged(current: FreeModeState, newState: FreeModeState
   return false
 }
 
-function buildAppServerConfigForState(state: FreeModeState): AppServerConfig {
+export function buildAppServerConfigForState(state: FreeModeState): AppServerConfig {
   const args = buildAppServerArgs()
   let extraEnv: Record<string, string> = {}
   const serverPort = parseInt(process.env.CODEXUI_SERVER_PORT ?? '', 10) || undefined
@@ -7749,6 +7749,19 @@ type CodexBridgeMiddleware = ((req: IncomingMessage, res: ServerResponse, next: 
   subscribeNotifications: (listener: (value: { method: string; params: unknown; atIso: string }) => void) => () => void
 }
 
+function createLazyBridgeDependency<T extends object>(resolve: () => T): T {
+  return new Proxy({} as T, {
+    get(_target, property) {
+      const target = resolve()
+      const value = Reflect.get(target, property)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+    set(_target, property, value) {
+      return Reflect.set(resolve(), property, value)
+    },
+  })
+}
+
 type SharedBridgeState = {
   version: string
   runtimePool: AppServerRuntimePool
@@ -7966,10 +7979,19 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     .catch(() => {})
 
   const middleware = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    if (!req.url) {
+      next()
+      return
+    }
+
+    const parsedRequestUrl = new URL(req.url, 'http://localhost')
+    const requestPath = parsedRequestUrl.pathname
+    if (!requestPath.startsWith('/codex-api/')) {
+      next()
+      return
+    }
+
     const requestStartNs = process.hrtime.bigint()
-    const rawUrl = req.url ?? ''
-    const parsedRequestUrl = rawUrl ? new URL(rawUrl, 'http://localhost') : null
-    const requestPath = parsedRequestUrl?.pathname ?? ''
     const requestMethod = req.method ?? 'UNKNOWN'
     const rawContentLength = Array.isArray(req.headers['content-length'])
       ? req.headers['content-length'][0]
@@ -8008,14 +8030,17 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
     res.once('close', logApiRequestDuration)
 
     try {
-      if (!req.url) {
-        next()
-        return
-      }
-
-      const url = new URL(req.url, 'http://localhost')
-      const appServer = getActiveAppServer()
-      const backendQueueProcessor = getActiveBackendQueueProcessor()
+      const url = parsedRequestUrl
+      let resolvedAppServer: AppServerProcess | null = null
+      let resolvedBackendQueueProcessor: BackendQueueProcessor | null = null
+      const appServer = createLazyBridgeDependency(() => {
+        resolvedAppServer ??= getActiveAppServer()
+        return resolvedAppServer
+      })
+      const backendQueueProcessor = createLazyBridgeDependency(() => {
+        resolvedBackendQueueProcessor ??= getActiveBackendQueueProcessor()
+        return resolvedBackendQueueProcessor
+      })
 
       if (url.pathname === '/codex-api/zen-proxy/v1/responses' && req.method === 'POST') {
         if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {

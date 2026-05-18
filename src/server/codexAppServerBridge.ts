@@ -39,6 +39,7 @@ import {
   getFreeModeConfigArgs,
   getFreeModeEnvVars,
   getProviderCompatibilityConfigArgs,
+  normalizeFreeModeState,
   shouldMarkOpenRouterKeyAsCustom,
   shouldCreateDefaultFreeModeStateForMissingAuth,
   shouldSuppressCommunityFreeModeForCodexAuth,
@@ -4783,7 +4784,7 @@ function hasUsableCodexAuthSync(): boolean {
 
 function readFreeModeStateSync(statePath: string): FreeModeState | null {
   try {
-    return JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState
+    return normalizeFreeModeState(JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState)
   } catch {
     return null
   }
@@ -7547,6 +7548,16 @@ type BridgeNotification = {
   method: string
   params: unknown
   atIso: string
+}
+
+function readActiveFreeModeStateSync(): FreeModeState {
+  return ensureDefaultFreeModeStateForMissingAuthSync(join(getCodexHomeDir(), FREE_MODE_STATE_FILE))
+    ?? createDefaultFreeModeState()
+}
+
+async function persistFreeModeState(state: FreeModeState): Promise<void> {
+  const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
+  await writeFile(statePath, JSON.stringify(normalizeFreeModeState(state) ?? state), { encoding: 'utf8', mode: 0o600 })
 }
 
 class AppServerRuntime {

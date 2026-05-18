@@ -23,6 +23,7 @@ import {
   getFreeKeyCount,
   FREE_MODE_DEFAULT_MODEL,
   getCachedFreeModels,
+  getCursorModels,
   getFreeModels,
   refreshFreeModelsInBackground,
   FREE_MODE_STATE_FILE,
@@ -9034,8 +9035,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               return
             }
             if (fmState.provider === CURSOR_PROVIDER_ID) {
-              const data = await readProviderBackedModelIds(appServer)
-              setJson(res, 200, { ...data, exclusive: true, source: 'cursor' })
+              const cursorModels = getCursorModels()
+              const currentModel = fmState.model?.trim() ?? ''
+              const data = cursorModels.length > 0
+                ? cursorModels
+                : currentModel
+                  ? [currentModel]
+                  : ['gpt-5.5-medium']
+              setJson(res, 200, { data, exclusive: true, providerId: CURSOR_PROVIDER_ID, source: 'cursor' })
               return
             }
             if (fmState.provider === OPENCODE_ZEN_PROVIDER_ID) {

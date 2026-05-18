@@ -101,6 +101,7 @@ const FREE_MODE_RUNTIME_PROVIDER_ID = 'openrouter_free'
 export const MOONBRIDGE_PROVIDER_ID = 'moon'
 export const MOONBRIDGE_PROVIDER_NAME = 'Moon Bridge'
 export const MOONBRIDGE_MODEL_CATALOG_FILE = 'models_catalog.json'
+export const CURSOR_PROVIDER_ID = 'cursor'
 
 export type MoonBridgeModelMetadata = {
   id: string
@@ -250,7 +251,7 @@ export interface FreeModeState {
   apiKey: string | null
   model: string
   customKey?: boolean
-  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon'
+  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'cursor'
   customBaseUrl?: string
   wireApi?: WireApi
   providerKeys?: Record<string, string>

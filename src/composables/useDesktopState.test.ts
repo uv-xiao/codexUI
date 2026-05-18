@@ -381,6 +381,7 @@ describe('provider session helpers', () => {
     expect(normalizeProviderId('rustcat')).toBe('codex')
     expect(normalizeProviderId('openrouter-free')).toBe('openrouter')
     expect(normalizeProviderId('custom-endpoint')).toBe('custom')
+    expect(normalizeProviderId('cursor')).toBe('cursor')
     expect(readSelectedProvider({}, '')).toBe('codex')
   })
 

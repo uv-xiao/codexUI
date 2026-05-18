@@ -1687,6 +1687,7 @@ const providerDropdownOptions = computed(() => [
   { value: 'openrouter', label: t('OpenRouter') },
   { value: 'opencode-zen', label: t('OpenCode Zen') },
   { value: 'moon', label: t('Moon Bridge') },
+  { value: 'cursor', label: t('Cursor CLI') },
   { value: 'custom', label: t('Custom endpoint') },
 ])
 const customEndpointUrl = ref('')
@@ -4517,7 +4518,7 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
-type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
+type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'cursor'
 
 function normalizeProviderSelection(provider: string): ProviderSelection {
   if (
@@ -4525,6 +4526,7 @@ function normalizeProviderSelection(provider: string): ProviderSelection {
     || provider === 'opencode-zen'
     || provider === 'custom'
     || provider === 'moon'
+    || provider === 'cursor'
   ) {
     return provider
   }
@@ -4580,6 +4582,12 @@ async function applySelectedProviderState(
       await setCustomProvider('', '', {
         wireApi: 'responses',
         provider: 'moon',
+      })
+      freeModeEnabled.value = true
+    } else if (provider === 'cursor') {
+      await setCustomProvider('', '', {
+        wireApi: 'responses',
+        provider: 'cursor',
       })
       freeModeEnabled.value = true
     } else {
@@ -4708,6 +4716,9 @@ async function loadFreeModeStatus(): Promise<void> {
       customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     } else if (status.provider === 'openrouter') {
       openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
+    }
+    if (status.enabled && status.provider === 'cursor') {
+      setSelectedProvider(normalizeProviderSelection(status.provider))
     }
     externalCodexAuthAvailable = status.hasCodexAuth === true
     if (!externalCodexAuthAvailable) {

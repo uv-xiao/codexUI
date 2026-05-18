@@ -115,7 +115,7 @@ function isThreadNotFoundError(error: unknown): boolean {
   return /\b404\b|thread.*not found|conversation.*not found|no such thread|no rollout found for thread id/i.test(message)
 }
 
-export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
+export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'cursor'
 
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -192,6 +192,9 @@ export function normalizeProviderId(value: unknown): ProviderId {
   if (normalized === 'moon') {
     return 'moon'
   }
+  if (normalized === 'cursor') {
+    return 'cursor'
+  }
   return 'codex'
 }
 
@@ -258,6 +261,7 @@ function toRpcModelProviderId(providerId: ProviderId): string {
   if (providerId === 'opencode-zen') return 'opencode-zen'
   if (providerId === 'custom') return 'custom-endpoint'
   if (providerId === 'moon') return 'moon'
+  if (providerId === 'cursor') return 'cursor'
   return ''
 }
 

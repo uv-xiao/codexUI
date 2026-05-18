@@ -31,6 +31,7 @@ import {
   createDefaultOpenCodeZenFreeModeState,
   filterOpenCodeZenModelsForAuthState,
   createDefaultFreeModeState,
+  CURSOR_PROVIDER_ID,
   MOONBRIDGE_PROVIDER_ID,
   getMoonBridgeModelMetadata,
   getMoonBridgeModels,
@@ -47,7 +48,11 @@ import { handleZenProxyRequest } from './zenProxy.js'
 import { handleCustomEndpointProxyRequest } from './customEndpointProxy.js'
 import { ThreadTerminalManager } from './terminalManager.js'
 import { getSpawnInvocation } from '../utils/commandInvocation.js'
-import { resolveCodexCommand, resolveCodexMoonCommand } from '../commandResolution.js'
+import {
+  resolveCodexCommand,
+  resolveCodexCursorCommand,
+  resolveCodexMoonCommand,
+} from '../commandResolution.js'
 import type { CollaborationModeKind, ReasoningEffort } from '../types/codex.js'
 import { isAbsoluteLikePath } from '../pathUtils.js'
 import { searchComposerPaths } from './composerFileSearch.js'
@@ -6497,8 +6502,12 @@ function hasFreeModeStateChanged(current: FreeModeState, newState: FreeModeState
   if (current.model !== newState.model) return true
   if (current.wireApi !== newState.wireApi) return true
   if (current.customBaseUrl !== newState.customBaseUrl) return true
-  if (newState.provider !== 'moon' && current.apiKey !== newState.apiKey) return true
+  if (!isWrapperProvider(newState.provider) && current.apiKey !== newState.apiKey) return true
   return false
+}
+
+function isWrapperProvider(provider: FreeModeState['provider']): boolean {
+  return provider === MOONBRIDGE_PROVIDER_ID || provider === CURSOR_PROVIDER_ID
 }
 
 export function buildAppServerConfigForState(state: FreeModeState): AppServerConfig {
@@ -6514,6 +6523,11 @@ export function buildAppServerConfigForState(state: FreeModeState): AppServerCon
     command = resolveCodexMoonCommand()
     if (!command) {
       throw new Error('Codex Moon Bridge CLI is not available. Install codex-moon or set CODEXUI_CODEX_MOON_COMMAND.')
+    }
+  } else if (state.enabled && state.provider === CURSOR_PROVIDER_ID) {
+    command = resolveCodexCursorCommand()
+    if (!command) {
+      throw new Error('Codex Cursor CLI is not available. Install codex-cursor or set CODEXUI_CODEX_CURSOR_COMMAND.')
     }
   } else {
     args.push(...getFreeModeConfigArgs(state, serverPort))
@@ -8158,7 +8172,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               : getCachedFreeModels()
             let currentModel = state.enabled ? state.model : null
             let wireApi = state.wireApi ?? null
-            if (state.provider === OPENCODE_ZEN_PROVIDER_ID) {
+            if (state.provider === MOONBRIDGE_PROVIDER_ID) {
+              models = getMoonBridgeModels()
+              wireApi = null
+            } else if (state.provider === CURSOR_PROVIDER_ID) {
+              models = state.model?.trim() ? [state.model.trim()] : ['gpt-5.5-medium']
+              currentModel = state.enabled ? (state.model?.trim() || 'gpt-5.5-medium') : null
+              wireApi = null
+            } else if (state.provider === OPENCODE_ZEN_PROVIDER_ID) {
               currentModel = state.enabled ? (state.model?.trim() || OPENCODE_ZEN_DEFAULT_MODEL) : null
               try {
                 const zenModels = filterOpenCodeZenModelsForAuthState(
@@ -8270,9 +8291,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               : body?.provider === 'openrouter'
                 ? 'openrouter'
                 : body?.provider === 'moon'
-                  ? 'moon'
-                  : 'custom'
-
+                  ? 'moon' as const
+                  : body?.provider === 'cursor'
+                    ? 'cursor' as const
+                    : 'custom' as const
             if (providerType === 'custom' && !baseUrl) {
               setJson(res, 400, { error: 'baseUrl is required' })
               return
@@ -8301,18 +8323,19 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                         ? currentModel
                         : moonModels[0] ?? ''
                     })()
-                  : OPENCODE_ZEN_DEFAULT_MODEL
+                  : providerType === 'cursor'
+                    ? (current.model?.trim() || 'gpt-5.5-medium')
                   : OPENCODE_ZEN_DEFAULT_MODEL
             const state: FreeModeState = {
               enabled: true,
-              apiKey: providerType === 'moon' ? null : resolvedKey,
+              apiKey: isWrapperProvider(providerType) ? null : resolvedKey,
               model: resolvedModel,
               customKey: providerType === 'openrouter'
                 ? shouldMarkOpenRouterKeyAsCustom(current, apiKey)
-                : providerType !== 'moon',
+                : !isWrapperProvider(providerType),
               provider: providerType,
               customBaseUrl: providerType === 'custom' ? baseUrl : undefined,
-              wireApi: providerType === 'moon' ? undefined : wireApi,
+              wireApi: isWrapperProvider(providerType) ? undefined : wireApi,
               providerKeys: prevKeys,
             }
             applyActiveFreeModeState(state)
@@ -9010,7 +9033,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               setJson(res, 200, { data: getMoonBridgeModels(), exclusive: true, source: 'moon' })
               return
             }
-            if (fmState.provider === 'opencode-zen') {
+            if (fmState.provider === CURSOR_PROVIDER_ID) {
+              const data = await readProviderBackedModelIds(appServer)
+              setJson(res, 200, { ...data, exclusive: true, source: 'cursor' })
+              return
+            }
+            if (fmState.provider === OPENCODE_ZEN_PROVIDER_ID) {
               try {
                 const modelIds = filterOpenCodeZenModelsForAuthState(
                   sortOpenCodeZenModelIds(await fetchOpenCodeZenModelIds(fmState.apiKey)),

@@ -42,6 +42,7 @@ import {
   type WorkspaceRootsState,
 } from '../api/codexGateway'
 import { CodexApiError } from '../api/codexErrors'
+import { isIncompleteCursorToolCallText, parseCursorToolCommandMessage } from '../api/normalizers/cursorToolCalls'
 import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
 import type {
   CollaborationModeKind,
@@ -3953,6 +3954,11 @@ export function useDesktopState() {
       const id = readString(item.id)
       const text = readString(item.text)
       if (!id || !text) return null
+      const cursorToolCommand = parseCursorToolCommandMessage(id, text, { includeInProgress: true })
+      if (cursorToolCommand) {
+        return cursorToolCommand
+      }
+      if (isIncompleteCursorToolCallText(text)) return null
       return {
         id,
         role: 'assistant',
@@ -4347,7 +4353,14 @@ export function useDesktopState() {
 
     const completedAgentMessage = readAgentMessageCompleted(notification)
     if (completedAgentMessage) {
-      upsertLiveAgentMessage(notificationThreadId, completedAgentMessage)
+      if (completedAgentMessage.messageType === 'commandExecution') {
+        upsertLiveCommand(notificationThreadId, completedAgentMessage)
+        if (completedAgentMessage.commandExecution?.status === 'inProgress') {
+          setTurnActivityForThread(notificationThreadId, { label: 'Running command', details: [completedAgentMessage.commandExecution.command] })
+        }
+      } else {
+        upsertLiveAgentMessage(notificationThreadId, completedAgentMessage)
+      }
     }
 
     const completedImageView = readCompletedImageView(notification)

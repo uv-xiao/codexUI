@@ -1589,6 +1589,68 @@ function trimLinkWrappers(value: string): { core: string; leading: string; trail
   return { core, leading, trailing }
 }
 
+function shouldAutoLinkPlainTextFileReference(ref: ParsedFileReference): boolean {
+  if (ref.line !== null) return true
+
+  const normalizedPath = normalizePathSeparators(ref.path)
+  if (!normalizedPath.startsWith('/')) return true
+
+  const rest = normalizedPath.slice(1)
+  if (!rest || rest.includes('/')) return true
+  return /\.[A-Za-z0-9]{1,12}$/u.test(rest)
+}
+
+function countAsterisksBefore(value: string, endIndex: number, minIndex: number): number {
+  let count = 0
+  let index = endIndex - 1
+  while (index >= minIndex && value[index] === '*') {
+    count += 1
+    index -= 1
+  }
+  return count
+}
+
+function countAsterisksAfter(value: string, startIndex: number): number {
+  let count = 0
+  let index = startIndex
+  while (index < value.length && value[index] === '*') {
+    count += 1
+    index += 1
+  }
+  return count
+}
+
+function readAsteriskLinkWrapper(
+  source: string,
+  matchStart: number,
+  matchEnd: number,
+  cursor: number,
+  matchedToken: string,
+): { segmentStart: number; segmentEnd: number; tokenEndTrim: number } | null {
+  const leadingCount = countAsterisksBefore(source, matchStart, cursor)
+  if (leadingCount < 2) return null
+
+  const trailingOutsideCount = countAsterisksAfter(source, matchEnd)
+  if (trailingOutsideCount >= leadingCount) {
+    return {
+      segmentStart: matchStart - leadingCount,
+      segmentEnd: matchEnd + leadingCount,
+      tokenEndTrim: 0,
+    }
+  }
+
+  const trailingInsideCount = countAsterisksBefore(matchedToken, matchedToken.length, 0)
+  if (trailingInsideCount >= leadingCount) {
+    return {
+      segmentStart: matchStart - leadingCount,
+      segmentEnd: matchEnd,
+      tokenEndTrim: leadingCount,
+    }
+  }
+
+  return null
+}
+
 function parseMarkdownLinkToken(value: string): { label: string; target: string } | null {
   const trimmed = value.trim()
   if (!trimmed.startsWith('[') || !trimmed.endsWith(')')) return null
@@ -2286,7 +2348,7 @@ function splitPlainTextByLinks(text: string, options: { applyMarkdownMarkers?: b
       }
     } else {
       const ref = parseFileReference(token)
-      if (ref) {
+      if (ref && shouldAutoLinkPlainTextFileReference(ref)) {
         segments.push({
           kind: 'file',
           value: token,

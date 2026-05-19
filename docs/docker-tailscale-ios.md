@@ -62,6 +62,21 @@ For iOS through Tailscale, open the HTTPS MagicDNS URL printed by:
 scripts/docker-tailscale-ios.sh status
 ```
 
+The wrapper also configures plain HTTP fallbacks for Safari/Tailscale debugging:
+
+```text
+http://codexui-ios.tail27dc02.ts.net/
+http://codexui-ios.tail27dc02.ts.net:8080/
+```
+
+Use this probe URL first when the main app appears blank or endlessly loads:
+
+```text
+http://codexui-ios.tail27dc02.ts.net:8080/ios-probe.html
+```
+
+If the probe page does not render, the failure is in the iPhone-to-Tailscale path before codexUI JavaScript starts. If the probe renders but the app is blank, check `scripts/docker-tailscale-ios.sh host-logs` for `/codex-api/debug-log` entries.
+
 For Mac without Tailscale, use SSH forwarding:
 
 ```bash
@@ -124,6 +139,7 @@ Then reopen `CodexUI.app`.
 scripts/docker-tailscale-ios.sh status
 scripts/docker-tailscale-ios.sh host-logs
 scripts/docker-tailscale-ios.sh logs
+scripts/docker-tailscale-ios.sh restart-tailscale
 scripts/docker-tailscale-ios.sh down
 ```
 

@@ -11,6 +11,8 @@ CODEXUI_HOST_BIND="${CODEXUI_HOST_BIND:-auto}"
 CODEXUI_HOST_SESSION="${CODEXUI_HOST_SESSION:-codexui-host}"
 CODEXUI_PROJECT_PATH="${CODEXUI_PROJECT_PATH:-/home/uvxiao/codexUI}"
 CODEXUI_BUILD_ON_UP="${CODEXUI_BUILD_ON_UP:-1}"
+CODEXUI_TAILSCALE_HTTP_PORT="${CODEXUI_TAILSCALE_HTTP_PORT:-8080}"
+CODEXUI_TAILSCALE_ENABLE_HTTP_80="${CODEXUI_TAILSCALE_ENABLE_HTTP_80:-1}"
 
 load_node_env() {
   if command -v node >/dev/null && (command -v pnpm >/dev/null || command -v corepack >/dev/null); then
@@ -123,6 +125,12 @@ serve() {
   local target
   target="$(host_url)"
   tailscale_cli serve --bg "$target"
+  if [[ "$CODEXUI_TAILSCALE_ENABLE_HTTP_80" == "1" ]]; then
+    tailscale_cli serve --http=80 --bg "$target"
+  fi
+  if [[ -n "$CODEXUI_TAILSCALE_HTTP_PORT" && "$CODEXUI_TAILSCALE_HTTP_PORT" != "80" ]]; then
+    tailscale_cli serve --http="$CODEXUI_TAILSCALE_HTTP_PORT" --bg "$target"
+  fi
   tailscale_cli serve status
 }
 
@@ -200,6 +208,17 @@ case "$ACTION" in
   logs)
     compose logs --tail 200 -f
     ;;
+  restart-tailscale)
+    compose restart tailscale
+    if [[ "$(tailscale_backend_state)" != "Running" ]]; then
+      tailscale_up || true
+    fi
+    if [[ "$(tailscale_backend_state)" == "Running" ]]; then
+      serve
+    else
+      print_auth_url
+    fi
+    ;;
   host-logs)
     tmux capture-pane -pt "$CODEXUI_HOST_SESSION" -S -200
     ;;
@@ -214,7 +233,7 @@ case "$ACTION" in
     stop_host_codexui
     ;;
   *)
-    printf 'Usage: %s [up|serve|status|logs|host-logs|auth-url|down]\n' "$0" >&2
+    printf 'Usage: %s [up|serve|status|logs|restart-tailscale|host-logs|auth-url|down]\n' "$0" >&2
     exit 2
     ;;
 esac

@@ -5159,3 +5159,33 @@ Production HTML installs pre-module compatibility shims and shows/logs client st
 
 #### Rollback/Cleanup
 - Remove the diagnostic script from `index.html` and the Vue error handler in `src/main.ts` if no longer needed.
+
+---
+
+### iOS Tailscale probe and stale service-worker recovery
+
+#### Feature/Change Name
+Tailscale iOS access exposes a static probe page, reproducible HTTP Serve fallback, and a service worker that no longer serves a stale cached app shell for navigation.
+
+#### Prerequisites/Setup
+1. Build and run production codexUI with `scripts/docker-tailscale-ios.sh up`.
+2. iPhone is connected to Tailscale.
+3. Tailscale Serve status lists `https://codexui-ios.tail27dc02.ts.net/`, `http://codexui-ios.tail27dc02.ts.net/`, and `http://codexui-ios.tail27dc02.ts.net:8080/`.
+
+#### Steps
+1. On iOS Safari, open `http://codexui-ios.tail27dc02.ts.net:8080/ios-probe.html?v=<timestamp>`.
+2. Confirm the page immediately shows `HTML loaded`.
+3. Confirm `Manifest` and `Debug log` show HTTP status values.
+4. Open `http://codexui-ios.tail27dc02.ts.net:8080/?v=<timestamp>` and wait for the app or visible startup diagnostic.
+5. Repeat the app check in iOS Safari light appearance and dark appearance.
+6. If the probe fails to render, run `scripts/docker-tailscale-ios.sh restart-tailscale` and try the probe again.
+
+#### Expected Results
+- The probe page renders without Vue, Vite assets, or the app router.
+- Successful probe debug-log requests appear in host logs, proving iOS reached host codexUI through Tailscale.
+- The app navigation is fetched from the network; stale cached `/` shell content is not used as an offline fallback.
+- Light and dark theme app surfaces remain readable when the main app renders.
+
+#### Rollback/Cleanup
+- Run `scripts/docker-tailscale-ios.sh down` to stop the deployment.
+- Revert `public/sw.js` to the previous cache behavior only if offline shell fallback is intentionally needed again.

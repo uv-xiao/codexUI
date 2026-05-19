@@ -5130,3 +5130,32 @@ Import upstream `friuns2/codexUI` changes and all feature changes from `Light-of
 #### Rollback/Cleanup
 - Disable provider-backed mode if it was enabled only for testing.
 - Stop the `4173` dev server if it was started only for this verification.
+
+---
+
+### iOS Safari startup diagnostics and compatibility
+
+#### Feature/Change Name
+Production HTML installs pre-module compatibility shims and shows/logs client startup errors instead of leaving iOS Safari on an empty page.
+
+#### Prerequisites/Setup
+1. Build and run production codexUI with `scripts/docker-tailscale-ios.sh up`.
+2. iPhone is connected to Tailscale.
+3. Tailscale Serve exposes `http://codexui-ios.tail27dc02.ts.net:8080/`.
+
+#### Steps
+1. On iOS Safari, open `http://codexui-ios.tail27dc02.ts.net:8080/`.
+2. Wait at least 10 seconds.
+3. Confirm either the CodexUI app renders or a visible startup diagnostic panel appears.
+4. If the diagnostic panel appears, run `tmux capture-pane -pt codexui-host -S -200` and check for `/codex-api/debug-log` entries with `client-startup-error`, `client-unhandled-rejection`, or `client-startup-timeout`.
+5. Repeat the same flow using `https://codexui-ios.tail27dc02.ts.net/`.
+6. Check the app in both light and dark themes if it renders.
+
+#### Expected Results
+- iOS Safari no longer shows a completely empty page when startup fails.
+- Older WebKit engines have compatibility shims for `Object.hasOwn`, array copy methods, `structuredClone`, and the known GFM email lookbehind RegExp path.
+- Startup failures are visible to the user and logged to the server for diagnosis.
+- When the app renders, light and dark themes remain readable.
+
+#### Rollback/Cleanup
+- Remove the diagnostic script from `index.html` and the Vue error handler in `src/main.ts` if no longer needed.

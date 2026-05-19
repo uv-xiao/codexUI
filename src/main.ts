@@ -10,7 +10,16 @@ console.log('Welcome to codexui. github: https://github.com/friuns2/codexUI')
 
 installFeedbackDiagnostics()
 
-createApp(App).use(router).mount('#app')
+const app = createApp(App)
+app.config.errorHandler = (error, _instance, info) => {
+  const reporter = (window as unknown as {
+    __codexReportClientError?: (tag: string, message: string, extra?: Record<string, unknown>) => void
+  }).__codexReportClientError
+  const message = error instanceof Error ? error.stack || error.message : String(error)
+  reporter?.('vue-runtime-error', message, { info })
+  console.error(error)
+}
+app.use(router).mount('#app')
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {

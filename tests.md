@@ -5133,39 +5133,10 @@ Import upstream `friuns2/codexUI` changes and all feature changes from `Light-of
 
 ---
 
-### iOS Safari startup diagnostics and compatibility
+### iOS Tailscale Serve restart recovery
 
 #### Feature/Change Name
-Production HTML installs pre-module compatibility shims and shows/logs client startup errors instead of leaving iOS Safari on an empty page.
-
-#### Prerequisites/Setup
-1. Build and run production codexUI with `scripts/docker-tailscale-ios.sh up`.
-2. iPhone is connected to Tailscale.
-3. Tailscale Serve exposes `http://codexui-ios.tail27dc02.ts.net:8080/`.
-
-#### Steps
-1. On iOS Safari, open `http://codexui-ios.tail27dc02.ts.net:8080/`.
-2. Wait at least 10 seconds.
-3. Confirm either the CodexUI app renders or a visible startup diagnostic panel appears.
-4. If the diagnostic panel appears, run `tmux capture-pane -pt codexui-host -S -200` and check for `/codex-api/debug-log` entries with `client-startup-error`, `client-unhandled-rejection`, or `client-startup-timeout`.
-5. Repeat the same flow using `https://codexui-ios.tail27dc02.ts.net/`.
-6. Check the app in both light and dark themes if it renders.
-
-#### Expected Results
-- iOS Safari no longer shows a completely empty page when startup fails.
-- Older WebKit engines have compatibility shims for `Object.hasOwn`, array copy methods, `structuredClone`, and the known GFM email lookbehind RegExp path.
-- Startup failures are visible to the user and logged to the server for diagnosis.
-- When the app renders, light and dark themes remain readable.
-
-#### Rollback/Cleanup
-- Remove the diagnostic script from `index.html` and the Vue error handler in `src/main.ts` if no longer needed.
-
----
-
-### iOS Tailscale probe and stale service-worker recovery
-
-#### Feature/Change Name
-Tailscale iOS access exposes a static probe page, reproducible HTTP Serve fallback, and a service worker that no longer serves a stale cached app shell for navigation.
+Tailscale iOS access keeps host codexUI unchanged and uses reproducible Tailscale Serve HTTP fallback plus `restart-tailscale` recovery for stale Serve or peer state.
 
 #### Prerequisites/Setup
 1. Build and run production codexUI with `scripts/docker-tailscale-ios.sh up`.
@@ -5173,19 +5144,20 @@ Tailscale iOS access exposes a static probe page, reproducible HTTP Serve fallba
 3. Tailscale Serve status lists `https://codexui-ios.tail27dc02.ts.net/`, `http://codexui-ios.tail27dc02.ts.net/`, and `http://codexui-ios.tail27dc02.ts.net:8080/`.
 
 #### Steps
-1. On iOS Safari, open `http://codexui-ios.tail27dc02.ts.net:8080/ios-probe.html?v=<timestamp>`.
-2. Confirm the page immediately shows `HTML loaded`.
-3. Confirm `Manifest` and `Debug log` show HTTP status values.
-4. Open `http://codexui-ios.tail27dc02.ts.net:8080/?v=<timestamp>` and wait for the app or visible startup diagnostic.
+1. Run `scripts/docker-tailscale-ios.sh status`.
+2. Confirm the iPhone appears active in Tailscale status.
+3. On iOS Safari, open `http://codexui-ios.tail27dc02.ts.net:8080/?v=<timestamp>`.
+4. Confirm the app renders.
 5. Repeat the app check in iOS Safari light appearance and dark appearance.
-6. If the probe fails to render, run `scripts/docker-tailscale-ios.sh restart-tailscale` and try the probe again.
+6. Run `scripts/docker-tailscale-ios.sh restart-tailscale`.
+7. Run `scripts/docker-tailscale-ios.sh status` again and confirm `:8080` Serve is still configured.
+8. Reopen the iOS Safari `:8080` URL and confirm the app still renders.
 
 #### Expected Results
-- The probe page renders without Vue, Vite assets, or the app router.
-- Successful probe debug-log requests appear in host logs, proving iOS reached host codexUI through Tailscale.
-- The app navigation is fetched from the network; stale cached `/` shell content is not used as an offline fallback.
-- Light and dark theme app surfaces remain readable when the main app renders.
+- Tailscale Serve proxies HTTPS, HTTP 80, and HTTP 8080 to the host codexUI server.
+- `restart-tailscale` restores the Docker Tailscale node and reapplies Serve without requiring a new auth flow.
+- The host app remains the normal codexUI bundle, without extra probe pages or Safari-only startup diagnostics.
+- Light and dark theme app surfaces remain readable.
 
 #### Rollback/Cleanup
 - Run `scripts/docker-tailscale-ios.sh down` to stop the deployment.
-- Revert `public/sw.js` to the previous cache behavior only if offline shell fallback is intentionally needed again.

@@ -1,5 +1,5 @@
-const CACHE_NAME = 'codexweb-shell-v3'
-const APP_SHELL_PATHS = ['/manifest.webmanifest']
+const CACHE_NAME = 'codexweb-shell-v2'
+const APP_SHELL_PATHS = ['/', '/manifest.webmanifest']
 const STATIC_DESTINATIONS = new Set(['document', 'script', 'style', 'image', 'font'])
 const BYPASS_PREFIXES = ['/codex-api/', '/codex-local-image', '/codex-local-file', '/codex-local-browse/', '/codex-local-edit/']
 
@@ -47,16 +47,13 @@ self.addEventListener('fetch', (event) => {
 })
 
 async function networkFirstNavigation(request) {
+  const cache = await caches.open(CACHE_NAME)
   try {
-    return await fetch(request)
+    const response = await fetch(request)
+    cache.put('/', response.clone())
+    return response
   } catch {
-    return new Response(
-      '<!doctype html><title>CodexUI offline</title><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;padding:24px"><h1>CodexUI is offline</h1><p>The browser could not reach the CodexUI server. Refresh after the tunnel is reachable.</p></body>',
-      {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        status: 503,
-      },
-    )
+    return (await cache.match('/')) || Response.error()
   }
 }
 

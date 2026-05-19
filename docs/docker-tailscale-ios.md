@@ -69,13 +69,7 @@ http://codexui-ios.tail27dc02.ts.net/
 http://codexui-ios.tail27dc02.ts.net:8080/
 ```
 
-Use this probe URL first when the main app appears blank or endlessly loads:
-
-```text
-http://codexui-ios.tail27dc02.ts.net:8080/ios-probe.html
-```
-
-If the probe page does not render, the failure is in the iPhone-to-Tailscale path before codexUI JavaScript starts. If the probe renders but the app is blank, check `scripts/docker-tailscale-ios.sh host-logs` for `/codex-api/debug-log` entries.
+If iOS shows a blank or endlessly loading page, run `scripts/docker-tailscale-ios.sh status` and check whether the iPhone is active in Tailscale. If the Tailscale path looks stale or the port is refused, run `scripts/docker-tailscale-ios.sh restart-tailscale` and retry the HTTP `:8080` URL.
 
 For Mac without Tailscale, use SSH forwarding:
 

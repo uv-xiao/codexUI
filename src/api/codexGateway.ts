@@ -1560,7 +1560,7 @@ export async function resumeThread(
     return {
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
-      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
+      reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
       messages,
       inProgress: readThreadInProgressFromResponse(payload),
       activeTurnId: readActiveTurnIdFromResponse(payload),
@@ -1682,8 +1682,24 @@ function normalizeThreadCwdFromPayload(payload: unknown): string {
 
 function normalizeThreadModelFromPayload(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return ''
-  const model = (payload as Record<string, unknown>).model
-  return typeof model === 'string' ? model.trim() : ''
+  const record = payload as Record<string, unknown>
+  const thread = asRecord(record.thread)
+  const candidates = [
+    record.model,
+    record.modelId,
+    record.model_id,
+    thread?.model,
+    thread?.modelId,
+    thread?.model_id,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim()
+    }
+  }
+
+  return ''
 }
 
 function normalizeThreadModelProviderFromPayload(payload: unknown): string {
@@ -1702,6 +1718,16 @@ function normalizeThreadModelProviderFromPayload(payload: unknown): string {
     if (modelProvider) return modelProvider
   }
   return ''
+}
+
+function normalizeThreadReasoningEffortFromPayload(payload: unknown): ReasoningEffort | '' {
+  if (!payload || typeof payload !== 'object') return ''
+  const record = payload as Record<string, unknown>
+  const thread = asRecord(record.thread)
+  return normalizeReasoningEffort(record.reasoningEffort)
+    || normalizeReasoningEffort(record.reasoning_effort)
+    || normalizeReasoningEffort(thread?.reasoningEffort)
+    || normalizeReasoningEffort(thread?.reasoning_effort)
 }
 
 export type StartedThread = {
@@ -1741,7 +1767,7 @@ export async function startThread(cwd?: string, model?: string, modelProvider?: 
       threadId,
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
-      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
+      reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
     }
   } catch (error) {
     throw normalizeCodexApiError(error, 'Failed to start a new thread', 'thread/start')
@@ -1777,7 +1803,7 @@ export async function forkThread(
         cwd: normalizeThreadCwdFromPayload(payload),
         model: normalizeThreadModelFromPayload(payload),
         modelProvider: normalizeThreadModelProviderFromPayload(payload),
-        reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
+        reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
         messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
       }
     } catch (error) {
@@ -1811,7 +1837,7 @@ export async function forkThread(
       threadId: nextThreadId,
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
-      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
+      reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
     }
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to fork thread ${threadId}`, 'thread/fork')

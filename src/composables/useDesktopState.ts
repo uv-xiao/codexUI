@@ -1969,9 +1969,6 @@ export function useDesktopState() {
     if (!sameThread && options.persist !== false) {
       saveSelectedThreadId(nextThreadId)
     }
-    if (!nextThreadId.trim()) {
-      clearNewThreadProviderSelection()
-    }
     selectedModelId.value = readProviderCompatibleSelectedModel(readModelIdForThread(nextThreadId))
     ensureAvailableModelIds(selectedModelId.value)
     selectedCollaborationMode.value = readSelectedCollaborationMode(
@@ -2060,11 +2057,12 @@ export function useDesktopState() {
     saveSelectedProviderMap(selectedProviderByContext.value)
   }
 
-  function clearNewThreadProviderSelection(): void {
-    const nextProviderMap = omitStringKeyedRecordKey(selectedProviderByContext.value, NEW_THREAD_PROVIDER_CONTEXT)
-    if (nextProviderMap === selectedProviderByContext.value) return
-    selectedProviderByContext.value = nextProviderMap
-    saveSelectedProviderMap(nextProviderMap)
+  function setSelectedProviderForComposerContext(threadId: string, providerId: ProviderId): void {
+    const normalizedProvider = normalizeProviderId(providerId)
+    setSelectedProviderForThread(threadId, normalizedProvider)
+    if (toThreadContextId(threadId) === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
+      selectedProvider.value = normalizedProvider
+    }
   }
 
   function setSelectedProvider(providerId: ProviderId): void {
@@ -6546,6 +6544,7 @@ export function useDesktopState() {
     readModelIdForThread,
     setSelectedModelIdForThread,
     setSelectedModelId,
+    setSelectedProviderForComposerContext,
     setSelectedProvider,
 
     setSelectedReasoningEffort,

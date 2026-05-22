@@ -3807,6 +3807,61 @@ function splitMergedAgentMessageFromSessionSlots(
   }))
 }
 
+function readCommandTextFromRecoveredItem(item: Record<string, unknown>): string {
+  const command = typeof item.command === 'string' ? item.command : ''
+  if (command.trim()) return command.trim()
+  const commandExecution = asRecord(item.commandExecution)
+  const nestedCommand = typeof commandExecution?.command === 'string' ? commandExecution.command : ''
+  return nestedCommand.trim()
+}
+
+function takeExistingCommandForSessionSlot(
+  slotCommand: SessionRecoveredCommand,
+  commandMessages: Record<string, unknown>[],
+  usedCommandIndexes: Set<number>,
+): Record<string, unknown> | null {
+  const slotId = slotCommand.id.trim()
+  let matchIndex = commandMessages.findIndex((item, index) => (
+    !usedCommandIndexes.has(index)
+    && typeof item.id === 'string'
+    && item.id.trim() === slotId
+  ))
+
+  if (matchIndex < 0) {
+    const slotCommandText = slotCommand.command.trim()
+    matchIndex = commandMessages.findIndex((item, index) => (
+      !usedCommandIndexes.has(index)
+      && slotCommandText.length > 0
+      && readCommandTextFromRecoveredItem(item) === slotCommandText
+    ))
+  }
+
+  if (matchIndex < 0) return null
+  usedCommandIndexes.add(matchIndex)
+  return commandMessages[matchIndex]!
+}
+
+function takeExistingFileChangeForSessionSlot(
+  slotFileChange: SessionRecoveredFileChangeItem,
+  fileChangeMessages: Record<string, unknown>[],
+  usedFileChangeIndexes: Set<number>,
+): Record<string, unknown> | null {
+  const slotId = slotFileChange.id.trim()
+  let matchIndex = fileChangeMessages.findIndex((item, index) => (
+    !usedFileChangeIndexes.has(index)
+    && typeof item.id === 'string'
+    && item.id.trim() === slotId
+  ))
+
+  if (matchIndex < 0) {
+    matchIndex = fileChangeMessages.findIndex((_item, index) => !usedFileChangeIndexes.has(index))
+  }
+
+  if (matchIndex < 0) return null
+  usedFileChangeIndexes.add(matchIndex)
+  return fileChangeMessages[matchIndex]!
+}
+
 function extractFilePathsFromCommand(cmd: string, cwd: string): string[] {
   const paths: string[] = []
   const absPathPattern = /(?:^|\s|>>|>|<)(\/?(?:Users|home|tmp|var|etc|root)\/[^\s;|&><"']+)/g
@@ -4305,10 +4360,10 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     const splitAgentMessages = splitMergedAgentMessageFromSessionSlots(agentMessages, slots)
     const splitAgentMessageApplied = splitAgentMessages !== agentMessages
     const nonAgentNonUserItems = existingItems.filter((it) => (
-      it.type !== 'agentMessage' &&
-      it.type !== 'userMessage' &&
-      it.type !== 'commandExecution' &&
-      it.type !== 'fileChange'
+      it.type !== 'agentMessage'
+      && it.type !== 'userMessage'
+      && it.type !== 'commandExecution'
+      && it.type !== 'fileChange'
     ))
     const userMessages = existingItems.filter((it) => it.type === 'userMessage')
 
@@ -4325,29 +4380,17 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
           agentIdx++
         }
       } else if (slot.type === 'commandExecution' && slot.command) {
-        const slotCommand = slot.command.command.trim()
-        let commandIndex = commandMessages.findIndex((item, index) => {
-          if (usedCommandIndexes.has(index)) return false
-          const command = readNonEmptyString(item.command)?.trim() ?? ''
-          return slotCommand.length > 0 && command === slotCommand
-        })
-        if (commandIndex < 0) {
-          commandIndex = commandMessages.findIndex((_item, index) => !usedCommandIndexes.has(index))
-        }
-        if (commandIndex >= 0) {
-          usedCommandIndexes.add(commandIndex)
-          interleaved.push(commandMessages[commandIndex]!)
-        } else {
-          interleaved.push(slot.command as unknown as Record<string, unknown>)
-        }
+        interleaved.push(takeExistingCommandForSessionSlot(
+          slot.command,
+          commandMessages,
+          usedCommandIndexes,
+        ) ?? slot.command as unknown as Record<string, unknown>)
       } else if (slot.type === 'fileChange' && slot.fileChange) {
-        const fileChangeIndex = fileChangeMessages.findIndex((_item, index) => !usedFileChangeIndexes.has(index))
-        if (fileChangeIndex >= 0) {
-          usedFileChangeIndexes.add(fileChangeIndex)
-          interleaved.push(fileChangeMessages[fileChangeIndex]!)
-        } else {
-          interleaved.push(slot.fileChange as unknown as Record<string, unknown>)
-        }
+        interleaved.push(takeExistingFileChangeForSessionSlot(
+          slot.fileChange,
+          fileChangeMessages,
+          usedFileChangeIndexes,
+        ) ?? slot.fileChange as unknown as Record<string, unknown>)
       }
     }
 
@@ -4365,8 +4408,8 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     interleaved.push(...nonAgentNonUserItems)
 
     if (
-      interleaved.length === existingItems.length &&
-      interleaved.every((item, index) => item === existingItems[index])
+      interleaved.length === existingItems.length
+      && interleaved.every((item, index) => item === existingItems[index])
     ) {
       return turn
     }

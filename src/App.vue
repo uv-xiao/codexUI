@@ -966,7 +966,7 @@
                   :collaboration-modes="availableCollaborationModes"
                   :selected-collaboration-mode="selectedCollaborationMode"
                   :models="availableModelIds" :selected-model="composerSelectedModelId"
-                  :selected-reasoning-effort="selectedReasoningEffort"
+                  :selected-reasoning-effort="composerSelectedReasoningEffort"
                   :selected-speed-mode="selectedSpeedMode"
                   :is-updating-speed-mode="isUpdatingSpeedMode"
                   :disabled="freeModeLoading"
@@ -1050,7 +1050,7 @@
                     :selected-collaboration-mode="selectedCollaborationMode"
                     :models="availableModelIds"
                     :selected-model="composerSelectedModelId"
-                    :selected-reasoning-effort="selectedReasoningEffort"
+                    :selected-reasoning-effort="composerSelectedReasoningEffort"
                     :selected-speed-mode="selectedSpeedMode"
                     :is-updating-speed-mode="isUpdatingSpeedMode"
                     :disabled="freeModeLoading"
@@ -1447,9 +1447,7 @@ const {
   availableCollaborationModes,
   availableModelIds,
   selectedCollaborationMode,
-  selectedModelId,
   selectedProvider,
-  selectedReasoningEffort,
   selectedSpeedMode,
   codexCliMissingError,
   installedSkills,
@@ -1486,12 +1484,13 @@ const {
   steerQueuedMessage,
   setSelectedCollaborationMode,
   readModelIdForThread,
+  readReasoningEffortForThread,
   setSelectedModelIdForThread,
   setSelectedProviderForComposerContext,
   refreshMoonBridgeModelIds,
   refreshAncillaryState,
   invalidateAppServerRuntimeState,
-  setSelectedReasoningEffort,
+  setSelectedReasoningEffortForThread,
   updateSelectedSpeedMode,
   respondToPendingServerRequest,
   renameProject,
@@ -1809,6 +1808,7 @@ const latestUserTurnId = computed(() => {
 const liveOverlay = computed(() => selectedLiveOverlay.value)
 const composerThreadContextId = computed(() => (isHomeRoute.value ? '__new-thread__' : selectedThreadId.value))
 const composerSelectedModelId = computed(() => readModelIdForThread(composerThreadContextId.value))
+const composerSelectedReasoningEffort = computed(() => readReasoningEffortForThread(composerThreadContextId.value))
 const selectedThreadPendingRequest = computed<UiServerRequest | null>(() => {
   const rows = selectedThreadServerRequests.value
   return rows.length > 0 ? rows[rows.length - 1] : null
@@ -4350,7 +4350,7 @@ function onSelectModel(modelId: string): void {
 }
 
 function onSelectReasoningEffort(effort: ReasoningEffort | ''): void {
-  setSelectedReasoningEffort(effort)
+  setSelectedReasoningEffortForThread(composerThreadContextId.value, effort)
 }
 
 function onSelectSpeedMode(mode: SpeedMode): void {
@@ -4900,11 +4900,11 @@ async function initialize(): Promise<void> {
   } else if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
     primeSelectedThread('', { persist: false })
   }
-  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
   await syncThreadSelectionWithRoute()
+  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
   startPolling()
   scheduleStartupBackgroundRefreshes()
 }

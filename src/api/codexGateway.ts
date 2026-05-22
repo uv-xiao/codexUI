@@ -1522,6 +1522,7 @@ export async function removeAccount(storageId: string): Promise<AccountsListResu
 export type ResumedThread = {
   model: string
   modelProvider: string
+  reasoningEffort: ReasoningEffort | ''
   messages: UiMessage[]
   inProgress: boolean
   activeTurnId: string
@@ -1559,6 +1560,7 @@ export async function resumeThread(
     return {
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
+      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
       messages,
       inProgress: readThreadInProgressFromResponse(payload),
       activeTurnId: readActiveTurnIdFromResponse(payload),
@@ -1706,6 +1708,7 @@ export type StartedThread = {
   threadId: string
   model: string
   modelProvider: string
+  reasoningEffort: ReasoningEffort | ''
 }
 
 export type ForkedThread = {
@@ -1713,6 +1716,7 @@ export type ForkedThread = {
   cwd: string
   model: string
   modelProvider: string
+  reasoningEffort: ReasoningEffort | ''
   messages: UiMessage[]
 }
 
@@ -1737,6 +1741,7 @@ export async function startThread(cwd?: string, model?: string, modelProvider?: 
       threadId,
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
+      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
     }
   } catch (error) {
     throw normalizeCodexApiError(error, 'Failed to start a new thread', 'thread/start')
@@ -1772,6 +1777,7 @@ export async function forkThread(
         cwd: normalizeThreadCwdFromPayload(payload),
         model: normalizeThreadModelFromPayload(payload),
         modelProvider: normalizeThreadModelProviderFromPayload(payload),
+        reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
         messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
       }
     } catch (error) {
@@ -1805,6 +1811,7 @@ export async function forkThread(
       threadId: nextThreadId,
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
+      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
     }
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to fork thread ${threadId}`, 'thread/fork')

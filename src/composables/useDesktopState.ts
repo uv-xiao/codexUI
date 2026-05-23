@@ -273,7 +273,7 @@ function toRpcModelProviderId(providerId: ProviderId): string {
   if (providerId === 'custom') return 'custom-endpoint'
   if (providerId === 'moon') return 'moon'
   if (providerId === 'cursor') return 'cursor'
-  return 'openai'
+  return ''
 }
 
 function toProviderModelContextId(providerId: string): string {

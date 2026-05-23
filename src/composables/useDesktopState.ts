@@ -1677,6 +1677,9 @@ export function useDesktopState() {
     skills: Array<{ name: string; path: string }>
     fileAttachments: FileAttachment[]
     collaborationMode: CollaborationModeKind
+    model: string
+    modelProvider: ProviderId
+    reasoningEffort: ReasoningEffort | ''
   }
   type PendingTurnRequest = {
     text: string
@@ -1969,24 +1972,17 @@ export function useDesktopState() {
   }
 
   function syncThreadProviderFromModel(threadId: string, modelId: string): void {
-    const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
     const normalizedThreadId = threadId.trim()
     if (normalizedThreadId) {
-      const currentProvider = readSelectedProvider(selectedProviderByContext.value, normalizedThreadId)
-      if (currentProvider === 'moon' && modelId.trim().length > 0 && !inferredProvider) {
-        setThreadProviderId(normalizedThreadId, 'codex')
-      }
       return
     }
 
     const currentNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
+    if (currentNewThreadProvider !== 'moon') return
+
+    const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
     if (inferredProvider && currentNewThreadProvider === 'moon') {
       setSelectedProviderForThread('', inferredProvider)
-      return
-    }
-
-    if (modelId.trim().length > 0 && currentNewThreadProvider === 'moon') {
-      setSelectedProviderForThread('', 'codex')
     }
   }
 
@@ -2573,8 +2569,19 @@ export function useDesktopState() {
       }
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
+      const shouldKeepProviderScopedNewThreadModel =
+        selectedContextIsNewThread
+        && isProviderBacked
+        && normalizedSelectedModelId.length > 0
+        && !currentModelInNewList
+        && providerScopedModelId === normalizedSelectedModelId
+      if (shouldKeepProviderScopedNewThreadModel) {
+        ensureAvailableModelIds(normalizedSelectedModelId)
+      }
       if (selectedContextIsNewThread && (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged)) {
-        if (options?.providerChanged && nextModelIds.length > 0) {
+        if (shouldKeepProviderScopedNewThreadModel) {
+          selectedModelId.value = normalizedSelectedModelId
+        } else if (options?.providerChanged && nextModelIds.length > 0) {
           if (providerScopedModelId && modelIds.includes(providerScopedModelId)) {
             setSelectedModelId(providerScopedModelId)
           } else if (targetProviderId === normalizedProviderId && normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
@@ -4990,6 +4997,24 @@ export function useDesktopState() {
           fsPath: attachment.fsPath,
         })),
         collaborationMode: message.collaborationMode,
+        model: message.model,
+        modelProvider: toRpcModelProviderId(message.modelProvider),
+        reasoningEffort: message.reasoningEffort,
+      }))
+    }
+    return next
+  }
+
+  function normalizeQueueStateFromPersistence(state: ThreadQueueState): Record<string, QueuedMessage[]> {
+    const next: Record<string, QueuedMessage[]> = {}
+    for (const [threadId, queue] of Object.entries(state)) {
+      const normalizedThreadId = threadId.trim()
+      if (!normalizedThreadId || queue.length === 0) continue
+      next[normalizedThreadId] = queue.map((message) => ({
+        ...message,
+        model: typeof message.model === 'string' ? message.model.trim() : readModelIdForThread(normalizedThreadId),
+        modelProvider: normalizeProviderId(message.modelProvider),
+        reasoningEffort: normalizeStoredReasoningEffort(message.reasoningEffort),
       }))
     }
     return next
@@ -5005,7 +5030,7 @@ export function useDesktopState() {
     if (hasLoadedPersistedQueueState) return
     hasLoadedPersistedQueueState = true
     try {
-      queuedMessagesByThreadId.value = await getThreadQueueState()
+      queuedMessagesByThreadId.value = normalizeQueueStateFromPersistence(await getThreadQueueState())
     } catch {
       // Backend queue state is optional during startup.
     }
@@ -5720,6 +5745,9 @@ export function useDesktopState() {
           : collaborationModeOverride === 'default'
             ? 'default'
             : selectedCollaborationMode.value,
+        model: readModelIdForThread(threadId),
+        modelProvider: readSelectedProvider(selectedProviderByContext.value, threadId),
+        reasoningEffort: readReasoningEffortForThread(threadId),
       })
       queuedMessagesByThreadId.value = {
         ...queuedMessagesByThreadId.value,
@@ -6122,7 +6150,7 @@ export function useDesktopState() {
       [threadId]: true,
     }
     try {
-      queuedMessagesByThreadId.value = await getThreadQueueState()
+      queuedMessagesByThreadId.value = normalizeQueueStateFromPersistence(await getThreadQueueState())
     } catch {
       // Backend queue state is optional during transient bridge failures.
     } finally {

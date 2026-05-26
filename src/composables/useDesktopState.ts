@@ -2590,7 +2590,15 @@ export function useDesktopState() {
       moonBridgeModelIds.value = moonModels
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const rawConfiguredProviderId = currentConfig.providerId.trim()
-      const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
+      const configuredProviderId = normalizeProviderContextId(currentConfig.providerId)
+      const selectedProviderContextId = toProviderSelectionContextId(selectedThreadId.value)
+      const hasExplicitSelectedProvider = Object.prototype.hasOwnProperty.call(
+        selectedProviderByContext.value,
+        selectedProviderContextId,
+      )
+      const normalizedProviderId = hasExplicitSelectedProvider
+        ? readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
+        : configuredProviderId
       activeProviderId.value = normalizedProviderId
       const targetProviderId = readProviderIdForThread(selectedThreadId.value)
       const isProviderBacked = targetProviderId !== 'codex'
@@ -2608,14 +2616,15 @@ export function useDesktopState() {
         ? normalizeStoredModelId(selectedModelIdByContext.value[providerModelContextId])
         : ''
       const nextModelIds = [...modelIds]
-      if (
-        !options?.providerChanged
-        && isProviderBacked
-        && targetProviderId === normalizedProviderId
-        && normalizedConfiguredModelId
-        && !nextModelIds.includes(normalizedConfiguredModelId)
-      ) {
-        nextModelIds.push(normalizedConfiguredModelId)
+      if (!options?.providerChanged) {
+        const extraModelIds = isProviderBacked
+          ? (configuredProviderId === targetProviderId ? [normalizedConfiguredModelId] : [])
+          : [normalizedSelectedModelId, normalizedConfiguredModelId]
+        for (const modelId of extraModelIds) {
+          if (modelId && !nextModelIds.includes(modelId)) {
+            nextModelIds.push(modelId)
+          }
+        }
       }
       availableModelIds.value = nextModelIds
       if (!selectedContextIsNewThread) {

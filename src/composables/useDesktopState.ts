@@ -2578,7 +2578,9 @@ export function useDesktopState() {
     activeTurnIdByThreadId.value = {}
   }
 
-  async function refreshModelPreferences(options?: { providerChanged?: boolean; includeProviderModels?: boolean }): Promise<void> {
+  async function refreshModelPreferences(
+    options?: { providerChanged?: boolean; includeProviderModels?: boolean; explicitProviderChange?: boolean },
+  ): Promise<void> {
     codexCliMissingError.value = ''
     try {
       const [currentConfig, moonModels] = await Promise.all([
@@ -2627,7 +2629,23 @@ export function useDesktopState() {
         }
       }
       availableModelIds.value = nextModelIds
-      if (!selectedContextIsNewThread) {
+      const shouldReplaceExistingThreadModel =
+        !selectedContextIsNewThread
+        && options?.explicitProviderChange === true
+        && modelIds.length > 0
+        && (!normalizedSelectedModelId || !modelIds.includes(normalizedSelectedModelId))
+      let replacedExistingThreadModel = false
+      if (shouldReplaceExistingThreadModel) {
+        const replacementModelId = (
+          configuredProviderId === normalizedProviderId
+          && normalizedConfiguredModelId
+          && modelIds.includes(normalizedConfiguredModelId)
+        )
+          ? normalizedConfiguredModelId
+          : modelIds[0]
+        setThreadModelId(selectedThreadId.value, replacementModelId ?? '')
+        replacedExistingThreadModel = true
+      } else if (!selectedContextIsNewThread) {
         ensureAvailableModelIds(normalizedSelectedModelId)
       }
 
@@ -2659,7 +2677,7 @@ export function useDesktopState() {
         } else {
           setSelectedModelId('')
         }
-      } else if (selectedModelId.value.trim() !== normalizedSelectedModelId) {
+      } else if (!replacedExistingThreadModel && selectedModelId.value.trim() !== normalizedSelectedModelId) {
         selectedModelId.value = normalizedSelectedModelId
         ensureAvailableModelIds(normalizedSelectedModelId)
       }
@@ -5487,12 +5505,13 @@ export function useDesktopState() {
   }
 
   async function refreshAncillaryState(
-    options: { providerChanged?: boolean; includeProviderModels?: boolean } = {},
+    options: { providerChanged?: boolean; includeProviderModels?: boolean; explicitProviderChange?: boolean } = {},
   ): Promise<void> {
     await Promise.allSettled([
       refreshModelPreferences({
         providerChanged: options.providerChanged,
         includeProviderModels: options.includeProviderModels,
+        explicitProviderChange: options.explicitProviderChange,
       }),
       refreshRateLimits(),
       refreshCollaborationModes(),
@@ -5501,7 +5520,7 @@ export function useDesktopState() {
   }
 
   function scheduleAncillaryStateRefresh(
-    options: { providerChanged?: boolean; includeProviderModels?: boolean } = {},
+    options: { providerChanged?: boolean; includeProviderModels?: boolean; explicitProviderChange?: boolean } = {},
   ): void {
     const run = () => {
       void refreshAncillaryState(options)

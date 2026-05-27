@@ -252,6 +252,12 @@ type ProviderModelsResponse = {
   exclusive?: unknown
 }
 
+type ProviderModelIdsResult = {
+  ids: string[]
+  exclusive: boolean
+  sawProviderModels: boolean
+}
+
 export type MoonBridgeModelMetadata = {
   id: string
   contextWindow: number | null
@@ -2160,7 +2166,7 @@ export async function setCustomProvider(
   return await response.json() as { ok: boolean }
 }
 
-async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string[], exclusive: boolean } | null> {
+async function fetchProviderModelIds(providerId?: string): Promise<ProviderModelIdsResult> {
   try {
     const normalizedProviderId = providerId?.trim() ?? ''
     const url = normalizedProviderId
@@ -2183,20 +2189,26 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
           .filter((candidate, index, candidates): candidate is string =>
             candidate.length > 0 && candidates.indexOf(candidate) === index),
         exclusive: providerPayload.exclusive === true,
+        sawProviderModels: true,
       }
     }
   } catch {
     // Keep Codex usable when the provider-models endpoint is unavailable.
   }
-  return null
+
+  return {
+    ids: [],
+    exclusive: false,
+    sawProviderModels: false,
+  }
 }
 
 export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
   const shouldIncludeProviderModels = options.includeProviderModels !== false
-  const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
 
-  if (providerModels?.exclusive || options.requireProviderModels) {
-    return providerModels?.ids ?? []
+  if (options.includeProviderModels !== false && options.requireProviderModels) {
+    const providerModels = await fetchProviderModelIds(options.providerId)
+    return providerModels.sawProviderModels ? providerModels.ids : []
   }
 
   const payload = await callRpc<ModelListResponse>('model/list', {})
@@ -2207,11 +2219,24 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
     ids.push(candidate)
   }
 
-  if (!shouldIncludeProviderModels || !providerModels) return ids
+  if (!shouldIncludeProviderModels) return ids
 
-  for (const candidate of providerModels.ids) {
-    if (!ids.includes(candidate)) ids.push(candidate)
+  const providerModels = await fetchProviderModelIds(options.providerId)
+  if (providerModels.sawProviderModels) {
+    if (providerModels.exclusive) {
+      return providerModels.ids
+    }
+    for (const candidate of providerModels.ids) {
+      const normalized = candidate.trim()
+      if (!normalized || ids.includes(normalized)) continue
+      ids.push(normalized)
+    }
   }
+
+  if (options.requireProviderModels && !providerModels.sawProviderModels) {
+    return []
+  }
+
   return ids
 }
 

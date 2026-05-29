@@ -2176,6 +2176,7 @@ export async function steerThreadTurn(
   imageUrls: string[] = [],
   skills?: Array<{ name: string; path: string }>,
   fileAttachments: FileAttachmentParam[] = [],
+  modelProvider?: string,
 ): Promise<string> {
   const normalizedThreadId = threadId.trim()
   const normalizedExpectedTurnId = expectedTurnId.trim()
@@ -2187,11 +2188,16 @@ export async function steerThreadTurn(
     }
 
     const { input } = buildUserInputPayload(text, imageUrls, skills, fileAttachments)
-    const payload = await callRpc<{ turnId?: string }>('turn/steer', {
+    const params: Record<string, unknown> = {
       threadId: normalizedThreadId,
       expectedTurnId: normalizedExpectedTurnId,
       input,
-    })
+    }
+    const normalizedModelProvider = modelProvider?.trim() ?? ''
+    if (normalizedModelProvider) {
+      params.modelProvider = normalizedModelProvider
+    }
+    const payload = await callRpc<{ turnId?: string }>('turn/steer', params)
     return typeof payload?.turnId === 'string' && payload.turnId.trim()
       ? payload.turnId.trim()
       : normalizedExpectedTurnId
@@ -2200,7 +2206,7 @@ export async function steerThreadTurn(
   }
 }
 
-export async function interruptThreadTurn(threadId: string, turnId?: string): Promise<void> {
+export async function interruptThreadTurn(threadId: string, turnId?: string, modelProvider?: string): Promise<void> {
   const normalizedThreadId = threadId.trim()
   const normalizedTurnId = turnId?.trim() || ''
   if (!normalizedThreadId) return
@@ -2209,7 +2215,12 @@ export async function interruptThreadTurn(threadId: string, turnId?: string): Pr
     if (!normalizedTurnId) {
       throw new Error('turn/interrupt requires turnId')
     }
-    await callRpc('turn/interrupt', { threadId: normalizedThreadId, turnId: normalizedTurnId })
+    const params: Record<string, unknown> = { threadId: normalizedThreadId, turnId: normalizedTurnId }
+    const normalizedModelProvider = modelProvider?.trim() ?? ''
+    if (normalizedModelProvider) {
+      params.modelProvider = normalizedModelProvider
+    }
+    await callRpc('turn/interrupt', params)
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to interrupt turn for thread ${normalizedThreadId}`, 'turn/interrupt')
   }

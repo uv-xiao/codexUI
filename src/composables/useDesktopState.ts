@@ -1824,6 +1824,7 @@ export function useDesktopState() {
   const turnErrorByThreadId = ref<Record<string, TurnErrorState>>({})
   const threadNoticeByThreadId = ref<Record<string, ThreadNoticeState>>({})
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
+  const activeTurnProviderIdByThreadId = ref<Record<string, string>>({})
   const interruptBlockedUntilPersistedByThreadId = ref<Record<string, boolean>>({})
   const threadListedByServerById = ref<Record<string, boolean>>({})
   const persistedUserMessageByThreadId = ref<Record<string, boolean>>({})
@@ -2646,6 +2647,7 @@ export function useDesktopState() {
   function invalidateAppServerRuntimeState(): void {
     resumedThreadById.value = {}
     activeTurnIdByThreadId.value = {}
+    activeTurnProviderIdByThreadId.value = {}
   }
 
   function readFallbackCurrentModelConfig(providerId: ProviderId): CurrentModelConfigSnapshot {
@@ -3072,6 +3074,7 @@ export function useDesktopState() {
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     threadNoticeByThreadId.value = pruneThreadStateMap(threadNoticeByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
+    activeTurnProviderIdByThreadId.value = pruneThreadStateMap(activeTurnProviderIdByThreadId.value, activeThreadIds)
     interruptBlockedUntilPersistedByThreadId.value = pruneThreadStateMap(
       interruptBlockedUntilPersistedByThreadId.value,
       activeThreadIds,
@@ -3506,6 +3509,9 @@ export function useDesktopState() {
     }
     if (activeTurnIdByThreadId.value[threadId]) {
       activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+    }
+    if (activeTurnProviderIdByThreadId.value[threadId]) {
+      activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
     }
     clearPendingTurnRequest(threadId)
   }
@@ -4860,6 +4866,9 @@ export function useDesktopState() {
       if (activeTurnIdByThreadId.value[completedTurn.threadId]) {
         activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, completedTurn.threadId)
       }
+      if (activeTurnProviderIdByThreadId.value[completedTurn.threadId]) {
+        activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, completedTurn.threadId)
+      }
       setThreadInProgress(completedTurn.threadId, false)
       setTurnActivityForThread(completedTurn.threadId, null)
       markThreadUnreadByEvent(completedTurn.threadId)
@@ -5584,6 +5593,7 @@ export function useDesktopState() {
           }
         } else if (activeTurnIdByThreadId.value[threadId]) {
           activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+          activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
         }
         if (!inProgress) {
           clearCompletedTurnLiveState(threadId)
@@ -6307,6 +6317,7 @@ export function useDesktopState() {
         maybeUnblockInterruptForActiveTurn(threadId, activeTurnId)
       } else if (activeTurnIdByThreadId.value[threadId]) {
         activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+        activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
       }
       setThreadInProgress(threadId, inProgress)
       return { activeTurnId, inProgress, refreshed: true }
@@ -6329,9 +6340,13 @@ export function useDesktopState() {
     return ''
   }
 
-  async function interruptActiveTurnWithRefresh(threadId: string, turnId: string): Promise<void> {
+  async function interruptActiveTurnWithRefresh(threadId: string, turnId: string, modelProvider?: string): Promise<void> {
     try {
-      await interruptThreadTurn(threadId, turnId)
+      if (modelProvider) {
+        await interruptThreadTurn(threadId, turnId, modelProvider)
+      } else {
+        await interruptThreadTurn(threadId, turnId)
+      }
       return
     } catch (unknownError) {
       const errorMessage = unknownError instanceof Error ? unknownError.message : ''
@@ -6344,7 +6359,11 @@ export function useDesktopState() {
           ...activeTurnIdByThreadId.value,
           [threadId]: retryTurnId,
         }
-        await interruptThreadTurn(threadId, retryTurnId)
+        if (modelProvider) {
+          await interruptThreadTurn(threadId, retryTurnId, modelProvider)
+        } else {
+          await interruptThreadTurn(threadId, retryTurnId)
+        }
         return
       }
       throw unknownError
@@ -6375,6 +6394,8 @@ export function useDesktopState() {
     if (!expectedTurnId) {
       throw new Error('Could not determine active turn id for steering')
     }
+    const activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
+      || readThreadRpcProviderId(threadId)
 
     if (shouldResumeThread(threadId)) {
       const resumedThread = await resumeThread(
@@ -6396,12 +6417,19 @@ export function useDesktopState() {
       normalizedImageUrls,
       normalizedSkills.length > 0 ? normalizedSkills : undefined,
       normalizedFileAttachments,
+      activeTurnProviderId || undefined,
     )
 
     if (steeredTurnId) {
       activeTurnIdByThreadId.value = {
         ...activeTurnIdByThreadId.value,
         [threadId]: steeredTurnId,
+      }
+      if (activeTurnProviderId) {
+        activeTurnProviderIdByThreadId.value = {
+          ...activeTurnProviderIdByThreadId.value,
+          [threadId]: activeTurnProviderId,
+        }
       }
       maybeUnblockInterruptForActiveTurn(threadId, steeredTurnId)
     }
@@ -6522,6 +6550,12 @@ export function useDesktopState() {
           ...activeTurnIdByThreadId.value,
           [threadId]: startedTurnId,
         }
+        if (modelProviderId) {
+          activeTurnProviderIdByThreadId.value = {
+            ...activeTurnProviderIdByThreadId.value,
+            [threadId]: modelProviderId,
+          }
+        }
         maybeUnblockInterruptForActiveTurn(threadId, startedTurnId)
       }
 
@@ -6578,12 +6612,17 @@ export function useDesktopState() {
     isInterruptingTurn.value = true
     error.value = ''
     try {
-      await interruptActiveTurnWithRefresh(threadId, turnId)
+      const activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
+        || readThreadRpcProviderId(threadId)
+      await interruptActiveTurnWithRefresh(threadId, turnId, activeTurnProviderId || undefined)
       setThreadInProgress(threadId, false)
       setTurnActivityForThread(threadId, null)
       setTurnErrorForThread(threadId, null)
       if (activeTurnIdByThreadId.value[threadId]) {
         activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+      }
+      if (activeTurnProviderIdByThreadId.value[threadId]) {
+        activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
       }
       pendingThreadMessageRefresh.add(threadId)
       pendingThreadsRefresh = true
@@ -6987,6 +7026,7 @@ export function useDesktopState() {
     turnErrorByThreadId.value = {}
     threadNoticeByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
+    activeTurnProviderIdByThreadId.value = {}
     interruptBlockedUntilPersistedByThreadId.value = {}
     threadListedByServerById.value = {}
     persistedUserMessageByThreadId.value = {}

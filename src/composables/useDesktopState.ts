@@ -4785,10 +4785,7 @@ export function useDesktopState() {
     if (notification.method === 'thread/goal/cleared') {
       const threadId = extractThreadIdFromNotification(notification)
       if (threadId) {
-        setThreadNoticeForThread(threadId, {
-          label: 'Goal cleared',
-          text: '',
-        })
+        setThreadNoticeForThread(threadId, null)
       }
     }
 
@@ -7109,10 +7106,7 @@ export function useDesktopState() {
       if (command.kind === 'clear') {
         const cleared = await clearThreadGoal(threadId)
         setThreadNoticeForThread(threadId, cleared
-          ? {
-              label: 'Goal cleared',
-              text: '',
-            }
+          ? null
           : {
               label: 'No goal to clear',
               text: 'This thread does not currently have a goal.',

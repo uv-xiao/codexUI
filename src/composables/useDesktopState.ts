@@ -1818,6 +1818,7 @@ export function useDesktopState() {
   const hasMoreOlderMessagesByThreadId = ref<Record<string, boolean>>({})
   const loadingOlderMessagesByThreadId = ref<Record<string, boolean>>({})
   const resumedThreadById = ref<Record<string, boolean>>({})
+  const resumedThreadProviderIdByThreadId = ref<Record<string, string>>({})
   const turnIndexByTurnIdByThreadId = ref<Record<string, Record<string, number>>>({})
   const turnSummaryByThreadId = ref<Record<string, TurnSummaryState>>({})
   const turnActivityByThreadId = ref<Record<string, TurnActivityState>>({})
@@ -2154,10 +2155,36 @@ export function useDesktopState() {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId || normalizedThreadId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) return
     resumedThreadById.value = omitKey(resumedThreadById.value, normalizedThreadId)
+    resumedThreadProviderIdByThreadId.value = omitKey(resumedThreadProviderIdByThreadId.value, normalizedThreadId)
+  }
+
+  function markThreadResumed(threadId: string, providerId = readThreadRpcProviderId(threadId)): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId || normalizedThreadId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) return
+    resumedThreadById.value = {
+      ...resumedThreadById.value,
+      [normalizedThreadId]: true,
+    }
+    const normalizedProviderId = providerId.trim()
+    if (normalizedProviderId) {
+      resumedThreadProviderIdByThreadId.value = {
+        ...resumedThreadProviderIdByThreadId.value,
+        [normalizedThreadId]: normalizedProviderId,
+      }
+    } else if (resumedThreadProviderIdByThreadId.value[normalizedThreadId]) {
+      resumedThreadProviderIdByThreadId.value = omitKey(resumedThreadProviderIdByThreadId.value, normalizedThreadId)
+    }
   }
 
   function shouldResumeThread(threadId: string, forceReload = false): boolean {
-    return forceReload || resumedThreadById.value[threadId] !== true || readModelIdForThread(threadId).trim().length === 0
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return false
+    const expectedProviderId = readThreadRpcProviderId(normalizedThreadId).trim()
+    const resumedProviderId = resumedThreadProviderIdByThreadId.value[normalizedThreadId]?.trim() ?? ''
+    return forceReload
+      || resumedThreadById.value[normalizedThreadId] !== true
+      || readModelIdForThread(normalizedThreadId).trim().length === 0
+      || expectedProviderId !== resumedProviderId
   }
 
   function ensureAvailableModelIds(...modelIds: string[]): void {
@@ -2544,6 +2571,8 @@ export function useDesktopState() {
         readThreadRpcProviderId(threadId) || undefined,
       )
 
+      markThreadResumed(threadId)
+
       scheduleRateLimitRefresh()
       pendingThreadMessageRefresh.add(threadId)
       await syncFromNotifications()
@@ -2646,6 +2675,7 @@ export function useDesktopState() {
 
   function invalidateAppServerRuntimeState(): void {
     resumedThreadById.value = {}
+    resumedThreadProviderIdByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
     activeTurnProviderIdByThreadId.value = {}
   }
@@ -3062,6 +3092,7 @@ export function useDesktopState() {
     loadedMessagesByThreadId.value = pruneThreadStateMap(loadedMessagesByThreadId.value, activeThreadIds)
     loadedVersionByThreadId.value = pruneThreadStateMap(loadedVersionByThreadId.value, activeThreadIds)
     resumedThreadById.value = pruneThreadStateMap(resumedThreadById.value, activeThreadIds)
+    resumedThreadProviderIdByThreadId.value = pruneThreadStateMap(resumedThreadProviderIdByThreadId.value, activeThreadIds)
     turnIndexByTurnIdByThreadId.value = pruneThreadStateMap(turnIndexByTurnIdByThreadId.value, activeThreadIds)
     persistedMessagesByThreadId.value = pruneThreadStateMap(persistedMessagesByThreadId.value, activeThreadIds)
     liveAgentMessagesByThreadId.value = pruneThreadStateMap(liveAgentMessagesByThreadId.value, activeThreadIds)
@@ -5538,10 +5569,7 @@ export function useDesktopState() {
             resumedThread.modelProvider,
             resumedThread.reasoningEffort,
           )
-          resumedThreadById.value = {
-            ...resumedThreadById.value,
-            [threadId]: true,
-          }
+          markThreadResumed(threadId)
         }
 
         const { messages: nextMessages, inProgress, activeTurnId, turnIndexByTurnId } = detail
@@ -5887,10 +5915,7 @@ export function useDesktopState() {
         forkedThread.modelProvider || sourceProvider,
         forkedThread.reasoningEffort,
       )
-      resumedThreadById.value = {
-        ...resumedThreadById.value,
-        [nextThreadId]: true,
-      }
+      markThreadResumed(nextThreadId)
       setSelectedThreadId(nextThreadId)
       await loadThreads()
       await loadMessages(nextThreadId)
@@ -5952,10 +5977,7 @@ export function useDesktopState() {
         ...loadedMessagesByThreadId.value,
         [forkedThreadId]: true,
       }
-      resumedThreadById.value = {
-        ...resumedThreadById.value,
-        [forkedThreadId]: true,
-      }
+      markThreadResumed(forkedThreadId)
       clearLivePlansForThread(forkedThreadId)
       setLiveAgentMessagesForThread(forkedThreadId, [])
       clearLiveReasoningForThread(forkedThreadId)
@@ -6219,10 +6241,7 @@ export function useDesktopState() {
       if (!goalSlashCommand) {
         appendOptimisticUserMessage(threadId, nextText, imageUrls, skills, fileAttachments)
       }
-      resumedThreadById.value = {
-        ...resumedThreadById.value,
-        [threadId]: true,
-      }
+      markThreadResumed(threadId)
       setSelectedThreadId(threadId)
       const capturedThreadId = threadId
       const capturedCwd = targetCwd || null
@@ -6431,10 +6450,7 @@ export function useDesktopState() {
       maybeUnblockInterruptForActiveTurn(threadId, steeredTurnId)
     }
 
-    resumedThreadById.value = {
-      ...resumedThreadById.value,
-      [threadId]: true,
-    }
+    markThreadResumed(threadId, activeTurnProviderId)
 
     pendingThreadMessageRefresh.add(threadId)
     await syncFromNotifications()
@@ -6555,6 +6571,8 @@ export function useDesktopState() {
         }
         maybeUnblockInterruptForActiveTurn(threadId, startedTurnId)
       }
+
+      markThreadResumed(threadId, modelProviderId)
 
       pendingThreadMessageRefresh.add(threadId)
       await syncFromNotifications()

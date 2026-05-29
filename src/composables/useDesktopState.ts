@@ -2540,6 +2540,7 @@ export function useDesktopState() {
         pending.skills.length > 0 ? pending.skills : undefined,
         pending.fileAttachments,
         pending.collaborationMode,
+        readThreadRpcProviderId(threadId) || undefined,
       )
 
       scheduleRateLimitRefresh()
@@ -6473,6 +6474,7 @@ export function useDesktopState() {
         }
       }
       const modelId = readModelIdForThread(threadId)
+      const modelProviderId = readThreadRpcProviderId(threadId)
 
       let startedTurnId = ''
       try {
@@ -6485,6 +6487,7 @@ export function useDesktopState() {
           skills.length > 0 ? skills : undefined,
           fileAttachments,
           collaborationMode,
+          modelProviderId || undefined,
         )
       } catch (unknownError) {
         if (modelId && modelId !== MODEL_FALLBACK_ID && isUnsupportedChatGptModelError(unknownError)) {
@@ -6507,6 +6510,7 @@ export function useDesktopState() {
             skills.length > 0 ? skills : undefined,
             fileAttachments,
             collaborationMode,
+            modelProviderId || undefined,
           )
         } else {
           throw unknownError

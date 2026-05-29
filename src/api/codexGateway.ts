@@ -2131,9 +2131,11 @@ export async function startThreadTurn(
   skills?: Array<{ name: string; path: string }>,
   fileAttachments: FileAttachmentParam[] = [],
   collaborationMode?: CollaborationModeKind,
+  modelProvider?: string,
 ): Promise<string> {
   try {
     const normalizedModel = model?.trim() ?? ''
+    const normalizedModelProvider = modelProvider?.trim() ?? ''
     const { input, attachments } = buildUserInputPayload(text, imageUrls, skills, fileAttachments)
     const params: Record<string, unknown> = {
       threadId,
@@ -2142,6 +2144,9 @@ export async function startThreadTurn(
     if (attachments.length > 0) params.attachments = attachments
     if (normalizedModel) {
       params.model = normalizedModel
+    }
+    if (normalizedModelProvider) {
+      params.modelProvider = normalizedModelProvider
     }
     if (typeof effort === 'string' && effort.length > 0) {
       params.effort = effort

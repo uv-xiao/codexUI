@@ -8,6 +8,8 @@ import {
   renameThread,
   getAvailableModelIds,
   getCurrentModelConfig,
+  getArkModelIds,
+  getArkModelMetadata,
   getPendingServerRequests,
   getMoonBridgeModelMetadata,
   getSkillsList,
@@ -129,7 +131,7 @@ function isThreadNotFoundError(error: unknown): boolean {
   return /\b404\b|thread.*not found|conversation.*not found|no such thread|no rollout found for thread id/i.test(message)
 }
 
-export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'cursor'
+export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'ark' | 'cursor'
 type StoredProviderId = string
 
 function loadReadStateMap(): Record<string, string> {
@@ -210,6 +212,9 @@ export function normalizeProviderId(value: unknown): ProviderId {
   if (normalized === 'moon') {
     return 'moon'
   }
+  if (normalized === 'ark') {
+    return 'ark'
+  }
   if (normalized === 'cursor') {
     return 'cursor'
   }
@@ -226,6 +231,7 @@ function normalizeStoredProviderId(value: unknown): StoredProviderId {
   if (normalized === 'opencode-zen') return 'opencode-zen'
   if (normalized === 'custom' || normalized === 'custom-endpoint') return 'custom'
   if (normalized === 'moon') return 'moon'
+  if (normalized === 'ark') return 'ark'
   if (normalized === 'cursor') return 'cursor'
   return raw
 }
@@ -290,9 +296,10 @@ function isNewThreadContextId(contextId: string): boolean {
   return contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
 }
 
-export function inferProviderFromModel(modelId: string, moonBridgeModels: string[]): ProviderId | null {
+export function inferProviderFromModel(modelId: string, moonBridgeModels: string[], arkModels: string[] = []): ProviderId | null {
   const normalizedModelId = normalizeStoredModelId(modelId)
   if (!normalizedModelId) return null
+  if (arkModels.includes(normalizedModelId)) return 'ark'
   return moonBridgeModels.includes(normalizedModelId) ? 'moon' : null
 }
 
@@ -301,6 +308,7 @@ function toRpcModelProviderId(providerId: ProviderId): string {
   if (providerId === 'opencode-zen') return 'opencode-zen'
   if (providerId === 'custom') return 'custom-endpoint'
   if (providerId === 'moon') return 'moon'
+  if (providerId === 'ark') return 'ark'
   if (providerId === 'cursor') return 'cursor'
   return ''
 }
@@ -1787,6 +1795,8 @@ export function useDesktopState() {
   const availableModelIds = ref<string[]>([])
   const moonBridgeModelIds = ref<string[]>([])
   const moonBridgeModelContextWindowById = ref<Record<string, number>>(createStringKeyedRecord<number>())
+  const arkModelIds = ref<string[]>([])
+  const arkModelContextWindowById = ref<Record<string, number>>(createStringKeyedRecord<number>())
   const availableCollaborationModes = ref<CollaborationModeOption[]>([
     { value: 'default', label: 'Default' },
     { value: 'plan', label: 'Plan' },
@@ -1987,11 +1997,13 @@ export function useDesktopState() {
     if (!usage) return null
 
     // Track model and context-window map changes for reactive recalculation.
-    const ctxMap = moonBridgeModelContextWindowById.value
+    const ctxMap = selectedProvider.value === 'ark'
+      ? arkModelContextWindowById.value
+      : moonBridgeModelContextWindowById.value
     const modelId = selectedModelId.value
-    // Only apply moonbridge context window when the provider is moon.
-    // Codex models (e.g. gpt-5.5) may share names with moonbridge route aliases.
-    const modelContextWindow = selectedProvider.value === 'moon' && modelId
+    // Only apply wrapper catalog context windows for their active provider.
+    // Codex models can share names with wrapper route aliases.
+    const modelContextWindow = (selectedProvider.value === 'moon' || selectedProvider.value === 'ark') && modelId
       ? (ctxMap[modelId] ?? null)
       : null
     return applyModelContextWindowToThreadTokenUsage(usage, modelContextWindow)
@@ -2082,10 +2094,10 @@ export function useDesktopState() {
     }
 
     const currentNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
-    if (currentNewThreadProvider !== 'moon') return
+    if (currentNewThreadProvider !== 'moon' && currentNewThreadProvider !== 'ark') return
 
-    const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
-    if (inferredProvider && currentNewThreadProvider === 'moon') {
+    const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value, arkModelIds.value)
+    if (inferredProvider && currentNewThreadProvider === inferredProvider) {
       setSelectedProviderForThread('', inferredProvider)
     }
   }
@@ -2255,11 +2267,12 @@ export function useDesktopState() {
     }
     if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
       const selectedNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
-      const inferredProvider = selectedNewThreadProvider === 'moon'
-        ? inferProviderFromModel(normalizedModelId, moonBridgeModelIds.value)
+      const inferredProvider = selectedNewThreadProvider === 'moon' || selectedNewThreadProvider === 'ark'
+        ? inferProviderFromModel(normalizedModelId, moonBridgeModelIds.value, arkModelIds.value)
         : null
-      const effectiveNewThreadProvider = inferredProvider
-        || selectedNewThreadProvider
+      const effectiveNewThreadProvider = inferredProvider === selectedNewThreadProvider
+        ? inferredProvider
+        : selectedNewThreadProvider
       const newThreadProviderContextId = effectiveNewThreadProvider
         ? toProviderModelContextId(effectiveNewThreadProvider)
         : ''
@@ -2654,6 +2667,24 @@ export function useDesktopState() {
     return ids
   }
 
+  function applyArkModelMetadata(models: MoonBridgeModelMetadata[]): string[] {
+    const ids: string[] = []
+    const contextWindowById = createStringKeyedRecord<number>()
+
+    for (const model of models) {
+      const modelId = model.id.trim()
+      if (!modelId || ids.includes(modelId)) continue
+      ids.push(modelId)
+      if (typeof model.contextWindow === 'number' && Number.isFinite(model.contextWindow) && model.contextWindow > 0) {
+        contextWindowById[modelId] = Math.trunc(model.contextWindow)
+      }
+    }
+
+    arkModelIds.value = ids
+    arkModelContextWindowById.value = contextWindowById
+    return ids
+  }
+
   async function loadMoonBridgeModelIds(): Promise<string[]> {
     const metadata = await getMoonBridgeModelMetadata()
     if (metadata.length > 0) {
@@ -2666,8 +2697,21 @@ export function useDesktopState() {
     return ids
   }
 
+  async function loadArkModelIds(): Promise<string[]> {
+    const metadata = await getArkModelMetadata()
+    if (metadata.length > 0) {
+      return applyArkModelMetadata(metadata)
+    }
+
+    const ids = await getArkModelIds()
+    arkModelIds.value = ids
+    arkModelContextWindowById.value = createStringKeyedRecord<number>()
+    return ids
+  }
+
   async function refreshMoonBridgeModelIds(): Promise<void> {
     await loadMoonBridgeModelIds()
+    await loadArkModelIds()
     if (selectedThreadId.value.trim()) {
       syncThreadProviderFromModel(selectedThreadId.value, readModelIdForThread(selectedThreadId.value))
     }
@@ -2724,13 +2768,18 @@ export function useDesktopState() {
       const providerHint = hasExplicitSelectedProvider
         ? readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
         : selectedProvider.value
-      const [currentConfig, moonModels] = await Promise.all([
+      const [currentConfig, moonModels, arkModels] = await Promise.all([
         getCurrentModelConfigSnapshot(providerHint),
         moonBridgeModelIds.value.length > 0 && Object.keys(moonBridgeModelContextWindowById.value).length > 0
           ? Promise.resolve(moonBridgeModelIds.value)
           : loadMoonBridgeModelIds(),
+        arkModelIds.value.length > 0 && Object.keys(arkModelContextWindowById.value).length > 0
+          ? Promise.resolve(arkModelIds.value)
+          : loadArkModelIds(),
       ])
       moonBridgeModelIds.value = moonModels
+      arkModelIds.value = arkModels
+
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const rawConfiguredProviderId = currentConfig.providerId.trim()
       const configuredProviderId = normalizeProviderContextId(currentConfig.providerId)
@@ -2765,11 +2814,12 @@ export function useDesktopState() {
         }
       }
       availableModelIds.value = nextModelIds
-      const selectedModelProvider = inferProviderFromModel(normalizedSelectedModelId, moonBridgeModelIds.value)
+      const selectedModelProvider = inferProviderFromModel(normalizedSelectedModelId, moonBridgeModelIds.value, arkModelIds.value)
       const selectedModelMatchesActiveProvider =
-        normalizedProviderId === 'moon' && selectedModelProvider === 'moon'
+        (normalizedProviderId === 'moon' || normalizedProviderId === 'ark') && selectedModelProvider === normalizedProviderId
       const canTrustActiveProviderCatalog =
-        normalizedProviderId !== 'moon' || moonBridgeModelIds.value.length > 0
+        (normalizedProviderId !== 'moon' && normalizedProviderId !== 'ark')
+        || (normalizedProviderId === 'moon' ? moonBridgeModelIds.value.length > 0 : arkModelIds.value.length > 0)
       const shouldReplaceExistingThreadModel =
         !selectedContextIsNewThread
         && isProviderBacked

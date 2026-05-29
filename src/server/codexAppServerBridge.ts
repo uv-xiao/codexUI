@@ -21,6 +21,11 @@ import { TelegramThreadBridge } from './telegramThreadBridge.js'
 import {
   getRandomFreeKey,
   getFreeKeyCount,
+  ARK_PROVIDER_ID,
+  getArkModelMetadata,
+  getArkModelSelection,
+  getArkModels,
+  FREE_MODE_PROVIDER_ID,
   FREE_MODE_DEFAULT_MODEL,
   getCachedFreeModels,
   getCursorModelSelection,
@@ -52,6 +57,7 @@ import { ThreadTerminalManager } from './terminalManager.js'
 import { getSpawnInvocation } from '../utils/commandInvocation.js'
 import {
   resolveCodexCommand,
+  resolveCodexArkCommand,
   resolveCodexCursorCommand,
   resolveCodexMoonCommand,
 } from '../commandResolution.js'
@@ -7240,7 +7246,7 @@ function hasFreeModeStateChanged(current: FreeModeState, newState: FreeModeState
 }
 
 function isWrapperProvider(provider: FreeModeState['provider']): boolean {
-  return provider === MOONBRIDGE_PROVIDER_ID || provider === CURSOR_PROVIDER_ID
+  return provider === MOONBRIDGE_PROVIDER_ID || provider === ARK_PROVIDER_ID || provider === CURSOR_PROVIDER_ID
 }
 
 export function buildAppServerConfigForState(state: FreeModeState): AppServerConfig {
@@ -7256,6 +7262,11 @@ export function buildAppServerConfigForState(state: FreeModeState): AppServerCon
     command = resolveCodexMoonCommand()
     if (!command) {
       throw new Error('Codex Moon Bridge CLI is not available. Install codex-moon or set CODEXUI_CODEX_MOON_COMMAND.')
+    }
+  } else if (state.enabled && state.provider === ARK_PROVIDER_ID) {
+    command = resolveCodexArkCommand()
+    if (!command) {
+      throw new Error('Codex Ark CLI is not available. Install codex-ark or set CODEXUI_CODEX_ARK_COMMAND.')
     }
   } else if (state.enabled && state.provider === CURSOR_PROVIDER_ID) {
     command = resolveCodexCursorCommand()
@@ -8627,7 +8638,9 @@ function createLazyBridgeDependency<T extends object>(resolve: () => T): T {
   })
 }
 
-function readRequestedWrapperProvider(method: string, params: unknown): 'moon' | 'cursor' | null {
+type WrapperProviderId = 'moon' | 'ark' | 'cursor'
+
+function readRequestedWrapperProvider(method: string, params: unknown): WrapperProviderId | null {
   if (!THREAD_MODEL_PROVIDER_OVERRIDE_METHODS.has(method)) return null
 
   const paramsRecord = asRecord(params)
@@ -8635,6 +8648,7 @@ function readRequestedWrapperProvider(method: string, params: unknown): 'moon' |
     || readNonEmptyString(paramsRecord?.model_provider)
   const normalizedProvider = provider.trim().toLowerCase()
   if (normalizedProvider === MOONBRIDGE_PROVIDER_ID) return MOONBRIDGE_PROVIDER_ID
+  if (normalizedProvider === ARK_PROVIDER_ID) return ARK_PROVIDER_ID
   if (normalizedProvider === CURSOR_PROVIDER_ID) return CURSOR_PROVIDER_ID
   return null
 }
@@ -8693,14 +8707,16 @@ export function persistTurnStartModelProviderInCollaborationMode(method: string,
 
 function buildWrapperRuntimeState(
   currentState: FreeModeState,
-  provider: 'moon' | 'cursor',
+  provider: WrapperProviderId,
   params: unknown,
 ): FreeModeState {
   const paramsRecord = asRecord(params)
   const requestedModel = readNonEmptyString(paramsRecord?.model).trim()
   const fallbackModel = provider === CURSOR_PROVIDER_ID
     ? getCursorModelSelection(currentState.model).currentModel
-    : getMoonBridgeModels()[0] ?? currentState.model
+    : provider === ARK_PROVIDER_ID
+      ? getArkModelSelection(currentState.model).currentModel
+      : getMoonBridgeModels()[0] ?? currentState.model
   const state: FreeModeState = {
     ...currentState,
     enabled: true,
@@ -9122,6 +9138,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             if (state.provider === MOONBRIDGE_PROVIDER_ID) {
               models = getMoonBridgeModels()
               wireApi = null
+            } else if (state.provider === ARK_PROVIDER_ID) {
+              const arkSelection = getArkModelSelection(state.model)
+              models = arkSelection.models
+              currentModel = state.enabled ? arkSelection.currentModel : null
+              wireApi = null
             } else if (state.provider === CURSOR_PROVIDER_ID) {
               const cursorSelection = getCursorModelSelection(state.model)
               models = cursorSelection.models
@@ -9240,9 +9261,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 ? 'openrouter'
                 : body?.provider === 'moon'
                   ? 'moon' as const
-                  : body?.provider === 'cursor'
-                    ? 'cursor' as const
-                    : 'custom' as const
+                  : body?.provider === 'ark'
+                    ? 'ark' as const
+                    : body?.provider === 'cursor'
+                      ? 'cursor' as const
+                      : 'custom' as const
             if (providerType === 'custom' && !baseUrl) {
               setJson(res, 400, { error: 'baseUrl is required' })
               return
@@ -9271,9 +9294,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                         ? currentModel
                         : moonModels[0] ?? ''
                     })()
-                  : providerType === 'cursor'
-                    ? getCursorModelSelection(current.model).currentModel
-                  : OPENCODE_ZEN_DEFAULT_MODEL
+                  : providerType === 'ark'
+                    ? getArkModelSelection(current.model).currentModel
+                    : providerType === 'cursor'
+                      ? getCursorModelSelection(current.model).currentModel
+                      : OPENCODE_ZEN_DEFAULT_MODEL
             const state: FreeModeState = {
               enabled: true,
               apiKey: isWrapperProvider(providerType) ? null : resolvedKey,
@@ -9970,6 +9995,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/codex-api/ark/models') {
+        setJson(res, 200, { data: getArkModels(), source: 'ark' })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/ark/model-metadata') {
+        setJson(res, 200, { data: getArkModelMetadata(), source: 'ark' })
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/provider-models') {
         try {
           const requestedProvider = url.searchParams.get('provider')?.trim() ?? ''
@@ -9984,6 +10019,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           if (fmState.enabled) {
             if (fmState.provider === MOONBRIDGE_PROVIDER_ID) {
               setJson(res, 200, { data: getMoonBridgeModels(), exclusive: true, source: 'moon' })
+              return
+            }
+            if (fmState.provider === ARK_PROVIDER_ID) {
+              const data = getArkModelSelection(fmState.model).models
+              setJson(res, 200, { data, exclusive: true, providerId: ARK_PROVIDER_ID, source: 'ark' })
               return
             }
             if (fmState.provider === CURSOR_PROVIDER_ID) {

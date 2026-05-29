@@ -1689,6 +1689,7 @@ const providerDropdownOptions = computed(() => [
   { value: 'openrouter', label: t('OpenRouter') },
   { value: 'opencode-zen', label: t('OpenCode Zen') },
   { value: 'moon', label: t('Moon Bridge') },
+  { value: 'ark', label: t('Ark Coding Plan') },
   { value: 'cursor', label: t('Cursor CLI') },
   { value: 'custom', label: t('Custom endpoint') },
 ])
@@ -4547,7 +4548,7 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
-type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'cursor'
+type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'ark' | 'cursor'
 
 function normalizeProviderSelection(provider: string): ProviderSelection {
   if (
@@ -4555,6 +4556,7 @@ function normalizeProviderSelection(provider: string): ProviderSelection {
     || provider === 'opencode-zen'
     || provider === 'custom'
     || provider === 'moon'
+    || provider === 'ark'
     || provider === 'cursor'
   ) {
     return provider
@@ -4620,6 +4622,12 @@ async function applySelectedProviderState(
       await setCustomProvider('', '', {
         wireApi: 'responses',
         provider: 'moon',
+      })
+      freeModeEnabled.value = true
+    } else if (provider === 'ark') {
+      await setCustomProvider('', '', {
+        wireApi: 'responses',
+        provider: 'ark',
       })
       freeModeEnabled.value = true
     } else if (provider === 'cursor') {
@@ -4760,7 +4768,7 @@ async function loadFreeModeStatus(): Promise<void> {
     } else if (status.provider === 'openrouter') {
       openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     }
-    if (status.enabled && status.provider === 'cursor') {
+    if (status.enabled && (status.provider === 'moon' || status.provider === 'ark' || status.provider === 'cursor')) {
       setSelectedProvider(normalizeProviderSelection(status.provider))
     }
     externalCodexAuthAvailable = status.hasCodexAuth === true

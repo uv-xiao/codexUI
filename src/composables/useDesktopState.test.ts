@@ -1155,9 +1155,7 @@ describe('provider model selection', () => {
     expect(state.selectedModelId.value).toBe('big-pickle')
     expect(state.readModelIdForThread('').trim()).toBe('big-pickle')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
-      '__new-thread-provider__::codex': 'big-pickle',
       '__new-thread-provider__::opencode-zen': 'big-pickle',
-      '__new-thread__': 'big-pickle',
     })
     expect(window.localStorage.getItem('codex-web-local.selected-model-id.v1')).toBe(null)
   })
@@ -1195,9 +1193,7 @@ describe('provider model selection', () => {
     expect(state.selectedModelId.value).toBe('ring-2.6-1t-free')
     expect(state.readModelIdForThread('').trim()).toBe('ring-2.6-1t-free')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
-      '__new-thread-provider__::codex': 'ring-2.6-1t-free',
       '__new-thread-provider__::opencode-zen': 'ring-2.6-1t-free',
-      '__new-thread__': 'ring-2.6-1t-free',
     })
   })
 
@@ -1232,6 +1228,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      providerId: 'moon',
     })
     expect(state.selectedProvider.value).toBe('moon')
     expect(state.availableModelIds.value).toEqual([
@@ -1276,6 +1273,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      providerId: 'ark',
     })
     expect(state.selectedProvider.value).toBe('ark')
     expect(state.availableModelIds.value).toEqual([
@@ -1329,6 +1327,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      providerId: 'moon',
     })
     expect(state.selectedProvider.value).toBe('moon')
     expect(state.availableModelIds.value).toEqual([
@@ -1378,6 +1377,7 @@ describe('provider model selection', () => {
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
+      providerId: 'moon',
     })
     expect(state.selectedProvider.value).toBe('moon')
     expect(state.availableModelIds.value).toEqual([
@@ -1427,6 +1427,7 @@ describe('provider model selection', () => {
       expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
         includeProviderModels: true,
         requireProviderModels: true,
+        providerId: 'moon',
       })
       expect(state.selectedProvider.value).toBe('moon')
       expect(state.availableModelIds.value).toEqual([
@@ -1469,6 +1470,7 @@ describe('provider model selection', () => {
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
       '__new-thread-provider__::openrouter-free': 'openrouter/free',
       '__new-thread-provider__::codex': 'gpt-5.5',
+      '__new-thread__': 'gpt-5.5',
     })
   })
 
@@ -1505,13 +1507,14 @@ describe('provider model selection', () => {
     expect(state.readModelIdForThread('').trim()).toBe('gpt-5.5')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
       '__new-thread-provider__::codex': 'gpt-5.5',
+      '__new-thread__': 'gpt-5.5',
     })
   })
 
   it('keeps an existing OpenCode Zen thread locked to Zen models after Codex auth becomes active', async () => {
     installTestWindow()
     gatewayMocks.getThreadGroupsPage.mockResolvedValue({
-      groups: [{ projectName: 'Project', threads: [thread('legacy-zen-thread', '/tmp/project')] }],
+      groups: [{ projectName: 'Project', threads: [thread('legacy-zen-thread-a', '/tmp/project')] }],
       nextCursor: null,
     })
     gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
@@ -1540,11 +1543,11 @@ describe('provider model selection', () => {
     })
 
     const state = useDesktopState()
-    state.primeSelectedThread('legacy-zen-thread')
-    await state.loadMessages('legacy-zen-thread')
+    state.primeSelectedThread('legacy-zen-thread-a')
+    await state.loadMessages('legacy-zen-thread-a')
     await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
 
-    expect(gatewayMocks.getAvailableModelIds).toHaveBeenLastCalledWith({
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
       providerId: 'opencode-zen',
@@ -1554,8 +1557,8 @@ describe('provider model selection', () => {
       'ring-2.6-1t-free',
     ])
     expect(state.selectedModelId.value).toBe('big-pickle')
-    expect(state.readModelIdForThread('legacy-zen-thread')).toBe('big-pickle')
-    expect(state.readModelIdForThread('')).toBe('gpt-5.4-mini')
+    expect(state.readModelIdForThread('legacy-zen-thread-a')).toBe('big-pickle')
+    expect(state.readModelIdForThread('')).toBe('')
   })
 
   it('loads provider models for a selected provider-backed thread during scheduled refreshes', async () => {
@@ -1567,7 +1570,7 @@ describe('provider model selection', () => {
       return 1
     }) as typeof window.setTimeout)
     gatewayMocks.getThreadGroupsPage.mockResolvedValue({
-      groups: [{ projectName: 'Project', threads: [thread('legacy-zen-thread', '/tmp/project')] }],
+      groups: [{ projectName: 'Project', threads: [thread('legacy-zen-thread-b', '/tmp/project')] }],
       nextCursor: null,
     })
     gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
@@ -1596,12 +1599,12 @@ describe('provider model selection', () => {
     })
 
     const state = useDesktopState()
-    state.primeSelectedThread('legacy-zen-thread')
-    await state.loadMessages('legacy-zen-thread')
+    state.primeSelectedThread('legacy-zen-thread-b')
+    await state.loadMessages('legacy-zen-thread-b')
     await state.refreshAll({ includeSelectedThreadMessages: false })
     await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0))
 
-    expect(gatewayMocks.getAvailableModelIds).toHaveBeenLastCalledWith({
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
       requireProviderModels: true,
       providerId: 'opencode-zen',
@@ -1650,7 +1653,7 @@ describe('provider model selection', () => {
     await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
     await state.sendMessageToNewThread('hi', '/tmp/project')
 
-    expect(gatewayMocks.startThread).toHaveBeenCalledWith('/tmp/project', 'gpt-5.5')
+    expect(gatewayMocks.startThread).toHaveBeenCalledWith('/tmp/project', 'gpt-5.5', undefined)
     expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
       'codex-thread',
       'hi',
@@ -1660,6 +1663,7 @@ describe('provider model selection', () => {
       undefined,
       [],
       'default',
+      'openai',
     )
     expect(state.readModelIdForThread('codex-thread')).toBe('gpt-5.5')
     expect(state.messages.value.some((message) => (
@@ -1781,7 +1785,7 @@ describe('provider model selection', () => {
 
     expect(state.selectedLiveOverlay.value?.errorText).toContain('thread not found')
     expect(state.availableModelIds.value).toEqual(['gpt-5.5', 'gpt-5.4-mini'])
-    expect(state.selectedModelId.value).toBe('gpt-5.5')
+    expect(state.selectedModelId.value).toBe('')
 
     await state.ensureThreadMessagesLoaded('missing-thread', { silent: true })
     await state.loadMessages('missing-thread')

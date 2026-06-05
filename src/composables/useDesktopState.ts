@@ -196,7 +196,7 @@ function normalizeStoredModelId(value: unknown): string {
 }
 
 export function normalizeProviderId(value: unknown): ProviderId {
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase().replace(/_/g, '-') : ''
   if (normalized === 'openai') {
     return 'codex'
   }
@@ -224,7 +224,7 @@ export function normalizeProviderId(value: unknown): ProviderId {
 function normalizeStoredProviderId(value: unknown): StoredProviderId {
   const raw = typeof value === 'string' ? value.trim() : ''
   if (!raw) return ''
-  const normalized = raw.toLowerCase()
+  const normalized = raw.toLowerCase().replace(/_/g, '-')
   if (normalized === 'codex') return 'codex'
   if (normalized === 'openai') return 'openai'
   if (normalized === 'openrouter' || normalized === 'openrouter-free') return 'openrouter'
@@ -2787,11 +2787,22 @@ export function useDesktopState() {
         ? readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
         : configuredProviderId
       activeProviderId.value = normalizedProviderId
-      const targetProviderId = readProviderIdForThread(selectedThreadId.value)
+      const targetProviderId = hasExplicitSelectedProvider
+        ? normalizedProviderId
+        : readProviderIdForThread(selectedThreadId.value)
       const isProviderBacked = targetProviderId !== 'codex'
       activeCodexProviderId.value = isProviderBacked ? '' : normalizeCodexRpcProviderId(rawConfiguredProviderId)
       const selectedContextId = toThreadContextId(selectedThreadId.value)
       const selectedContextIsNewThread = selectedContextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
+      if (selectedContextIsNewThread && isProviderBacked && !Object.prototype.hasOwnProperty.call(selectedProviderByContext.value, NEW_THREAD_PROVIDER_CONTEXT)) {
+        selectedProviderByContext.value = writeSelectedProviderForContext(
+          selectedProviderByContext.value,
+          NEW_THREAD_COLLABORATION_MODE_CONTEXT,
+          normalizedProviderId,
+        )
+        selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
+        saveSelectedProviderMap(selectedProviderByContext.value)
+      }
       const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
       const modelIds = await getAvailableModelIds({
         includeProviderModels: isProviderBacked || options?.includeProviderModels !== false,
@@ -2806,7 +2817,7 @@ export function useDesktopState() {
       if (!options?.providerChanged) {
         const extraModelIds = isProviderBacked
           ? (configuredProviderId === targetProviderId ? [normalizedConfiguredModelId] : [])
-          : [normalizedSelectedModelId, normalizedConfiguredModelId]
+          : [normalizedConfiguredModelId]
         for (const modelId of extraModelIds) {
           if (modelId && !nextModelIds.includes(modelId)) {
             nextModelIds.push(modelId)
@@ -2895,16 +2906,6 @@ export function useDesktopState() {
         selectedModelIdByContext.value = nextModelMap
         saveSelectedModelMap(selectedModelIdByContext.value)
       }
-      if (selectedContextIsNewThread && isProviderBacked && !Object.prototype.hasOwnProperty.call(selectedProviderByContext.value, NEW_THREAD_PROVIDER_CONTEXT)) {
-        selectedProviderByContext.value = writeSelectedProviderForContext(
-          selectedProviderByContext.value,
-          NEW_THREAD_COLLABORATION_MODE_CONTEXT,
-          normalizedProviderId,
-        )
-        selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
-        saveSelectedProviderMap(selectedProviderByContext.value)
-      }
-
       const normalizedConfigReasoningEffort = normalizeStoredReasoningEffort(currentConfig.reasoningEffort)
       if (selectedContextIsNewThread) {
         if (

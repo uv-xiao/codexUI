@@ -1597,7 +1597,7 @@ describe('backend queue scheduling', () => {
 
     expect(calls).toEqual([
       { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
-      { method: 'thread/resume', params: { threadId: 'thread-1' } },
+      { method: 'thread/resume', params: { threadId: 'thread-1', persistExtendedHistory: true } },
       {
         method: 'turn/start',
         params: {
@@ -2109,7 +2109,7 @@ describe('app-server runtime configuration', () => {
       expect(defaultConfig.args[0]).toBe('app-server')
       expect(moonConfig.command).toBe(moonCommand)
       expect(moonConfig.args[0]).toBe('app-server')
-      expect(moonConfig.args.some((arg) => arg.includes('model_provider'))).toBe(false)
+      expect(moonConfig.args.some((arg) => arg.includes('model_provider'))).toBe(true)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
@@ -2134,7 +2134,7 @@ describe('app-server runtime configuration', () => {
 
       expect(cursorConfig.command).toBe(cursorCommand)
       expect(cursorConfig.args[0]).toBe('app-server')
-      expect(cursorConfig.args.some((arg) => arg.includes('model_provider'))).toBe(false)
+      expect(cursorConfig.args.some((arg) => arg.includes('model_provider'))).toBe(true)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
@@ -2159,7 +2159,7 @@ describe('app-server runtime configuration', () => {
 
       expect(arkConfig.command).toBe(arkCommand)
       expect(arkConfig.args[0]).toBe('app-server')
-      expect(arkConfig.args.some((arg) => arg.includes('model_provider'))).toBe(false)
+      expect(arkConfig.args.some((arg) => arg.includes('model_provider'))).toBe(true)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

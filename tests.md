@@ -46,6 +46,32 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Feature: Full upstream and Light-of-Hers rebase integration
+
+#### Prerequisites
+- Use the rebased integration worktree.
+- Install dependencies with Corepack if `pnpm` is not directly on `PATH`.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `corepack pnpm exec vitest run src/composables/useDesktopState.test.ts src/api/codexGateway.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/server/freeMode.test.ts src/api/normalizers/v2.test.ts`.
+2. Run `corepack pnpm run build:frontend`.
+3. Run `corepack pnpm run build:cli`.
+4. Start a temporary profiling server with `corepack pnpm run dev --host 127.0.0.1 --port 4173`.
+5. Run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 corepack pnpm run profile:browser`.
+6. In light theme, open the app and confirm provider selection, composer file mentions, thread rendering, and slash-goal command UI are visible and usable.
+7. Switch to dark theme and repeat the same visual checks.
+
+#### Expected Results
+- The focused Vitest suite passes.
+- Frontend and CLI builds complete.
+- The browser profile writes JSON, screenshot, and trace artifacts under `output/playwright/`.
+- No provider dropdown, thread surface, composer mention list, or goal notice is unreadable in light or dark theme.
+
+#### Rollback/Cleanup
+- Stop only the temporary server bound to port `4173`.
+- Remove the temporary worktree if the rebased branch is not merged.
+
 ### Feature: Live turn output does not flicker away before persistence
 
 #### Prerequisites

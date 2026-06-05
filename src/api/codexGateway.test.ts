@@ -224,7 +224,7 @@ describe('thread history persistence payloads', () => {
     vi.unstubAllGlobals()
   })
 
-  it('opts thread start, resume, and fork into extended history persistence', async () => {
+  it('opts thread start and fork into extended history persistence', async () => {
     const { requests } = mockRpcFetchWithResponder((request) => {
       if (request.method === 'thread/start') return emptyThreadResult('thread-started')
       if (request.method === 'thread/resume') return emptyThreadResult('thread-1')
@@ -241,7 +241,11 @@ describe('thread history persistence payloads', () => {
       'thread/resume',
       'thread/fork',
     ])
-    expect(requests.every((request) => request.params.persistExtendedHistory === true)).toBe(true)
+    expect(requests.map((request) => request.params.persistExtendedHistory)).toEqual([
+      undefined,
+      undefined,
+      true,
+    ])
   })
 
   it('passes explicit model provider overrides to thread lifecycle RPCs', async () => {
@@ -285,7 +289,7 @@ describe('thread history persistence payloads', () => {
       return {}
     })
 
-    const resumedThread = await resumeThread('thread-1')
+    const resumedThread = await resumeThread('thread-nested')
 
     expect(resumedThread.model).toBe('ark-code-latest')
     expect(resumedThread.modelProvider).toBe('moon')
@@ -498,7 +502,7 @@ describe('getAvailableModelIds', () => {
     await expect(getAvailableModelIds({
       includeProviderModels: true,
     })).resolves.toEqual(['gpt-5.5', 'gpt-5.4-mini'])
-    expect(requests).toEqual(['/codex-api/provider-models', '/codex-api/rpc'])
+    expect(requests).toEqual(['/codex-api/rpc', '/codex-api/provider-models'])
   })
 })
 

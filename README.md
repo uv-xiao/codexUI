@@ -1,3 +1,21 @@
+# uv-xiao/codexUI fork
+
+This repository is a fork of upstream `friuns2/codexUI`. README maintenance rule: keep the upstream-derived `codexapp` documentation folded below this fork preface, and describe this fork's extensions at the top before the upstream material.
+
+This fork adds and maintains extensions on top of upstream, with emphasis on:
+
+- a local extension-host route and extension registry scaffolding;
+- a direct host deployment workflow for Mac/browser access through `scripts/codexui-deploy.sh`;
+- an explicit Docker Tailscale iOS workflow through `scripts/docker-tailscale-ios.sh`, with Tailscale disabled unless that wrapper is used;
+- a Mac Dock control app script for opening, testing, restarting, and stopping direct/Tailscale CodexUI deployments;
+- the rebased upstream and Light-Of-Hers feature stack integrated into this fork.
+
+Light-Of-Hers' `crz/dev` fork contributed a significant feature stack that is acknowledged here as part of this fork's integrated history. The current branch rebases and adapts those ideas alongside upstream changes rather than presenting them as solely original to this fork.
+
+The sections below are folded from upstream-style documentation unless explicitly marked as fork-specific.
+
+---
+
 # 🔥 codexapp
 
 ### 🚀 Run Codex App UI Anywhere: Linux, Windows, or Termux on Android 🚀

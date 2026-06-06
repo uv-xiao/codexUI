@@ -46,6 +46,36 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Feature: Host CodexUI with Docker Tailscale access workflow
+
+#### Prerequisites
+- Docker Compose is available on the server.
+- The repository has been built or can build with `npm run build:frontend` and `npm run build:cli`.
+- A Tailscale node is already authenticated, or the operator can complete the auth URL shown by the script.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `NO_PROXY='*' no_proxy='*' CODEXUI_BUILD_ON_UP=1 scripts/docker-tailscale-ios.sh up`.
+2. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh status`.
+3. Confirm the status output shows a `codexui-host` tmux session and a `codexui-tailscale` Docker container.
+4. Confirm the host target URL returns `200 OK` with `curl --noproxy '*' -I http://<host-ip>:5900/`.
+5. From a Mac on a routeable network, open `http://<public-host-ip>:5900` directly and sign in with the generated password when password protection is enabled.
+6. From an iOS device on the tailnet, open `https://codexui-ios.tail27dc02.ts.net/`.
+7. Verify the app renders in light theme.
+8. Switch to dark theme and verify the app renders without blank startup, light-only surfaces, or unreadable controls.
+9. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh restart-tailscale` and confirm `serve status` still proxies to the host CodexUI URL.
+
+#### Expected Results
+- The host CodexUI process runs outside Docker and binds to the configured host IP and port.
+- Docker is used only for the Tailscale node and Tailscale Serve proxy.
+- Mac direct access uses the server's routeable public or LAN IP, not `127.0.0.1` and not the private WireGuard address.
+- iOS tailnet access proxies to the same host CodexUI process.
+- Light and dark themes both render the normal app bundle without Safari-only startup diagnostics.
+
+#### Rollback/Cleanup
+- Run `scripts/docker-tailscale-ios.sh down` to stop the Docker Tailscale container and the host CodexUI tmux session.
+- Stop any separately started public listener tmux session, such as `tmux kill-session -t codexui-public`, if it was created for direct Mac testing.
+
 ### Feature: Full upstream and Light-of-Hers rebase integration
 
 #### Prerequisites

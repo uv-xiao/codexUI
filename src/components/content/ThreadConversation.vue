@@ -1,5 +1,5 @@
 <template>
-  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu" @click.capture="onConversationClick">
+  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu" @click.capture="onConversationClick" @keydown.capture="onConversationKeydown">
     <p v-if="isLoading" class="conversation-loading">Loading messages...</p>
 
     <p
@@ -22,7 +22,7 @@
       </li>
       <template v-for="(message, messageIndex) in visibleMessages" :key="message.id">
       <li
-        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
+        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenGroupedToolCallIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
         class="conversation-item"
         :data-role="message.role"
         :data-message-type="message.messageType || ''"
@@ -72,15 +72,47 @@
                     :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                   >
                     <div class="cmd-output-inner">
-                      <div class="cmd-output-command">
-                        <span class="cmd-output-command-label">Command</span>
-                        <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                      <div class="cmd-output-section">
+                        <span class="cmd-output-section-label">Command</span>
+                        <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                          <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
+                            <span class="message-code-copy-icon" aria-hidden="true"></span>
+                          </button>
+                          <div class="cmd-code-box-lines">
+                            <div
+                              v-for="(line, lineIndex) in commandDisplayLines(cmd)"
+                              :key="`grouped-command-line-${cmd.id}-${lineIndex}`"
+                              class="cmd-code-box-line"
+                              :data-line-number="lineIndex + 1"
+                            >
+                              <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <pre
-                        class="cmd-output"
-                        :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                        v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
-                      ></pre>
+                      <div class="cmd-output-section">
+                        <span class="cmd-output-section-label">Output</span>
+                        <div
+                          class="cmd-code-box cmd-code-box-output"
+                          :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(cmd) }"
+                          tabindex="0"
+                          @keydown="onCodeBoxKeydown"
+                        >
+                          <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
+                            <span class="message-code-copy-icon" aria-hidden="true"></span>
+                          </button>
+                          <div class="cmd-code-box-lines">
+                            <div
+                              v-for="(line, lineIndex) in outputDisplayLines(cmd)"
+                              :key="`grouped-output-line-${cmd.id}-${lineIndex}`"
+                              class="cmd-code-box-line"
+                              :data-line-number="lineIndex + 1"
+                            >
+                              <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -108,17 +140,157 @@
                 :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
               >
                 <div class="cmd-output-inner">
-                  <div class="cmd-output-command">
-                    <span class="cmd-output-command-label">Command</span>
-                    <pre class="cmd-output-command-text" v-text="commandDisplayText(message)"></pre>
+                  <div class="cmd-output-section">
+                    <span class="cmd-output-section-label">Command</span>
+                    <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                      <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
+                        <span class="message-code-copy-icon" aria-hidden="true"></span>
+                      </button>
+                      <div class="cmd-code-box-lines">
+                        <div
+                          v-for="(line, lineIndex) in commandDisplayLines(message)"
+                          :key="`command-line-${message.id}-${lineIndex}`"
+                          class="cmd-code-box-line"
+                          :data-line-number="lineIndex + 1"
+                        >
+                          <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <pre
-                    class="cmd-output"
-                    :class="{ 'cmd-output-condensed': isCommandOutputCondensed(message) }"
-                    v-text="message.commandExecution?.aggregatedOutput || '(no output)'"
-                  ></pre>
+                  <div class="cmd-output-section">
+                    <span class="cmd-output-section-label">Output</span>
+                    <div
+                      class="cmd-code-box cmd-code-box-output"
+                      :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(message) }"
+                      tabindex="0"
+                      @keydown="onCodeBoxKeydown"
+                    >
+                      <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
+                        <span class="message-code-copy-icon" aria-hidden="true"></span>
+                      </button>
+                      <div class="cmd-code-box-lines">
+                        <div
+                          v-for="(line, lineIndex) in outputDisplayLines(message)"
+                          :key="`output-line-${message.id}-${lineIndex}`"
+                          class="cmd-code-box-line"
+                          :data-line-number="lineIndex + 1"
+                        >
+                          <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
+            </template>
+          </div>
+        </div>
+
+        <div v-else-if="isToolCallMessage(message)" class="message-row" data-role="system">
+          <div class="message-stack" data-role="system">
+            <button
+              v-if="getGroupedToolCallsForLatest(message).length > 0"
+              type="button"
+              class="cmd-row cmd-row-group cmd-compact"
+              :class="[toolCallStatusClass(message), { 'cmd-expanded': isToolCallGroupExpanded(message) }]"
+              @click="toggleToolCallGroup(message)"
+            >
+              <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallGroupExpanded(message) }">▶</span>
+              <span class="cmd-group-label">{{ toolCallGroupSummaryLabel(message) }}</span>
+              <span class="cmd-status">{{ toolCallGroupSummaryStatus(message) }}</span>
+            </button>
+            <div
+              v-if="getGroupedToolCallsForLatest(message).length > 0"
+              class="cmd-group-wrap"
+              :class="{ 'cmd-group-visible': isToolCallGroupExpanded(message) }"
+            >
+              <div class="cmd-group-inner">
+                <div
+                  v-for="call in getToolCallBlockForLatest(message)"
+                  :key="`grouped-tool-call-${call.id}`"
+                  class="worked-cmd-item"
+                >
+                  <button
+                    type="button"
+                    class="tool-call-row"
+                    :class="[toolCallStatusClass(call), { 'tool-call-expanded': isToolCallExpanded(call) }]"
+                    @click="toggleToolCallExpand(call)"
+                  >
+                    <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallExpanded(call) }">▶</span>
+                    <span class="tool-call-main">
+                      <span class="tool-call-title" :title="toolCallDisplayTitle(call)">{{ toolCallDisplayTitle(call) }}</span>
+                      <span v-if="toolCallMetaLabel(call)" class="tool-call-meta" :title="toolCallMetaLabel(call)">
+                        {{ toolCallMetaLabel(call) }}
+                      </span>
+                    </span>
+                    <span class="tool-call-status">{{ toolCallStatusLabel(call) }}</span>
+                  </button>
+                  <div class="tool-call-detail-wrap" :class="{ 'tool-call-detail-visible': isToolCallExpanded(call) }">
+                    <div class="tool-call-detail-inner">
+                      <div v-if="toolCallProgressText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Progress</span>
+                        <p class="tool-call-progress" v-text="toolCallProgressText(call)"></p>
+                      </div>
+                      <div v-if="toolCallInputText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Input</span>
+                        <pre class="tool-call-code-box" v-text="toolCallInputText(call)"></pre>
+                      </div>
+                      <div v-if="toolCallOutputText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Output</span>
+                        <pre class="tool-call-code-box" v-text="toolCallOutputText(call)"></pre>
+                      </div>
+                      <div v-if="toolCallErrorText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Error</span>
+                        <pre class="tool-call-code-box tool-call-code-box-error" v-text="toolCallErrorText(call)"></pre>
+                      </div>
+                      <div v-if="!hasToolCallDetails(call)" class="tool-call-section">
+                        <p class="tool-call-progress">No additional details.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <template v-else>
+            <button
+              type="button"
+              class="tool-call-row"
+              :class="[toolCallStatusClass(message), { 'tool-call-expanded': isToolCallExpanded(message) }]"
+              @click="toggleToolCallExpand(message)"
+            >
+              <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallExpanded(message) }">▶</span>
+              <span class="tool-call-main">
+                <span class="tool-call-title" :title="toolCallDisplayTitle(message)">{{ toolCallDisplayTitle(message) }}</span>
+                <span v-if="toolCallMetaLabel(message)" class="tool-call-meta" :title="toolCallMetaLabel(message)">
+                  {{ toolCallMetaLabel(message) }}
+                </span>
+              </span>
+              <span class="tool-call-status">{{ toolCallStatusLabel(message) }}</span>
+            </button>
+            <div class="tool-call-detail-wrap" :class="{ 'tool-call-detail-visible': isToolCallExpanded(message) }">
+              <div class="tool-call-detail-inner">
+                <div v-if="toolCallProgressText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Progress</span>
+                  <p class="tool-call-progress" v-text="toolCallProgressText(message)"></p>
+                </div>
+                <div v-if="toolCallInputText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Input</span>
+                  <pre class="tool-call-code-box" v-text="toolCallInputText(message)"></pre>
+                </div>
+                <div v-if="toolCallOutputText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Output</span>
+                  <pre class="tool-call-code-box" v-text="toolCallOutputText(message)"></pre>
+                </div>
+                <div v-if="toolCallErrorText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Error</span>
+                  <pre class="tool-call-code-box tool-call-code-box-error" v-text="toolCallErrorText(message)"></pre>
+                </div>
+                <div v-if="!hasToolCallDetails(message)" class="tool-call-section">
+                  <p class="tool-call-progress">No additional details.</p>
+                </div>
+              </div>
+            </div>
             </template>
           </div>
         </div>
@@ -257,24 +429,7 @@
                 </span>
               </div>
 
-              <div v-if="message.skills && message.skills.length > 0" class="message-skill-attachments">
-                <a
-                  v-for="skill in message.skills"
-                  :key="`${message.id}:${skill.path}`"
-                  class="message-skill-chip"
-                  :href="toBrowseUrl(skill.path)"
-                  :title="skill.path"
-                >
-                  <span class="message-skill-chip-prefix">Skill</span>
-                  <span class="message-skill-chip-name">{{ skill.name }}</span>
-                </a>
-              </div>
-
               <article v-if="message.text.length > 0" class="message-card" :data-role="message.role">
-                <div v-if="message.isAutomationRun" class="automation-message-label">
-                  <span>Sent via automation</span>
-                  <code v-if="message.automationDisplayName">{{ message.automationDisplayName }}</code>
-                </div>
                 <div v-if="message.messageType === 'worked'" class="worked-separator-wrap" aria-live="polite">
                   <button type="button" class="worked-separator" @click="toggleWorkedExpand(message)">
                     <span class="worked-separator-line" aria-hidden="true" />
@@ -309,15 +464,47 @@
                         :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                       >
                         <div class="cmd-output-inner">
-                          <div class="cmd-output-command">
-                            <span class="cmd-output-command-label">Command</span>
-                            <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                          <div class="cmd-output-section">
+                            <span class="cmd-output-section-label">Command</span>
+                            <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                              <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
+                                <span class="message-code-copy-icon" aria-hidden="true"></span>
+                              </button>
+                              <div class="cmd-code-box-lines">
+                                <div
+                                  v-for="(line, lineIndex) in commandDisplayLines(cmd)"
+                                  :key="`worked-command-line-${cmd.id}-${lineIndex}`"
+                                  class="cmd-code-box-line"
+                                  :data-line-number="lineIndex + 1"
+                                >
+                                  <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                          <pre
-                            class="cmd-output"
-                            :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                            v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
-                          ></pre>
+                          <div class="cmd-output-section">
+                            <span class="cmd-output-section-label">Output</span>
+                            <div
+                              class="cmd-code-box cmd-code-box-output"
+                              :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(cmd) }"
+                              tabindex="0"
+                              @keydown="onCodeBoxKeydown"
+                            >
+                              <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
+                                <span class="message-code-copy-icon" aria-hidden="true"></span>
+                              </button>
+                              <div class="cmd-code-box-lines">
+                                <div
+                                  v-for="(line, lineIndex) in outputDisplayLines(cmd)"
+                                  :key="`worked-output-line-${cmd.id}-${lineIndex}`"
+                                  class="cmd-code-box-line"
+                                  :data-line-number="lineIndex + 1"
+                                >
+                                  <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -331,7 +518,7 @@
                 <div
                   v-if="readPlanExplanation(message)"
                   class="plan-card-explanation plan-card-markdown"
-                  v-html="renderMarkdownContent(readPlanExplanation(message), { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                  v-html="renderProgressiveMarkdownContent(readPlanExplanation(message), 'plan', markdownRendererVersion)"
                 />
                   <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
                     <li
@@ -343,14 +530,14 @@
                       <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
                       <div
                         class="plan-step-text plan-card-markdown"
-                        v-html="renderMarkdownContent(step.step, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                        v-html="renderProgressiveMarkdownContent(step.step, 'plan', markdownRendererVersion)"
                       />
                     </li>
                   </ol>
                   <div
                     v-else
                     class="plan-card-markdown"
-                    v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                    v-html="renderProgressiveMarkdownContent(message.text, 'plan', markdownRendererVersion)"
                   />
                   <div v-if="showImplementPlanButton(message)" class="plan-card-actions">
                     <button
@@ -365,8 +552,8 @@
                 <div
                   v-else
                   class="message-text-flow message-markdown-body"
-                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion]"
-                  v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'message', highlightVersion: highlightCacheVersion }).html"
+                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownRendererVersion]"
+                  v-html="renderProgressiveMarkdownContent(message.text, 'message', markdownRendererVersion)"
                 ></div>
               </article>
 
@@ -502,6 +689,16 @@
         </div>
       </li>
       </template>
+      <li
+        v-if="isMobile && latestPendingRequest"
+        class="conversation-item conversation-item-request"
+      >
+        <ThreadPendingRequestPanel
+          :request="latestPendingRequest"
+          :request-count="pendingRequests.length"
+          @respond-server-request="forwardServerRequestReply"
+        />
+      </li>
       <li v-if="liveOverlay" class="conversation-item conversation-item-overlay">
         <div class="message-row">
           <div class="message-stack">
@@ -513,10 +710,7 @@
               >
                 {{ liveOverlay.reasoningText }}
               </p>
-              <div v-if="liveOverlay.errorText" class="live-overlay-error">
-                <span>{{ liveOverlay.errorText }}</span>
-                <a class="live-overlay-feedback" :href="feedbackMailto" @click="prepareLiveErrorFeedback($event, liveOverlay.errorText)">Send feedback</a>
-              </div>
+              <p v-if="liveOverlay.errorText" class="live-overlay-error">{{ liveOverlay.errorText }}</p>
             </article>
           </div>
         </div>
@@ -565,6 +759,49 @@
       >
         Edit file
       </button>
+    </div>
+
+    <div
+      v-if="isFileLinkPickerVisible"
+      ref="fileLinkPickerRef"
+      class="file-link-picker"
+      :style="fileLinkPickerStyle"
+      @click.stop
+    >
+      <div class="file-link-picker-search">
+        <IconTablerSearch class="file-link-picker-search-icon" />
+        <input
+          ref="fileLinkPickerInputRef"
+          v-model="fileLinkPickerQuery"
+          class="file-link-picker-input"
+          type="text"
+          aria-label="Search linked path"
+          @input="onFileLinkPickerQueryInput"
+          @keydown="onFileLinkPickerKeydown"
+        />
+      </div>
+      <div class="file-link-picker-results">
+        <template v-if="fileLinkPickerResults.length > 0">
+          <button
+            v-for="(result, index) in fileLinkPickerResults"
+            :key="result.absolutePath"
+            class="file-link-picker-result"
+            :class="{ 'is-active': index === fileLinkPickerHighlightedIndex }"
+            type="button"
+            @click="openFileLinkPickerResult(result)"
+          >
+            <IconTablerFolderOpen v-if="result.kind === 'directory'" class="file-link-picker-result-icon" />
+            <IconTablerFilePencil v-else class="file-link-picker-result-icon" />
+            <span class="file-link-picker-result-text">
+              <span class="file-link-picker-result-name">{{ getBasename(result.absolutePath) }}</span>
+              <span class="file-link-picker-result-path">{{ result.absolutePath }}</span>
+            </span>
+          </button>
+        </template>
+        <div v-else class="file-link-picker-empty">
+          {{ isFileLinkPickerSearching ? 'Searching paths…' : 'No matching paths' }}
+        </div>
+      </div>
     </div>
 
     <div v-if="activeDiffViewerChange" class="diff-viewer-backdrop" @click="closeDiffViewer">
@@ -687,25 +924,32 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest, UiServerRequestReply } from '../../types/codex'
+import { searchFileLinkPaths, type FileLinkSearchSuggestion } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
-import { clearMarkdownRendererCache, renderMarkdownContent } from './markdownRenderer'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
+import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
+import IconTablerSearch from '../icons/IconTablerSearch.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 
 type HighlightJsModule = (typeof import('highlight.js'))['default']
+type MarkdownRendererModule = typeof import('./markdownRenderer')
+
+const ThreadPendingRequestPanel = defineAsyncComponent(() => import('./ThreadPendingRequestPanel.vue'))
 
 const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
+const expandedToolCallIds = ref<Set<string>>(new Set())
+const expandedToolCallGroupIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
 const expandedResponseSourceIds = ref<Set<string>>(new Set())
@@ -718,18 +962,21 @@ const fileLinkContextMenuX = ref(0)
 const fileLinkContextMenuY = ref(0)
 const fileLinkContextBrowseUrl = ref('')
 const fileLinkContextEditUrl = ref('')
+const fileLinkPickerRef = ref<HTMLElement | null>(null)
+const fileLinkPickerInputRef = ref<HTMLInputElement | null>(null)
+const isFileLinkPickerVisible = ref(false)
+const isFileLinkPickerSearching = ref(false)
+const fileLinkPickerX = ref(0)
+const fileLinkPickerY = ref(0)
+const fileLinkPickerQuery = ref('')
+const fileLinkPickerLine = ref<number | null>(null)
+const fileLinkPickerEndLine = ref<number | null>(null)
+const fileLinkPickerResults = ref<FileLinkSearchSuggestion[]>([])
+const fileLinkPickerHighlightedIndex = ref(0)
+let fileLinkPickerSearchToken = 0
+let fileLinkPickerSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const { isMobile } = useMobile()
-const { buildFeedbackMailto, feedbackMailtoBase, recordVisibleFailure } = useFeedbackDiagnostics()
-const feedbackMailto = feedbackMailtoBase()
 const { t } = useUiLanguage()
-
-function prepareLiveErrorFeedback(event: MouseEvent, message: string): void {
-  recordVisibleFailure(message)
-  const target = event.currentTarget
-  if (target instanceof HTMLAnchorElement) {
-    target.href = buildFeedbackMailto()
-  }
-}
 
 function parsePlanFromMessageText(text: string): { explanation: string; steps: UiPlanStep[] } | null {
   const normalized = text.replace(/\r\n/g, '\n').trim()
@@ -782,9 +1029,160 @@ function isCommandMessage(message: UiMessage): boolean {
   return message.messageType === 'commandExecution' && !!message.commandExecution
 }
 
+function isToolCallMessage(message: UiMessage): boolean {
+  return message.messageType === 'toolCall' && !!message.toolCall
+}
+
+function toolCallDisplayTitle(message: UiMessage): string {
+  const toolCall = message.toolCall
+  if (!toolCall) return 'Tool call'
+  return toolCall.title || toolCall.name || 'Tool call'
+}
+
+function toolCallMetaLabel(message: UiMessage): string {
+  const meta = message.toolCall?.meta ?? []
+  return meta.filter((part) => part.trim().length > 0).join(' · ')
+}
+
+function toolCallStatusLabel(message: UiMessage): string {
+  switch (message.toolCall?.status) {
+    case 'inProgress':
+      return 'Running'
+    case 'completed':
+      return 'Done'
+    case 'failed':
+      return 'Failed'
+    default:
+      return ''
+  }
+}
+
+function toolCallStatusClass(message: UiMessage): string {
+  const status = message.toolCall?.status
+  if (status === 'inProgress') return 'tool-call-status-running'
+  if (status === 'failed') return 'tool-call-status-error'
+  return 'tool-call-status-ok'
+}
+
+function isToolCallExpanded(message: UiMessage): boolean {
+  return isToolCallMessage(message) && expandedToolCallIds.value.has(message.id)
+}
+
+function toggleToolCallExpand(message: UiMessage): void {
+  if (!isToolCallMessage(message)) return
+  const next = new Set(expandedToolCallIds.value)
+  if (next.has(message.id)) next.delete(message.id)
+  else next.add(message.id)
+  expandedToolCallIds.value = next
+}
+
+function toolCallProgressText(message: UiMessage): string {
+  return message.toolCall?.progress?.trim() ?? ''
+}
+
+function toolCallInputText(message: UiMessage): string {
+  return message.toolCall?.input?.trim() ?? ''
+}
+
+function toolCallOutputText(message: UiMessage): string {
+  return message.toolCall?.output?.trim() ?? ''
+}
+
+function toolCallErrorText(message: UiMessage): string {
+  return message.toolCall?.error?.trim() ?? ''
+}
+
+function hasToolCallDetails(message: UiMessage): boolean {
+  return Boolean(
+    toolCallProgressText(message) ||
+    toolCallInputText(message) ||
+    toolCallOutputText(message) ||
+    toolCallErrorText(message),
+  )
+}
+
 function commandDisplayText(message: UiMessage): string {
   const command = message.commandExecution?.command
   return typeof command === 'string' && command.length > 0 ? command : '(command)'
+}
+
+function commandDisplayLines(message: UiMessage): string[] {
+  const command = message.commandExecution?.command
+  if (typeof command !== 'string' || command.length === 0) return ['(command)']
+  return splitDisplayLines(command)
+}
+
+function outputDisplayLines(message: UiMessage): string[] {
+  const output = message.commandExecution?.aggregatedOutput
+  if (typeof output !== 'string' || output.length === 0) return ['(no output)']
+  return splitDisplayLines(output)
+}
+
+function splitDisplayLines(text: string): string[] {
+  return text.split(/\r\n|\r|\n/gu)
+}
+
+function onCodeBoxKeydown(event: KeyboardEvent): void {
+  if (event.key.toLowerCase() !== 'a') return
+  if (!event.ctrlKey && !event.metaKey) return
+  if (event.altKey) return
+
+  const target = event.currentTarget
+  if (!(target instanceof HTMLElement)) return
+  const lines = target.querySelector<HTMLElement>('.cmd-code-box-lines')
+  if (!lines) return
+
+  const selection = window.getSelection()
+  if (!selection) return
+
+  const range = document.createRange()
+  range.selectNodeContents(lines)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function selectCodeBlockContents(block: HTMLElement): boolean {
+  const code = block.querySelector<HTMLElement>('.message-code-pre code')
+  if (!code) return false
+
+  const selection = window.getSelection()
+  if (!selection) return false
+
+  const range = document.createRange()
+  range.selectNodeContents(code)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return true
+}
+
+function onCodeBlockSelectAllKeydown(event: KeyboardEvent, block: HTMLElement): void {
+  if (event.key.toLowerCase() !== 'a') return
+  if (!event.ctrlKey && !event.metaKey) return
+  if (event.altKey) return
+  if (!selectCodeBlockContents(block)) return
+
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function closestCodeBlockFromNode(node: Node | null): HTMLElement | null {
+  if (!node) return null
+  const element = node instanceof Element ? node : node.parentElement
+  const block = element?.closest('.message-code-block') ?? null
+  return block instanceof HTMLElement ? block : null
+}
+
+function findActiveCodeBlock(eventTarget: EventTarget | null): HTMLElement | null {
+  const targetBlock = eventTarget instanceof Node ? closestCodeBlockFromNode(eventTarget) : null
+  if (targetBlock) return targetBlock
+
+  const activeBlock = closestCodeBlockFromNode(document.activeElement)
+  if (activeBlock) return activeBlock
+
+  const selection = window.getSelection()
+  return closestCodeBlockFromNode(selection?.anchorNode ?? null)
 }
 
 function isPlanMessage(message: UiMessage): boolean {
@@ -915,6 +1313,36 @@ const hiddenGroupedCommandIds = computed(() => {
   return next
 })
 
+const groupedToolCallsByLatestId = computed<Record<string, UiMessage[]>>(() => {
+  const next: Record<string, UiMessage[]> = {}
+  for (let index = 0; index < props.messages.length;) {
+    const message = props.messages[index]
+    if (!(isToolCallMessage(message) && message.toolCall?.kind === 'cursor')) {
+      index += 1
+      continue
+    }
+    const block: UiMessage[] = []
+    while (index < props.messages.length && isToolCallMessage(props.messages[index]) && props.messages[index].toolCall?.kind === 'cursor') {
+      block.push(props.messages[index])
+      index += 1
+    }
+    if (block.length <= 1) continue
+    const latest = block[block.length - 1]
+    next[latest.id] = block.slice(0, -1)
+  }
+  return next
+})
+
+const hiddenGroupedToolCallIds = computed(() => {
+  const next = new Set<string>()
+  for (const toolCalls of Object.values(groupedToolCallsByLatestId.value)) {
+    for (const toolCall of toolCalls) {
+      next.add(toolCall.id)
+    }
+  }
+  return next
+})
+
 function readPlanExplanation(message: UiMessage): string {
   return readPlanData(message)?.explanation ?? ''
 }
@@ -1006,6 +1434,40 @@ function commandGroupSummaryLabel(message: UiMessage): string {
 
 function commandGroupSummaryStatus(message: UiMessage): string {
   return commandStatusLabel(message)
+}
+
+function getGroupedToolCallsForLatest(message: UiMessage): UiMessage[] {
+  return groupedToolCallsByLatestId.value[message.id] ?? []
+}
+
+function getToolCallBlockForLatest(message: UiMessage): UiMessage[] {
+  if (!isToolCallMessage(message)) return []
+  return [...getGroupedToolCallsForLatest(message), message]
+}
+
+function toggleToolCallGroup(message: UiMessage): void {
+  const grouped = getGroupedToolCallsForLatest(message)
+  if (grouped.length === 0) return
+  const next = new Set(expandedToolCallGroupIds.value)
+  if (next.has(message.id)) next.delete(message.id)
+  else next.add(message.id)
+  expandedToolCallGroupIds.value = next
+}
+
+function isToolCallGroupExpanded(message: UiMessage): boolean {
+  return expandedToolCallGroupIds.value.has(message.id)
+}
+
+function toolCallGroupSummaryLabel(message: UiMessage): string {
+  const calls = getToolCallBlockForLatest(message)
+  const count = calls.length
+  const latestTool = message.toolCall?.name?.trim() || message.toolCall?.title?.trim() || '(tool)'
+  const countLabel = count === 1 ? '1 tool call' : `${count} tool calls`
+  return `${countLabel} · latest: ${latestTool}`
+}
+
+function toolCallGroupSummaryStatus(message: UiMessage): string {
+  return toolCallStatusLabel(message)
 }
 
 function toggleWorkedExpand(message: UiMessage): void {
@@ -1118,8 +1580,12 @@ const emit = defineEmits<{
   forkThread: [payload: { threadId: string; turnIndex: number }]
   rollback: [payload: { turnId: string }]
   implementPlan: [payload: { turnId: string }]
-  respondServerRequest: [payload: { id: number; result?: unknown; error?: { code?: number; message: string } }]
+  respondServerRequest: [payload: UiServerRequestReply]
 }>()
+
+function forwardServerRequestReply(payload: UiServerRequestReply): void {
+  emit('respondServerRequest', payload)
+}
 
 const conversationListRef = ref<HTMLElement | null>(null)
 const bottomAnchorRef = ref<HTMLElement | null>(null)
@@ -1168,7 +1634,7 @@ type InlineSegment =
   | { kind: 'strikethrough'; value: string }
   | { kind: 'code'; value: string }
   | { kind: 'url'; value: string; href: string }
-  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string; line: number | null; endLine: number | null; inlineCode?: boolean }
+  | { kind: 'file'; value: string; path: string; displayPath: string; downloadName: string; line: number | null; endLine: number | null }
 type ParsedFileReference = {
   path: string
   line: number | null
@@ -1199,14 +1665,19 @@ let conversationScrollFrame = 0
 let bottomLockFrame = 0
 let bottomLockFramesLeft = 0
 let copiedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
+let copiedCodeBlockResetTimer: ReturnType<typeof setTimeout> | null = null
 let conversationScrollPromise: Promise<void> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
 const highlightCacheVersion = ref(0)
+const markdownRendererVersion = ref(0)
 const markdownImageFailureVersion = ref(0)
 const agentAvatarSrc = '/icons/agent-avatar.png'
 const userAvatarSrc = '/icons/user-avatar.png'
 let highlightJsLoader: Promise<void> | null = null
+let markdownRendererModule: MarkdownRendererModule | null = null
+let markdownRendererLoader: Promise<MarkdownRendererModule> | null = null
+let markdownRendererLoadScheduled = false
 const MESSAGE_BLOCK_CACHE_LIMIT = 300
 const INLINE_SEGMENT_CACHE_LIMIT = 1200
 const MARKDOWN_HTML_CACHE_LIMIT = 300
@@ -1250,6 +1721,10 @@ const isLoadingMore = ref(false)
 
 const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value))
 const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMorePersistedAbove === true)
+const latestPendingRequest = computed(() => {
+  const rows = props.pendingRequests
+  return rows.length > 0 ? rows[rows.length - 1] : null
+})
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
@@ -1270,6 +1745,40 @@ function ensureHighlightJsLoaded(): Promise<void> {
       })
   }
   return highlightJsLoader
+}
+
+function loadMarkdownRendererModule(): Promise<MarkdownRendererModule> {
+  if (markdownRendererModule) return Promise.resolve(markdownRendererModule)
+  if (!markdownRendererLoader) {
+    markdownRendererLoader = Promise.all([
+      import('katex/dist/katex.min.css'),
+      import('./markdownRenderer'),
+    ])
+      .then(([, module]) => {
+        markdownRendererModule = module
+        markdownHtmlCache.clear()
+        markdownRendererVersion.value += 1
+        return module
+      })
+      .finally(() => {
+        markdownRendererLoader = null
+      })
+  }
+  return markdownRendererLoader
+}
+
+function scheduleMarkdownRendererLoad(): void {
+  if (markdownRendererModule || markdownRendererLoader || markdownRendererLoadScheduled) return
+  markdownRendererLoadScheduled = true
+  if (typeof window === 'undefined') {
+    markdownRendererLoadScheduled = false
+    void loadMarkdownRendererModule().catch(() => {})
+    return
+  }
+  window.setTimeout(() => {
+    markdownRendererLoadScheduled = false
+    void loadMarkdownRendererModule().catch(() => {})
+  }, 0)
 }
 
 type ParsedToolQuestion = {
@@ -1351,6 +1860,7 @@ function normalizeFileUrlToPath(pathValue: string): string {
 
 function inferHomeFromCwd(cwd: string): string {
   const normalized = normalizePathSeparators(cwd)
+  if (normalized === '/root' || normalized.startsWith('/root/')) return '/root'
   const userMatch = normalized.match(/^\/Users\/([^/]+)/u)
   if (userMatch) return `/Users/${userMatch[1]}`
   const homeMatch = normalized.match(/^\/home\/([^/]+)/u)
@@ -1432,6 +1942,7 @@ function parseFileReference(value: string): ParsedFileReference | null {
   }
 
   pathValue = normalizeFileUrlToPath(pathValue)
+  pathValue = pathValue.replace(/[\\/]+$/u, '')
   if (!isFilePath(pathValue)) return null
   const normalizedRange = normalizeLineRange(line, endLine)
   return {
@@ -1439,16 +1950,6 @@ function parseFileReference(value: string): ParsedFileReference | null {
     line: normalizedRange?.startLine ?? null,
     endLine: normalizedRange?.endLine ?? null,
   }
-}
-
-function shouldLinkInlineCodeFileReference(ref: ParsedFileReference): boolean {
-  if (ref.line !== null) return true
-
-  const normalizedPath = normalizePathSeparators(ref.path)
-  if (/^(?:\/|[A-Za-z]:[\\/]|\.{1,2}\/|~\/)/u.test(normalizedPath)) return true
-
-  const baseName = getBasename(normalizedPath)
-  return /\.[A-Za-z0-9]{1,12}$/u.test(baseName)
 }
 
 function trimLinkWrappers(value: string): { core: string; leading: string; trailing: string } {
@@ -1478,6 +1979,17 @@ function trimLinkWrappers(value: string): { core: string; leading: string; trail
   }
 
   return { core, leading, trailing }
+}
+
+function shouldAutoLinkPlainTextFileReference(ref: ParsedFileReference): boolean {
+  if (ref.line !== null) return true
+
+  const normalizedPath = normalizePathSeparators(ref.path)
+  if (!normalizedPath.startsWith('/')) return true
+
+  const rest = normalizedPath.slice(1)
+  if (!rest || rest.includes('/')) return true
+  return /\.[A-Za-z0-9]{1,12}$/u.test(rest)
 }
 
 function countAsterisksBefore(value: string, endIndex: number, minIndex: number): number {
@@ -1544,14 +2056,6 @@ function parseMarkdownLinkToken(value: string): { label: string; target: string 
   const target = trimLinkWrappers(targetRaw).core.trim()
   if (!target) return null
   return { label, target }
-}
-
-function toLocalThreadUrl(value: string): string | null {
-  const match = value.trim().match(/^codex:\/\/threads\/([A-Za-z0-9-]+)$/u)
-  if (!match) return null
-  if (typeof window === 'undefined') return `/#/thread/${match[1]}`
-  const basePath = window.location.pathname.replace(/\/?$/u, '/')
-  return `${window.location.origin}${basePath}#/thread/${match[1]}`
 }
 
 function headingTag(level: number): string {
@@ -2164,6 +2668,89 @@ async function copyResponse(anchorMessageId: string): Promise<void> {
   }, 1800)
 }
 
+async function copyCodeBlock(button: HTMLButtonElement): Promise<void> {
+  const block = button.closest('.message-code-block')
+  if (!(block instanceof HTMLElement)) return
+
+  const code = block.querySelector<HTMLElement>('.message-code-pre code')
+  const content = code?.textContent ?? ''
+  if (!content) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(content)
+  }
+
+  if (!copied) return
+
+  const previousCopiedButton = conversationListRef.value?.querySelector<HTMLButtonElement>('.message-code-copy-button[data-copied="true"]')
+  if (previousCopiedButton && previousCopiedButton !== button) {
+    previousCopiedButton.dataset.copied = 'false'
+    previousCopiedButton.setAttribute('aria-label', 'Copy code')
+    previousCopiedButton.setAttribute('title', 'Copy code')
+  }
+
+  button.dataset.copied = 'true'
+  button.setAttribute('aria-label', 'Code copied')
+  button.setAttribute('title', 'Code copied')
+
+  if (copiedCodeBlockResetTimer) {
+    clearTimeout(copiedCodeBlockResetTimer)
+  }
+  copiedCodeBlockResetTimer = setTimeout(() => {
+    button.dataset.copied = 'false'
+    button.setAttribute('aria-label', 'Copy code')
+    button.setAttribute('title', 'Copy code')
+    copiedCodeBlockResetTimer = null
+  }, 1400)
+}
+
+async function copyCommandCodeBox(event: MouseEvent): Promise<void> {
+  const button = event.currentTarget
+  if (!(button instanceof HTMLButtonElement)) return
+
+  const box = button.closest('.cmd-code-box')
+  if (!(box instanceof HTMLElement)) return
+
+  const lines = Array.from(box.querySelectorAll<HTMLElement>('.cmd-code-box-line-code'))
+  const content = lines.map((line) => line.textContent ?? '').join('\n')
+  if (!content) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(content)
+  }
+
+  if (!copied) return
+
+  button.dataset.copied = 'true'
+  button.setAttribute('aria-label', 'Copied')
+  button.setAttribute('title', 'Copied')
+  setTimeout(() => {
+    button.dataset.copied = 'false'
+    button.setAttribute('aria-label', button.closest('.cmd-code-box-output') ? 'Copy output' : 'Copy command')
+    button.setAttribute('title', button.closest('.cmd-code-box-output') ? 'Copy output' : 'Copy command')
+  }, 1400)
+}
+
 function forkResponse(anchorMessageId: string): void {
   const turnIndex = forkableTurnIndexByAnchorId.value[anchorMessageId]
   if (typeof turnIndex !== 'number') return
@@ -2195,26 +2782,21 @@ function editMessage(messageId: string): void {
   emit('rollback', { turnId })
 }
 
-function splitPlainTextByLinks(text: string): InlineSegment[] {
+function splitPlainTextByLinks(text: string, options: { applyMarkdownMarkers?: boolean } = {}): InlineSegment[] {
   const segments: InlineSegment[] = []
-  const pattern = /codex:\/\/threads\/[A-Za-z0-9-]+|https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`/gu
+  const pattern = /codex:\/\/threads\/[A-Za-z0-9-]+|https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`|(?<![\p{L}\p{N}._@()-])(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+[\\/](?![A-Za-z0-9._@()-])|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+\.[A-Za-z0-9]{1,12}(?::\d+(?:-\d+)?(?::\d+)?)?(?:#L\d+(?:-L?\d+)?(?:C\d+)?)?/gu
   let cursor = 0
 
   for (const match of text.matchAll(pattern)) {
     if (typeof match.index !== 'number') continue
     const start = match.index
     const end = start + match[0].length
-    const asteriskWrapper = readAsteriskLinkWrapper(text, start, end, cursor, match[0])
-    const segmentStart = asteriskWrapper?.segmentStart ?? start
-    const segmentEnd = asteriskWrapper?.segmentEnd ?? end
 
-    if (segmentStart > cursor) {
-      segments.push({ kind: 'text', value: text.slice(cursor, segmentStart) })
+    if (start > cursor) {
+      segments.push({ kind: 'text', value: text.slice(cursor, start) })
     }
 
-    let token = asteriskWrapper?.tokenEndTrim
-      ? match[0].slice(0, -asteriskWrapper.tokenEndTrim)
-      : match[0]
+    let token = match[0]
     let trailingPunctuation = ''
     while (/[.,;:!?，。；：！？、]$/u.test(token)) {
       trailingPunctuation = token.slice(-1) + trailingPunctuation
@@ -2229,14 +2811,7 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
       segments.push({ kind: 'text', value: leading })
     }
 
-    const localThreadUrl = toLocalThreadUrl(token)
-
-    if (localThreadUrl) {
-      segments.push({ kind: 'url', value: localThreadUrl, href: localThreadUrl })
-      if (trailing) {
-        segments.push({ kind: 'text', value: trailing })
-      }
-    } else if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+    if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
       segments.push({ kind: 'bold', value: token.slice(2, -2) })
       if (trailing) {
         segments.push({ kind: 'text', value: trailing })
@@ -2248,12 +2823,12 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
       }
     } else {
       const ref = parseFileReference(token)
-      if (ref) {
+      if (ref && shouldAutoLinkPlainTextFileReference(ref)) {
         segments.push({
           kind: 'file',
           value: token,
           path: ref.path,
-          displayPath: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
+          displayPath: token,
           downloadName: getBasename(ref.path),
           line: ref.line,
           endLine: ref.endLine,
@@ -2266,14 +2841,14 @@ function splitPlainTextByLinks(text: string): InlineSegment[] {
       }
     }
 
-    cursor = segmentEnd
+    cursor = end
   }
 
   if (cursor < text.length) {
     segments.push({ kind: 'text', value: text.slice(cursor) })
   }
 
-  return applyInlineMarkdownMarkers(segments)
+  return options.applyMarkdownMarkers === false ? segments : applyInlineMarkdownMarkers(segments)
 }
 
 function applyDelimitedMarkersAcrossTextSegments(
@@ -2425,28 +3000,22 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
     const match = findNextMarkdownLink(text, scanFrom)
     if (!match) break
     const { start, end, token } = match
-    const asteriskWrapper = readAsteriskLinkWrapper(text, start, end, cursor, token)
-    const segmentStart = asteriskWrapper?.segmentStart ?? start
-    const segmentEnd = asteriskWrapper?.segmentEnd ?? end
 
-    if (segmentStart > cursor) {
-      segments.push(...splitPlainTextByLinks(text.slice(cursor, segmentStart)))
+    if (start > cursor) {
+      segments.push(...splitPlainTextByLinks(text.slice(cursor, start)))
     }
 
     const markdownToken = parseMarkdownLinkToken(token)
     if (!markdownToken) {
-      segments.push(...splitPlainTextByLinks(text.slice(segmentStart, segmentEnd)))
-      cursor = segmentEnd
-      scanFrom = segmentEnd
+      segments.push(...splitPlainTextByLinks(text.slice(start, end)))
+      cursor = end
+      scanFrom = end
       continue
     }
     const label = markdownToken.label
     const target = markdownToken.target
-    const localThreadUrl = toLocalThreadUrl(target)
 
-    if (localThreadUrl) {
-      segments.push({ kind: 'url', value: label || localThreadUrl, href: localThreadUrl })
-    } else if (/^https?:\/\//u.test(target)) {
+    if (/^https?:\/\//u.test(target)) {
       segments.push({ kind: 'url', value: label || target, href: target })
     } else {
       const ref = parseFileReference(target)
@@ -2465,8 +3034,8 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
       }
     }
 
-    cursor = segmentEnd
-    scanFrom = segmentEnd
+    cursor = end
+    scanFrom = end
   }
 
   if (cursor < text.length) {
@@ -2531,85 +3100,7 @@ function parseInlineSegmentsUncached(text: string): InlineSegment[] {
 
       const token = value.slice(cursor + openLength, closingStart)
       if (token.length > 0) {
-        const markdownLink = parseMarkdownLinkToken(token)
-        if (markdownLink) {
-          const localThreadUrl = toLocalThreadUrl(markdownLink.target)
-          if (localThreadUrl) {
-            segments.push({
-              kind: 'url',
-              value: markdownLink.label || localThreadUrl,
-              href: localThreadUrl,
-            })
-          } else if (/^https?:\/\//u.test(markdownLink.target)) {
-            segments.push({
-              kind: 'url',
-              value: markdownLink.label || markdownLink.target,
-              href: markdownLink.target,
-            })
-          } else {
-            const markdownFileReference = parseFileReference(markdownLink.target)
-            if (markdownFileReference) {
-              segments.push({
-                kind: 'file',
-                value: markdownLink.target,
-                path: markdownFileReference.path,
-                displayPath: markdownLink.label || markdownLink.target,
-                downloadName: getBasename(markdownFileReference.path),
-                line: markdownFileReference.line,
-                endLine: markdownFileReference.endLine,
-              })
-            } else {
-              segments.push({ kind: 'code', value: token })
-            }
-          }
-        } else {
-          const localThreadUrl = toLocalThreadUrl(token)
-          if (localThreadUrl) {
-            segments.push({
-              kind: 'url',
-              value: localThreadUrl,
-              href: localThreadUrl,
-            })
-          } else {
-            const fileReference = parseFileReference(token)
-            if (fileReference && shouldLinkInlineCodeFileReference(fileReference)) {
-              const displayPath = fileReferenceDisplayPath(fileReference.path, fileReference.line, fileReference.endLine)
-              segments.push({
-                kind: 'file',
-                value: token,
-                path: fileReference.path,
-                displayPath,
-                downloadName: getBasename(fileReference.path),
-                line: fileReference.line,
-                endLine: fileReference.endLine,
-                inlineCode: true,
-              })
-          } else if (/^https?:\/\/[^\s]+$/u.test(token)) {
-            segments.push({
-              kind: 'url',
-              value: token,
-              href: token,
-            })
-          } else {
-            if (fileReference) {
-              const displayPath = fileReference.line
-                ? `${fileReference.path}:${String(fileReference.line)}`
-                : fileReference.path
-              segments.push({
-                kind: 'file',
-                value: token,
-                path: fileReference.path,
-                displayPath,
-                downloadName: getBasename(fileReference.path),
-                line: fileReference.line,
-                endLine: fileReference.endLine,
-              })
-            } else {
-              segments.push({ kind: 'code', value: token })
-            }
-          }
-          }
-        }
+        segments.push({ kind: 'code', value: token })
       } else {
         segments.push({ kind: 'text', value: `${delimiter}${delimiter}` })
       }
@@ -2696,6 +3187,20 @@ const fileLinkContextMenuStyle = computed(() => ({
   top: `${String(fileLinkContextMenuY.value)}px`,
 }))
 
+const fileLinkPickerStyle = computed(() => ({
+  left: `${String(fileLinkPickerX.value)}px`,
+  top: `${String(fileLinkPickerY.value)}px`,
+}))
+
+function clampFloatingPanelPosition(x: number, y: number, width = 420, height = 320): { x: number; y: number } {
+  if (typeof window === 'undefined') return { x, y }
+  const padding = 12
+  return {
+    x: Math.max(padding, Math.min(x, Math.max(padding, window.innerWidth - width - padding))),
+    y: Math.max(padding, Math.min(y, Math.max(padding, window.innerHeight - height - padding))),
+  }
+}
+
 function toEditUrlFromBrowseHref(href: string): string {
   const normalizedHref = href.trim()
   if (!normalizedHref) return ''
@@ -2707,6 +3212,208 @@ function toEditUrlFromBrowseHref(href: string): string {
   } catch {
     return ''
   }
+}
+
+function parseLineRangeQuery(value: string): { line: number | null; endLine: number | null } {
+  const match = value.trim().match(/^(\d+)(?:-(\d+))?$/u)
+  if (!match) return { line: null, endLine: null }
+  const normalized = normalizeLineRange(Number(match[1]), Number(match[2] ?? match[1]))
+  return {
+    line: normalized?.startLine ?? null,
+    endLine: normalized?.endLine ?? null,
+  }
+}
+
+function hrefToLocalBrowsePath(href: string): { path: string; line: number | null; endLine: number | null } | null {
+  const normalizedHref = href.trim()
+  if (!normalizedHref) return null
+  try {
+    const resolved = new URL(normalizedHref, window.location.href)
+    if (!resolved.pathname.startsWith('/codex-local-browse')) return null
+    const rawPath = decodeURIComponent(resolved.pathname.slice('/codex-local-browse'.length) || '')
+    const lineRange = parseLineRangeQuery(resolved.searchParams.get('line') ?? '')
+    return {
+      path: rawPath,
+      line: lineRange.line,
+      endLine: lineRange.endLine,
+    }
+  } catch {
+    return null
+  }
+}
+
+function isAbsoluteFileLinkSourcePath(pathValue: string): boolean {
+  const normalized = normalizePathSeparators(normalizeFileUrlToPath(pathValue.trim()))
+  if (!normalized) return false
+  return normalized.startsWith('/') || normalized.startsWith('~/') || /^[A-Za-z]:\//u.test(normalized)
+}
+
+function sourcePathFromFileLinkAnchor(anchor: HTMLAnchorElement): { path: string; line: number | null; endLine: number | null } | null {
+  const title = (anchor.getAttribute('title') ?? '').trim()
+  if (title) {
+    const ref = parseFileReference(title)
+    if (ref) {
+      return {
+        path: ref.path,
+        line: ref.line,
+        endLine: ref.endLine,
+      }
+    }
+  }
+
+  const text = anchor.innerText.trim()
+  if (text) {
+    const ref = parseFileReference(text)
+    if (ref) {
+      return {
+        path: ref.path,
+        line: ref.line,
+        endLine: ref.endLine,
+      }
+    }
+  }
+
+  return hrefToLocalBrowsePath(anchor.getAttribute('href') ?? '')
+}
+
+function shouldOpenFileLinkDirectly(anchor: HTMLAnchorElement): boolean {
+  const source = sourcePathFromFileLinkAnchor(anchor)
+  return source ? isAbsoluteFileLinkSourcePath(source.path) : false
+}
+
+function normalizeFileLinkPickerQuery(value: string): string {
+  const ref = parseFileReference(value)
+  const pathValue = (ref?.path ?? value).trim()
+  return pathValue
+    .replace(/^file:\/\//u, '')
+    .replace(/[\\/]+$/u, '')
+    .replace(/^\.\//u, '')
+}
+
+function buildFileLinkPickerSearchQueries(value: string): string[] {
+  const normalized = normalizeFileLinkPickerQuery(value)
+  const candidates = [
+    normalized,
+    normalized.replace(/^~\//u, ''),
+    getBasename(normalized),
+  ]
+  const seen = new Set<string>()
+  const next: string[] = []
+  for (const candidate of candidates) {
+    const query = candidate.trim()
+    if (!query || seen.has(query)) continue
+    seen.add(query)
+    next.push(query)
+  }
+  return next
+}
+
+function closeFileLinkPicker(): void {
+  isFileLinkPickerVisible.value = false
+  isFileLinkPickerSearching.value = false
+  fileLinkPickerResults.value = []
+  fileLinkPickerHighlightedIndex.value = 0
+  fileLinkPickerSearchToken += 1
+  if (fileLinkPickerSearchDebounceTimer) {
+    clearTimeout(fileLinkPickerSearchDebounceTimer)
+    fileLinkPickerSearchDebounceTimer = null
+  }
+}
+
+function openFileLinkPicker(event: MouseEvent, anchor: HTMLAnchorElement): void {
+  const href = (anchor.getAttribute('href') ?? '').trim()
+  const source = sourcePathFromFileLinkAnchor(anchor)
+  if (!href || href === '#' || !source) return
+
+  closeFileLinkContextMenu()
+  const position = clampFloatingPanelPosition(event.clientX, event.clientY + 8)
+  fileLinkPickerX.value = position.x
+  fileLinkPickerY.value = position.y
+  fileLinkPickerQuery.value = normalizeFileLinkPickerQuery(source.path)
+  fileLinkPickerLine.value = source.line
+  fileLinkPickerEndLine.value = source.endLine
+  fileLinkPickerResults.value = []
+  fileLinkPickerHighlightedIndex.value = 0
+  isFileLinkPickerVisible.value = true
+  void nextTick(() => fileLinkPickerInputRef.value?.focus())
+  void queueFileLinkPickerSearch()
+}
+
+async function queueFileLinkPickerSearch(): Promise<void> {
+  if (!isFileLinkPickerVisible.value) return
+  const cwd = props.cwd.trim()
+  const queries = buildFileLinkPickerSearchQueries(fileLinkPickerQuery.value)
+  if (!cwd || queries.length === 0) {
+    fileLinkPickerResults.value = []
+    return
+  }
+  if (fileLinkPickerSearchDebounceTimer) {
+    clearTimeout(fileLinkPickerSearchDebounceTimer)
+  }
+  const token = ++fileLinkPickerSearchToken
+  isFileLinkPickerSearching.value = true
+  fileLinkPickerSearchDebounceTimer = setTimeout(async () => {
+    try {
+      let results: FileLinkSearchSuggestion[] = []
+      for (const query of queries) {
+        results = await searchFileLinkPaths(cwd, query, 30)
+        if (!isFileLinkPickerVisible.value || token !== fileLinkPickerSearchToken) return
+        if (results.length > 0) break
+      }
+      fileLinkPickerResults.value = results
+      fileLinkPickerHighlightedIndex.value = 0
+    } catch {
+      if (!isFileLinkPickerVisible.value || token !== fileLinkPickerSearchToken) return
+      fileLinkPickerResults.value = []
+    } finally {
+      if (isFileLinkPickerVisible.value && token === fileLinkPickerSearchToken) {
+        isFileLinkPickerSearching.value = false
+      }
+    }
+  }, 120)
+}
+
+function onFileLinkPickerQueryInput(): void {
+  void queueFileLinkPickerSearch()
+}
+
+function onFileLinkPickerKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeFileLinkPicker()
+    return
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    if (fileLinkPickerResults.value.length > 0) {
+      fileLinkPickerHighlightedIndex.value = (fileLinkPickerHighlightedIndex.value + 1) % fileLinkPickerResults.value.length
+    }
+    return
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    const count = fileLinkPickerResults.value.length
+    if (count > 0) {
+      fileLinkPickerHighlightedIndex.value = (fileLinkPickerHighlightedIndex.value + count - 1) % count
+    }
+    return
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    const selected = fileLinkPickerResults.value[fileLinkPickerHighlightedIndex.value]
+    if (selected) {
+      openFileLinkPickerResult(selected)
+    }
+  }
+}
+
+function openFileLinkPickerResult(result: FileLinkSearchSuggestion): void {
+  const line = result.kind === 'file' ? fileLinkPickerLine.value : null
+  const endLine = result.kind === 'file' ? fileLinkPickerEndLine.value : null
+  const href = toBrowseUrl(result.absolutePath, line, endLine)
+  closeFileLinkPicker()
+  if (!href || href === '#') return
+  window.open(href, '_blank', 'noopener,noreferrer')
 }
 
 function onConversationContextMenu(event: MouseEvent): void {
@@ -2722,6 +3429,7 @@ function onConversationContextMenu(event: MouseEvent): void {
   event.preventDefault()
   event.stopPropagation()
 
+  closeFileLinkPicker()
   fileLinkContextBrowseUrl.value = href
   fileLinkContextEditUrl.value = toEditUrlFromBrowseHref(href)
   fileLinkContextMenuX.value = event.clientX
@@ -2733,6 +3441,39 @@ function onConversationClick(event: MouseEvent): void {
   const target = event.target
   if (!(target instanceof Element)) return
 
+  if (target.closest('.file-link-picker')) return
+
+  const fileLinkAnchor = target.closest('a.message-file-link')
+  if (fileLinkAnchor instanceof HTMLAnchorElement) {
+    const href = (fileLinkAnchor.getAttribute('href') ?? '').trim()
+    if (href && href !== '#' && hrefToLocalBrowsePath(href)) {
+      if (shouldOpenFileLinkDirectly(fileLinkAnchor)) {
+        closeFileLinkPicker()
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      openFileLinkPicker(event, fileLinkAnchor)
+      return
+    }
+  } else if (isFileLinkPickerVisible.value) {
+    closeFileLinkPicker()
+  }
+
+  const codeCopyButton = target.closest('button.message-code-copy-button')
+  if (codeCopyButton instanceof HTMLButtonElement) {
+    event.preventDefault()
+    event.stopPropagation()
+    void copyCodeBlock(codeCopyButton)
+    return
+  }
+
+  const codeBlock = target.closest('.message-code-block')
+  if (codeBlock instanceof HTMLElement) {
+    codeBlock.focus({ preventScroll: true })
+    return
+  }
+
   const image = target.closest('img.message-markdown-image')
   if (!(image instanceof HTMLImageElement)) return
   if (image.closest('button.message-image-button')) return
@@ -2743,6 +3484,12 @@ function onConversationClick(event: MouseEvent): void {
   event.preventDefault()
   event.stopPropagation()
   openImageModal(src)
+}
+
+function onConversationKeydown(event: KeyboardEvent): void {
+  const block = findActiveCodeBlock(event.target)
+  if (!block) return
+  onCodeBlockSelectAllKeydown(event, block)
 }
 
 function closeFileLinkContextMenu(): void {
@@ -2785,24 +3532,41 @@ async function copyFileLinkContextLink(): Promise<void> {
 }
 
 function onWindowPointerDownForFileLinkContextMenu(event: PointerEvent): void {
-  if (!isFileLinkContextMenuVisible.value) return
-  const menu = fileLinkContextMenuRef.value
-  if (!menu) {
-    closeFileLinkContextMenu()
+  const target = event.target
+  if (isFileLinkContextMenuVisible.value) {
+    const menu = fileLinkContextMenuRef.value
+    if (!menu) {
+      closeFileLinkContextMenu()
+    } else if (!(target instanceof Node) || !menu.contains(target)) {
+      closeFileLinkContextMenu()
+    }
+  }
+
+  if (!isFileLinkPickerVisible.value) return
+  const picker = fileLinkPickerRef.value
+  if (!picker) {
+    closeFileLinkPicker()
     return
   }
-  const target = event.target
-  if (target instanceof Node && menu.contains(target)) return
-  closeFileLinkContextMenu()
+  if (target instanceof Node && picker.contains(target)) return
+  closeFileLinkPicker()
 }
 
 function onWindowBlurForFileLinkContextMenu(): void {
   closeFileLinkContextMenu()
+  closeFileLinkPicker()
 }
 
 function onWindowKeydownForFileLinkContextMenu(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
-  closeFileLinkContextMenu()
+  if (isFileLinkPickerVisible.value) {
+    event.preventDefault()
+    closeFileLinkPicker()
+  }
+  if (isFileLinkContextMenuVisible.value) {
+    event.preventDefault()
+    closeFileLinkContextMenu()
+  }
 }
 
 function normalizeMarkdownText(text: string): string {
@@ -3471,6 +4235,21 @@ function renderCachedHighlightedCodeAsHtml(language: string, value: string): str
   )
 }
 
+function renderInlineCodeAsHtml(value: string): string {
+  const content = splitPlainTextByLinks(value, { applyMarkdownMarkers: false })
+    .map((segment) => {
+      if (segment.kind === 'file') {
+        return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
+      }
+      if (segment.kind === 'url') {
+        return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`
+      }
+      return escapeHtml(segment.value)
+    })
+    .join('')
+  return `<code class="message-inline-code">${content}</code>`
+}
+
 function renderInlineSegmentsAsHtml(text: string): string {
   return getInlineSegments(text)
     .map((segment) => {
@@ -3487,15 +4266,12 @@ function renderInlineSegmentsAsHtml(text: string): string {
         return `<s class="message-strikethrough-text">${escapeHtml(segment.value)}</s>`
       }
       if (segment.kind === 'file') {
-        if (segment.inlineCode) {
-          return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}"><code class="message-inline-code">${escapeHtml(segment.displayPath)}</code></a>`
-        }
         return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
         return `<a class="message-file-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`
       }
-      return `<code class="message-inline-code">${escapeHtml(segment.value)}</code>`
+      return renderInlineCodeAsHtml(segment.value)
     })
     .join('')
 }
@@ -3515,6 +4291,23 @@ function renderListItemContentAsHtml(item: ListItem): string {
 function tableCellAlignmentStyle(alignment: TableAlignment): string {
   if (!alignment) return ''
   return ` style="text-align:${alignment}"`
+}
+
+function codeBlockCopyButtonHtml(): string {
+  return '<button class="message-code-copy-button" type="button" title="Copy code" aria-label="Copy code"><span class="message-code-copy-icon" aria-hidden="true"></span></button>'
+}
+
+function addCodeBlockCopyButtons(html: string): string {
+  if (!html.includes('message-code-block') || html.includes('message-code-copy-button')) return html
+  return html.replace(
+    /<div\b(?=[^>]*class="[^"]*\bmessage-code-block\b[^"]*")[^>]*>/gu,
+    (openingTag) => {
+      const focusableOpeningTag = /\stabindex=/u.test(openingTag)
+        ? openingTag
+        : openingTag.replace(/>$/u, ' tabindex="0">')
+      return `${focusableOpeningTag}${codeBlockCopyButtonHtml()}`
+    },
+  )
 }
 
 function renderMessageBlockAsHtml(block: MessageBlock): string {
@@ -3571,7 +4364,7 @@ function renderMessageBlockAsHtml(block: MessageBlock): string {
     const language = block.language
       ? `<div class="message-code-language">${escapeHtml(block.language)}</div>`
       : ''
-    return `<div class="message-code-block">${language}<pre class="message-code-pre"><code class="hljs">${renderCachedHighlightedCodeAsHtml(block.language, block.value)}</code></pre></div>`
+    return `<div class="message-code-block" tabindex="0">${codeBlockCopyButtonHtml()}${language}<pre class="message-code-pre"><code class="hljs">${renderCachedHighlightedCodeAsHtml(block.language, block.value)}</code></pre></div>`
   }
   if (block.kind === 'thematicBreak') {
     return '<hr class="message-divider">'
@@ -3601,6 +4394,22 @@ function renderMarkdownBlocksAsHtml(text: string): string {
     },
     MARKDOWN_HTML_CACHE_LIMIT,
   ).html
+}
+
+function renderProgressiveMarkdownContent(
+  text: string,
+  kind: 'message' | 'plan',
+  _rendererVersion = markdownRendererVersion.value,
+): string {
+  const renderer = markdownRendererModule
+  if (!renderer) {
+    return renderMarkdownBlocksAsHtml(text)
+  }
+  return addCodeBlockCopyButtons(renderer.renderMarkdownContent(text, {
+    cwd: props.cwd,
+    kind,
+    highlightVersion: highlightCacheVersion.value,
+  }).html)
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -4103,7 +4912,9 @@ async function loadMoreAbove(): Promise<void> {
       container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
     }
   } finally {
-    isLoadingMore.value = false
+    if (props.activeThreadId === threadIdAtStart) {
+      isLoadingMore.value = false
+    }
   }
 }
 
@@ -4174,7 +4985,7 @@ async function scheduleConversationScroll(): Promise<void> {
 }
 
 function clearRenderCaches(): void {
-  clearMarkdownRendererCache()
+  markdownRendererModule?.clearMarkdownRendererCache()
   messageBlockCache.clear()
   inlineSegmentCache.clear()
   markdownHtmlCache.clear()
@@ -4196,6 +5007,14 @@ watch(
     expandedCommandGroupIds.value = pruneCommandIdSet(
       expandedCommandGroupIds.value,
       new Set(Object.keys(groupedCommandsByLatestId.value)),
+    )
+    expandedToolCallIds.value = pruneCommandIdSet(
+      expandedToolCallIds.value,
+      new Set(next.filter((message) => isToolCallMessage(message)).map((message) => message.id)),
+    )
+    expandedToolCallGroupIds.value = pruneCommandIdSet(
+      expandedToolCallGroupIds.value,
+      new Set(Object.keys(groupedToolCallsByLatestId.value)),
     )
     expandedFileChangeSummaryIds.value = pruneCommandIdSet(
       expandedFileChangeSummaryIds.value,
@@ -4222,6 +5041,15 @@ watch(
 
     await scheduleConversationScroll()
   },
+)
+
+watch(
+  () => props.messages.length,
+  (messageCount) => {
+    if (messageCount === 0) return
+    scheduleMarkdownRendererLoad()
+  },
+  { immediate: true },
 )
 
 watch(
@@ -4279,6 +5107,8 @@ watch(
   async () => {
     autoFollowOutput.value = true
     modalImageUrl.value = ''
+    closeFileLinkPicker()
+    closeFileLinkContextMenu()
     isLoadingMore.value = false
     expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
@@ -4324,6 +5154,14 @@ onBeforeUnmount(() => {
   if (copiedMessageResetTimer) {
     clearTimeout(copiedMessageResetTimer)
     copiedMessageResetTimer = null
+  }
+  if (copiedCodeBlockResetTimer) {
+    clearTimeout(copiedCodeBlockResetTimer)
+    copiedCodeBlockResetTimer = null
+  }
+  if (fileLinkPickerSearchDebounceTimer) {
+    clearTimeout(fileLinkPickerSearchDebounceTimer)
+    fileLinkPickerSearchDebounceTimer = null
   }
   window.removeEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.removeEventListener('blur', onWindowBlurForFileLinkContextMenu)
@@ -4539,11 +5377,7 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-error {
-  @apply m-0 flex items-start justify-between gap-3 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
-}
-
-.live-overlay-feedback {
-  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold leading-none text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
+  @apply m-0 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
 }
 
 .message-body {
@@ -4634,24 +5468,8 @@ onBeforeUnmount(() => {
   @apply mb-2 flex flex-wrap gap-1.5;
 }
 
-.message-skill-attachments {
-  @apply mb-2 flex flex-wrap justify-end gap-1.5;
-}
-
 .message-file-chip {
   @apply inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-zinc-700;
-}
-
-.message-skill-chip {
-  @apply inline-flex max-w-full items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800 no-underline transition hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-900;
-}
-
-.message-skill-chip-prefix {
-  @apply shrink-0 font-medium text-emerald-700;
-}
-
-.message-skill-chip-name {
-  @apply min-w-0 max-w-48 truncate font-mono;
 }
 
 .message-file-chip-icon {
@@ -4800,7 +5618,11 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-code-block) {
-  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950/95 text-slate-100;
+  @apply overflow-hidden rounded-xl border;
+  position: relative;
+  border-color: var(--message-code-border, #d0d7de);
+  background: var(--message-code-bg, #f6f8fa);
+  color: var(--message-code-fg, #24292f);
   font-family: var(--conversation-code-font-family);
   font-weight: var(--conversation-code-font-weight);
   font-synthesis: none;
@@ -4809,14 +5631,16 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-code-language) {
-  @apply border-b border-slate-800 bg-slate-900/90 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400;
+  @apply border-b py-2 pl-3 pr-11 text-[11px] font-medium uppercase tracking-[0.08em];
+  border-color: var(--message-code-header-border, #d0d7de);
+  color: var(--message-code-header-fg, #57606a);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
 }
 
 .plan-card-markdown :deep(.message-code-pre) {
-  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-6;
+  @apply m-0 overflow-x-auto py-3 pl-3 pr-11 text-[13px] leading-6;
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
@@ -4832,7 +5656,7 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-inline-code-link) {
-  @apply inline-flex no-underline;
+  @apply inline text-[inherit] leading-[inherit] no-underline;
 }
 
 .plan-card-markdown :deep(.message-inline-code-link:hover),
@@ -4840,8 +5664,13 @@ onBeforeUnmount(() => {
   @apply no-underline;
 }
 
-.plan-card-markdown :deep(.message-inline-code-link:hover .message-inline-code) {
-  @apply border-sky-300 bg-sky-100 text-slate-900;
+.plan-card-markdown :deep(.message-inline-code .message-inline-code-link) {
+  @apply text-sky-700 text-[inherit] leading-[inherit] underline decoration-sky-300 underline-offset-2;
+}
+
+.plan-card-markdown :deep(.message-inline-code .message-inline-code-link:hover),
+.plan-card-markdown :deep(.message-inline-code .message-inline-code-link:focus-visible) {
+  @apply underline;
 }
 
 .plan-card-markdown :deep(.message-code-pre .hljs),
@@ -5044,7 +5873,11 @@ onBeforeUnmount(() => {
 }
 
 .message-code-block {
-  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  @apply overflow-hidden rounded-xl border;
+  position: relative;
+  border-color: var(--message-code-border, #d0d7de);
+  background: var(--message-code-bg, #f6f8fa);
+  color: var(--message-code-fg, #24292f);
   font-family: var(--conversation-code-font-family);
   font-weight: var(--conversation-code-font-weight);
   font-synthesis: none;
@@ -5053,21 +5886,24 @@ onBeforeUnmount(() => {
 }
 
 .message-code-language {
-  @apply border-b border-slate-800 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em] text-slate-400;
+  @apply border-b py-2 pl-3 pr-11 text-[11px] font-mono uppercase tracking-[0.08em];
+  border-color: var(--message-code-header-border, #d0d7de);
+  color: var(--message-code-header-fg, #57606a);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
 }
 
 .message-code-pre {
-  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed font-mono whitespace-pre;
+  @apply m-0 overflow-x-auto py-3 pl-3 pr-11 text-[13px] leading-relaxed font-mono whitespace-pre;
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
 }
 
 .message-code-pre :deep(.hljs) {
-  @apply block bg-transparent p-0 text-inherit;
+  @apply block bg-transparent p-0;
+  color: var(--message-code-fg, #24292f);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
@@ -5103,6 +5939,89 @@ onBeforeUnmount(() => {
   @apply block w-full rounded-md px-2 py-1.5 text-left text-xs text-zinc-700 hover:bg-zinc-100;
 }
 
+.file-link-picker {
+  @apply fixed z-50 flex w-[min(420px,calc(100vw-24px))] max-h-[min(320px,calc(100vh-24px))] flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl;
+}
+
+.file-link-picker-search {
+  @apply flex items-center gap-2 border-b border-zinc-200 px-2 py-2;
+}
+
+.file-link-picker-search-icon {
+  @apply h-4 w-4 shrink-0 text-zinc-400;
+}
+
+.file-link-picker-input {
+  @apply min-w-0 flex-1 border-0 bg-transparent p-0 text-xs text-zinc-800 outline-none placeholder:text-zinc-400;
+}
+
+.file-link-picker-results {
+  @apply min-h-0 overflow-y-auto p-1;
+}
+
+.file-link-picker-result {
+  @apply flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100;
+}
+
+.file-link-picker-result.is-active {
+  @apply bg-blue-50;
+}
+
+.file-link-picker-result-icon {
+  @apply h-4 w-4 shrink-0 text-zinc-500;
+}
+
+.file-link-picker-result-text {
+  @apply min-w-0 flex flex-col gap-0.5;
+}
+
+.file-link-picker-result-name {
+  @apply truncate text-xs font-medium text-zinc-800;
+}
+
+.file-link-picker-result-path {
+  @apply truncate text-[11px] text-zinc-500;
+}
+
+.file-link-picker-empty {
+  @apply px-2 py-3 text-xs text-zinc-500;
+}
+
+:global(:root.dark) .file-link-context-menu,
+:global(:root.dark) .file-link-picker {
+  @apply border-zinc-700 bg-zinc-900 shadow-black/40;
+}
+
+:global(:root.dark) .file-link-context-menu-item {
+  @apply text-zinc-200 hover:bg-zinc-800;
+}
+
+:global(:root.dark) .file-link-picker-search {
+  @apply border-zinc-700;
+}
+
+:global(:root.dark) .file-link-picker-input {
+  @apply text-zinc-100 placeholder:text-zinc-500;
+}
+
+:global(:root.dark) .file-link-picker-result {
+  @apply hover:bg-zinc-800;
+}
+
+:global(:root.dark) .file-link-picker-result.is-active {
+  @apply bg-blue-950/50;
+}
+
+:global(:root.dark) .file-link-picker-result-icon,
+:global(:root.dark) .file-link-picker-result-path,
+:global(:root.dark) .file-link-picker-empty {
+  @apply text-zinc-400;
+}
+
+:global(:root.dark) .file-link-picker-result-name {
+  @apply text-zinc-100;
+}
+
 .message-divider {
   @apply m-0 border-0 h-px bg-slate-300/80;
 }
@@ -5123,29 +6042,9 @@ onBeforeUnmount(() => {
   align-self: flex-end;
 }
 
-.automation-message-label {
-  @apply mb-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500;
-}
-
-.automation-message-label code {
-  @apply rounded-full bg-white/70 px-2 py-0.5 text-[10px] normal-case tracking-normal text-slate-600;
-}
-
 .message-card[data-role='assistant'],
 .message-card[data-role='system'] {
   @apply px-0 py-0 bg-transparent border-none rounded-none;
-}
-
-:global(.dark) .message-file-chip {
-  @apply border-zinc-700 bg-zinc-900 text-zinc-200;
-}
-
-:global(.dark) .message-skill-chip {
-  @apply border-emerald-800/70 bg-emerald-950/50 text-emerald-100;
-}
-
-:global(.dark) .message-skill-chip-prefix {
-  @apply text-emerald-300;
 }
 
 .conversation-item[data-message-type='worked'] .message-stack,
@@ -5302,24 +6201,152 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.cmd-output-command {
-  @apply flex flex-col gap-1 border-b border-white/10 px-3 py-2;
+.cmd-output-section {
+  @apply flex flex-col gap-1 border-b border-white/10 px-2 py-1.5;
 }
 
-.cmd-output-command-label {
+.cmd-output-section-label {
   @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400;
 }
 
-.cmd-output-command-text {
-  @apply m-0 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs font-mono text-zinc-100;
+.cmd-code-box {
+  @apply block max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-white/5 px-0 py-0 text-xs font-mono text-zinc-100 outline-none;
+  position: relative;
 }
 
-.cmd-output {
-  @apply m-0 px-3 py-2 text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words max-h-60 overflow-y-auto;
+.cmd-code-box-output {
+  @apply max-h-60;
 }
 
-.cmd-output.cmd-output-condensed {
+.cmd-code-box-output.cmd-code-box-condensed {
   max-height: 9rem;
+}
+
+.cmd-code-box:focus-visible {
+  @apply ring-2 ring-sky-400/60 ring-offset-0;
+}
+
+.cmd-code-box-lines {
+  @apply min-w-0;
+}
+
+.cmd-code-box-line {
+  @apply grid min-w-0 items-start gap-1.5 px-1.5 py-0.5;
+  grid-template-columns: minmax(1.25rem, max-content) minmax(0, 1fr);
+}
+
+.cmd-code-box-line::before {
+  content: attr(data-line-number);
+  @apply select-none pr-0.5 text-right text-[10px] leading-4 text-zinc-500;
+}
+
+.cmd-code-box-line-code {
+  @apply min-w-0 whitespace-pre-wrap break-words leading-4 text-zinc-100;
+}
+
+.tool-call-row {
+  @apply w-full min-w-0 flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-left transition hover:bg-indigo-100;
+}
+
+.tool-call-row.tool-call-expanded {
+  @apply rounded-b-none;
+}
+
+.tool-call-main {
+  @apply flex min-w-0 flex-1 flex-col gap-0.5;
+}
+
+.tool-call-title {
+  @apply min-w-0 truncate text-xs font-semibold text-indigo-950;
+}
+
+.tool-call-meta {
+  @apply min-w-0 truncate text-[11px] leading-4 text-indigo-700/80;
+}
+
+.tool-call-status {
+  @apply max-w-20 shrink-0 truncate text-right text-[11px] font-semibold;
+}
+
+.tool-call-status-running .tool-call-status {
+  @apply text-amber-600;
+}
+
+.tool-call-status-ok .tool-call-status {
+  @apply text-emerald-600;
+}
+
+.tool-call-status-error .tool-call-status {
+  @apply text-rose-600;
+}
+
+.tool-call-detail-wrap {
+  @apply rounded-b-lg bg-zinc-950;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms ease-out, border-color 220ms ease-out;
+  border: 1px solid transparent;
+  border-top: none;
+}
+
+.tool-call-detail-wrap.tool-call-detail-visible {
+  grid-template-rows: 1fr;
+  border-color: #c7d2fe;
+}
+
+.tool-call-detail-inner {
+  @apply min-h-0 overflow-hidden;
+}
+
+.tool-call-section {
+  @apply flex flex-col gap-1 border-b border-white/10 px-3 py-2;
+}
+
+.tool-call-section:last-child {
+  @apply border-b-0;
+}
+
+.tool-call-section-label {
+  @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400;
+}
+
+.tool-call-progress {
+  @apply m-0 whitespace-pre-wrap break-words text-xs leading-5 text-zinc-100;
+  overflow-wrap: anywhere;
+}
+
+.tool-call-code-box {
+  @apply m-0 max-h-64 overflow-auto rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs leading-5 text-zinc-100 whitespace-pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--conversation-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.tool-call-code-box-error {
+  @apply text-rose-100;
+}
+
+:global(:root.dark) .tool-call-row,
+:global(.dark) .tool-call-row {
+  @apply border-indigo-900/60 bg-indigo-950/40 hover:bg-indigo-950/60;
+}
+
+:global(:root.dark) .tool-call-title,
+:global(.dark) .tool-call-title {
+  @apply text-indigo-100;
+}
+
+:global(:root.dark) .tool-call-meta,
+:global(.dark) .tool-call-meta {
+  @apply text-indigo-200/70;
+}
+
+:global(:root.dark) .tool-call-detail-wrap.tool-call-detail-visible,
+:global(.dark) .tool-call-detail-wrap.tool-call-detail-visible {
+  border-color: rgb(49 46 129 / 0.7);
 }
 
 .file-change-summary-block {

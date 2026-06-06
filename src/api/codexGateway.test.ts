@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forkThread, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, getAvailableModelIds, getThreadDetail, getThreadGoal, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -98,6 +98,25 @@ describe('startThreadTurn collaboration mode payloads', () => {
       },
     })
   })
+
+  it('sends explicit model provider overrides on turn start', async () => {
+    const { requests } = mockRpcFetch()
+
+    await startThreadTurn('thread-1', 'use cursor now', [], 'gpt-5.5', 'xhigh', undefined, [], 'default', 'cursor')
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].method).toBe('turn/start')
+    expect(requests[0].params.modelProvider).toBe('cursor')
+    expect(requests[0].params.collaborationMode).toEqual({
+      mode: 'default',
+      settings: {
+        model: 'gpt-5.5',
+        reasoning_effort: 'xhigh',
+        developer_instructions: null,
+        model_provider: 'cursor',
+      },
+    })
+  })
 })
 
 describe('steerThreadTurn payloads', () => {
@@ -134,12 +153,78 @@ describe('steerThreadTurn payloads', () => {
   })
 })
 
+describe('thread goal payloads', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses app-server goal RPC methods', async () => {
+    const { requests } = mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/goal/get') {
+        return {
+          goal: null,
+        }
+      }
+      if (request.method === 'thread/goal/set') {
+        return {
+          goal: {
+            threadId: request.params.threadId,
+            objective: request.params.objective ?? 'Existing goal',
+            status: request.params.status ?? 'active',
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        }
+      }
+      if (request.method === 'thread/goal/clear') {
+        return {
+          cleared: true,
+        }
+      }
+      return {}
+    })
+
+    await expect(getThreadGoal('thread-1')).resolves.toBeNull()
+    await expect(setThreadGoal('thread-1', { objective: 'Ship goal support', status: 'active' })).resolves.toMatchObject({
+      threadId: 'thread-1',
+      objective: 'Ship goal support',
+      status: 'active',
+    })
+    await expect(setThreadGoal('thread-1', { status: 'paused' })).resolves.toMatchObject({
+      status: 'paused',
+    })
+    await expect(clearThreadGoal('thread-1')).resolves.toBe(true)
+
+    expect(requests).toEqual([
+      {
+        method: 'thread/goal/get',
+        params: { threadId: 'thread-1' },
+      },
+      {
+        method: 'thread/goal/set',
+        params: { threadId: 'thread-1', objective: 'Ship goal support', status: 'active' },
+      },
+      {
+        method: 'thread/goal/set',
+        params: { threadId: 'thread-1', status: 'paused' },
+      },
+      {
+        method: 'thread/goal/clear',
+        params: { threadId: 'thread-1' },
+      },
+    ])
+  })
+})
+
 describe('thread history persistence payloads', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('opts thread start, resume, and fork into extended history persistence', async () => {
+  it('opts thread start and fork into extended history persistence', async () => {
     const { requests } = mockRpcFetchWithResponder((request) => {
       if (request.method === 'thread/start') return emptyThreadResult('thread-started')
       if (request.method === 'thread/resume') return emptyThreadResult('thread-1')
@@ -156,23 +241,154 @@ describe('thread history persistence payloads', () => {
       'thread/resume',
       'thread/fork',
     ])
-    expect(requests.every((request) => request.params.persistExtendedHistory === true)).toBe(true)
+    expect(requests.map((request) => request.params.persistExtendedHistory)).toEqual([
+      undefined,
+      undefined,
+      true,
+    ])
   })
 
   it('passes explicit model provider overrides to thread lifecycle RPCs', async () => {
     const { requests } = mockRpcFetchWithResponder((request) => {
-      if (request.method === 'thread/start') return { ...emptyThreadResult('thread-started'), modelProvider: 'moon' }
-      if (request.method === 'thread/resume') return { ...emptyThreadResult('thread-1'), modelProvider: 'moon' }
-      if (request.method === 'thread/fork') return { ...emptyThreadResult('thread-forked'), modelProvider: 'moon' }
+      if (request.method === 'thread/start') return { ...emptyThreadResult('thread-started'), modelProvider: 'moon', reasoningEffort: 'high' }
+      if (request.method === 'thread/resume') return { ...emptyThreadResult('thread-1'), modelProvider: 'moon', reasoningEffort: 'low' }
+      if (request.method === 'thread/fork') return { ...emptyThreadResult('thread-forked'), modelProvider: 'moon', reasoningEffort: 'xhigh' }
       return {}
     })
 
-    await startThread('/tmp/project', 'glm-5.1', 'moon')
-    await resumeThread('thread-1', 'glm-5.1', 'moon')
-    await forkThread('thread-1', '/tmp/project', 'glm-5.1', 'moon')
+    const startedThread = await startThread('/tmp/project', 'glm-5.1', 'moon')
+    const resumedThread = await resumeThread('thread-1', 'glm-5.1', 'moon')
+    const forkedThread = await forkThread('thread-1', '/tmp/project', 'glm-5.1', 'moon')
 
     expect(requests.map((request) => request.params.modelProvider)).toEqual(['moon', 'moon', 'moon'])
     expect(requests.map((request) => request.params.model)).toEqual(['glm-5.1', 'glm-5.1', 'glm-5.1'])
+    expect([startedThread.reasoningEffort, resumedThread.reasoningEffort, forkedThread.reasoningEffort]).toEqual([
+      'high',
+      'low',
+      'xhigh',
+    ])
+  })
+
+  it('reads lifecycle model metadata from nested thread snapshots', async () => {
+    mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/resume') {
+        return {
+          thread: {
+            id: 'thread-1',
+            cwd: '/tmp/project',
+            preview: '',
+            turns: [],
+            createdAt: 0,
+            updatedAt: 0,
+            model: 'ark-code-latest',
+            modelProvider: 'moon',
+            reasoningEffort: 'xhigh',
+          },
+        }
+      }
+      return {}
+    })
+
+    const resumedThread = await resumeThread('thread-nested')
+
+    expect(resumedThread.model).toBe('ark-code-latest')
+    expect(resumedThread.modelProvider).toBe('moon')
+    expect(resumedThread.reasoningEffort).toBe('xhigh')
+  })
+})
+
+describe('thread queue state', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves queued model state through the queue state API', async () => {
+    const requests: Array<{ method: string, body: unknown }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as unknown : undefined
+      requests.push({ method, body })
+
+      return new Response(JSON.stringify({
+        data: {
+          'thread-1': [{
+            id: 'q-1',
+            text: 'follow up',
+            imageUrls: [],
+            skills: [],
+            fileAttachments: [],
+            collaborationMode: 'default',
+            model: 'ark-code-latest',
+            model_provider: 'moon',
+            reasoning_effort: 'xhigh',
+          }],
+        },
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+    }))
+
+    const state = await getThreadQueueState()
+    await setThreadQueueState(state)
+
+    expect(state['thread-1']?.[0]).toMatchObject({
+      model: 'ark-code-latest',
+      modelProvider: 'moon',
+      reasoningEffort: 'xhigh',
+    })
+    expect(requests[1]).toEqual({
+      method: 'PUT',
+      body: {
+        'thread-1': [{
+          id: 'q-1',
+          text: 'follow up',
+          imageUrls: [],
+          skills: [],
+          fileAttachments: [],
+          collaborationMode: 'default',
+          model: 'ark-code-latest',
+          modelProvider: 'moon',
+          reasoningEffort: 'xhigh',
+        }],
+      },
+    })
+  })
+})
+
+describe('provider model discovery', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses exclusive provider models without waiting for model/list when provider models are required', async () => {
+    const requests: Array<{ url: string; body?: unknown }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as unknown : undefined
+      requests.push({ url, body })
+
+      if (url.endsWith('/codex-api/provider-models')) {
+        return new Response(JSON.stringify({
+          data: ['ark-code-latest', 'deepseek-v4-pro'],
+          exclusive: true,
+          source: 'moon',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      throw new Error(`unexpected request: ${url}`)
+    }))
+
+    await expect(getAvailableModelIds({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })).resolves.toEqual(['ark-code-latest', 'deepseek-v4-pro'])
+    expect(requests).toEqual([{ url: '/codex-api/provider-models', body: undefined }])
   })
 })
 
@@ -203,6 +419,180 @@ describe('listDirectoryComposioConnectors', () => {
   })
 })
 
+describe('getAvailableModelIds', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses provider models without waiting for model/list when provider models are required', async () => {
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(String(input))
+      if (String(input) === '/codex-api/provider-models') {
+        return new Response(JSON.stringify({
+          data: ['big-pickle', 'deepseek-v4-flash-free'],
+          exclusive: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected request ${String(input)}`)
+    }))
+
+    await expect(getAvailableModelIds({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })).resolves.toEqual(['big-pickle', 'deepseek-v4-flash-free'])
+    expect(requests).toEqual(['/codex-api/provider-models'])
+  })
+
+  it('requests models for an explicit thread provider', async () => {
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(String(input))
+      if (String(input) === '/codex-api/provider-models?provider=opencode-zen') {
+        return new Response(JSON.stringify({
+          data: ['big-pickle', 'ring-2.6-1t-free'],
+          exclusive: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected request ${String(input)}`)
+    }))
+
+    await expect(getAvailableModelIds({
+      includeProviderModels: true,
+      requireProviderModels: true,
+      providerId: 'opencode-zen',
+    })).resolves.toEqual(['big-pickle', 'ring-2.6-1t-free'])
+    expect(requests).toEqual(['/codex-api/provider-models?provider=opencode-zen'])
+  })
+
+  it('falls back to model/list when provider models are optional and unavailable', async () => {
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(String(input))
+      if (String(input) === '/codex-api/provider-models') {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string }
+        : { method: '' }
+      expect(body.method).toBe('model/list')
+      return new Response(JSON.stringify({
+        result: {
+          data: [
+            { id: 'gpt-5.5' },
+            { model: 'gpt-5.4-mini' },
+          ],
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(getAvailableModelIds({
+      includeProviderModels: true,
+    })).resolves.toEqual(['gpt-5.5', 'gpt-5.4-mini'])
+    expect(requests).toEqual(['/codex-api/rpc', '/codex-api/provider-models'])
+  })
+})
+
+describe('getThreadDetail', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads modelProvider from nested thread payloads returned by thread/read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
+        : { method: '', params: {} }
+      expect(body.method).toBe('thread/read')
+      return new Response(JSON.stringify({
+        result: {
+          thread: {
+            id: body.params.threadId,
+            modelProvider: 'opencode_zen',
+            turns: [],
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(getThreadDetail('legacy-thread')).resolves.toMatchObject({
+      modelProvider: 'opencode_zen',
+    })
+  })
+})
+
+describe('resumeThread', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('coalesces repeated resume failures for the same thread', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
+        : { method: '', params: {} }
+      requests.push(body)
+      return new Response(JSON.stringify({ error: 'no rollout found for thread id missing-thread' }), {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    const results = await Promise.allSettled([
+      resumeThread('missing-thread'),
+      resumeThread('missing-thread'),
+    ])
+
+    expect(results.every((result) => result.status === 'rejected')).toBe(true)
+    expect(requests).toEqual([
+      { method: 'thread/resume', params: { threadId: 'missing-thread' } },
+    ])
+  })
+
+  it('evicts a stalled resume so later resume attempts are not pinned forever', async () => {
+    vi.useFakeTimers()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
+        : { method: '', params: {} }
+      requests.push(body)
+      return new Promise<Response>(() => undefined)
+    }))
+
+    const first = resumeThread('stalled-thread')
+    void resumeThread('stalled-thread')
+    expect(requests).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    const retried = resumeThread('stalled-thread')
+    expect(retried).not.toBe(first)
+    expect(requests).toEqual([
+      { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
+      { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
+    ])
+  })
+})
+
 describe('searchComposerFiles', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -226,6 +616,43 @@ describe('searchComposerFiles', () => {
     expect(results).toEqual([
       { path: 'src', kind: 'directory', isSymlink: false },
       { path: 'link.txt', kind: 'file', isSymlink: true },
+    ])
+  })
+})
+
+describe('searchFileLinkPaths', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves absolute path and root metadata from the server', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: [
+        {
+          path: 'src/App.vue',
+          absolutePath: '/tmp/project/src/App.vue',
+          root: '/tmp/project',
+          kind: 'file',
+          isSymlink: false,
+        },
+      ],
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })))
+
+    const results = await searchFileLinkPaths('/tmp/project', 'src/App.vue', 10)
+
+    expect(results).toEqual([
+      {
+        path: 'src/App.vue',
+        absolutePath: '/tmp/project/src/App.vue',
+        root: '/tmp/project',
+        kind: 'file',
+        isSymlink: false,
+      },
     ])
   })
 })

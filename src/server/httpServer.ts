@@ -5,8 +5,9 @@ import { existsSync } from 'node:fs'
 import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
+import { createExtensionRoutesMiddleware } from './extensionRoutes.js'
 import { createAuthSession } from './authMiddleware.js'
-import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseDirectory, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseDirectory, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
@@ -86,7 +87,10 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
   // 2. Bridge middleware for /codex-api/*
   app.use(bridge)
 
-  // 3. Serve local images referenced in markdown (desktop parity for absolute image paths)
+  // 3. Local extension registry and bridge endpoints.
+  app.use('/codex-api/extensions', createExtensionRoutesMiddleware())
+
+  // 4. Serve local images referenced in markdown (desktop parity for absolute image paths)
   app.get('/codex-local-image', (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const localPath = normalizeLocalImagePath(rawPath)
@@ -125,7 +129,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     })
   })
 
-  // 4. Serve local files inline for direct file open.
+  // 5. Serve local files inline for direct file open.
   app.get('/codex-local-file', (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const localPath = normalizeLocalPath(rawPath)
@@ -142,7 +146,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     })
   })
 
-  // 5. Return JSON directory listings for the integrated folder picker.
+  // 6. Return JSON directory listings for the integrated folder picker.
   app.get('/codex-local-directories', async (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const showHidden = typeof req.query.showHidden === 'string'
@@ -166,12 +170,13 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
   })
 
-  // 6. Serve local files by path to preserve relative asset loading for HTML.
+  // 7. Serve local files by path to preserve relative asset loading for HTML.
   app.get('/codex-local-browse/*path', async (req, res) => {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
     const newProjectName = typeof req.query.newProjectName === 'string' ? req.query.newProjectName : ''
     const lineRange = typeof req.query.line === 'string' ? req.query.line : ''
+    const rawMode = req.query.raw === '1' || req.query.raw === 'true'
     if (!localPath || !isAbsolute(localPath)) {
       res.status(400).json({ error: 'Expected absolute local file path.' })
       return
@@ -186,7 +191,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
         return
       }
 
-      if (await isTextEditableFile(localPath)) {
+      if (!rawMode && await isTextEditableFile(localPath)) {
         res.redirect(302, toEditHref(localPath, newProjectName, lineRange))
         return
       }
@@ -210,15 +215,10 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
 
     const record = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : null
     const name = typeof record?.name === 'string' ? record.name : ''
-    const isDirectory = typeof record?.type === 'string' ? record.type === 'directory' : false
+    const type = record?.type === 'directory' ? 'directory' : 'file'
 
     try {
-      let createdPath: string
-      if (isDirectory) {
-        createdPath = await createLocalBrowseDirectory(localPath, name)
-      } else {
-        createdPath = await createLocalBrowseFile(localPath, name)
-      }
+      const createdPath = await createLocalBrowseEntry(localPath, name, type)
       res.status(201).json({ data: { path: createdPath } })
     } catch (error) {
       const mutationError = error instanceof LocalBrowseMutationError ? error : null
@@ -235,12 +235,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
 
     try {
-      // Try file first, then directory
-      try {
-        await deleteLocalBrowseFile(localPath)
-      } catch (fileError) {
-        await deleteLocalBrowseDirectory(localPath)
-      }
+      await deleteLocalBrowseEntry(localPath)
       res.status(200).json({ ok: true })
     } catch (error) {
       const mutationError = error instanceof LocalBrowseMutationError ? error : null
@@ -248,7 +243,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
   })
 
-  // 7. Edit text-like local files.
+  // 8. Edit text-like local files.
   app.get('/codex-local-edit/*path', async (req, res) => {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
@@ -312,12 +307,12 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
 
   const hasFrontendAssets = existsSync(spaEntryFile)
 
-  // 8. Static files from Vue build
+  // 9. Static files from Vue build
   if (hasFrontendAssets) {
     app.use(express.static(distDir))
   }
 
-  // 9. SPA fallback
+  // 10. SPA fallback
   app.use((_req, res) => {
     if (!hasFrontendAssets) {
       res

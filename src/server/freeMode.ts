@@ -97,10 +97,15 @@ export function getFreeKeyCount(): number {
 
 export const FREE_MODE_PROVIDER_ID = 'openrouter-free'
 export const FREE_MODE_BASE_URL = 'https://openrouter.ai/api/v1'
-export const FREE_MODE_STATE_FILE = 'webui-free-mode.json'
+const FREE_MODE_RUNTIME_PROVIDER_ID = 'openrouter_free'
 export const MOONBRIDGE_PROVIDER_ID = 'moon'
 export const MOONBRIDGE_PROVIDER_NAME = 'Moon Bridge'
 export const MOONBRIDGE_MODEL_CATALOG_FILE = 'models_catalog.json'
+export const ARK_PROVIDER_ID = 'ark'
+export const ARK_PROVIDER_NAME = 'Ark Coding Plan'
+export const ARK_MODEL_CATALOG_FILE = 'models_catalog.json'
+export const CURSOR_PROVIDER_ID = 'cursor'
+export const CURSOR_MODEL_CATALOG_FILE = 'models_catalog.json'
 
 export type MoonBridgeModelMetadata = {
   id: string
@@ -160,20 +165,26 @@ export function refreshFreeModelsInBackground(): void {
 
 export const FREE_MODE_DEFAULT_MODEL = 'openrouter/free'
 
-export function createDefaultFreeModeState(): FreeModeState {
-  return {
-    enabled: false,
-    apiKey: null,
-    model: FREE_MODE_DEFAULT_MODEL,
-  }
-}
+export const FREE_MODE_STATE_FILE = 'webui-custom-providers.json'
 
 export const CUSTOM_PROVIDER_ID = 'custom-endpoint'
 export const OPENCODE_ZEN_PROVIDER_ID = 'opencode-zen'
+const CUSTOM_RUNTIME_PROVIDER_ID = 'custom_endpoint'
+const OPENCODE_ZEN_RUNTIME_PROVIDER_ID = 'opencode_zen'
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1'
 export const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
 
 function getMoonBridgeDataHomeDir(): string {
+  const explicit = process.env.XDG_DATA_HOME?.trim()
+  return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
+}
+
+function getCursorDataHomeDir(): string {
+  const explicit = process.env.XDG_DATA_HOME?.trim()
+  return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
+}
+
+function getArkDataHomeDir(): string {
   const explicit = process.env.XDG_DATA_HOME?.trim()
   return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
 }
@@ -183,6 +194,20 @@ export function getMoonBridgeModelCatalogPath(): string {
     || process.env.CODEX_MOON_MODEL_CATALOG?.trim()
   if (explicit && explicit.length > 0) return explicit
   return join(getMoonBridgeDataHomeDir(), 'my-agent-configs', 'moonbridge', 'codex', MOONBRIDGE_MODEL_CATALOG_FILE)
+}
+
+export function getCursorModelCatalogPath(): string {
+  const explicit = process.env.CODEXUI_CURSOR_MODEL_CATALOG?.trim()
+    || process.env.CODEX_CURSOR_MODEL_CATALOG?.trim()
+  if (explicit && explicit.length > 0) return explicit
+  return join(getCursorDataHomeDir(), 'my-agent-configs', 'cursor', 'codex', CURSOR_MODEL_CATALOG_FILE)
+}
+
+export function getArkModelCatalogPath(): string {
+  const explicit = process.env.CODEXUI_ARK_MODEL_CATALOG?.trim()
+    || process.env.CODEX_ARK_MODEL_CATALOG?.trim()
+  if (explicit && explicit.length > 0) return explicit
+  return join(getArkDataHomeDir(), 'my-agent-configs', 'ark', 'codex', ARK_MODEL_CATALOG_FILE)
 }
 
 function readMoonBridgeModelCatalogRows(value: unknown): unknown[] {
@@ -247,6 +272,109 @@ export function getMoonBridgeModels(): string[] {
   return getMoonBridgeModelMetadata().map((model) => model.id)
 }
 
+export function getArkModelMetadata(): MoonBridgeModelMetadata[] {
+  try {
+    const raw = JSON.parse(readFileSync(getArkModelCatalogPath(), 'utf8')) as unknown
+    const rows = readMoonBridgeModelCatalogRows(raw)
+    const models: MoonBridgeModelMetadata[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+      const record = row as Record<string, unknown>
+      const id = readMoonBridgeModelId(record)
+      if (!id || models.some((model) => model.id === id)) continue
+      models.push({
+        id,
+        contextWindow: readMoonBridgeTokenCount(
+          record.context_window
+            ?? record.contextWindow
+            ?? record.max_context_window
+            ?? record.maxContextWindow,
+        ),
+      })
+    }
+    return models
+  } catch {
+    return []
+  }
+}
+
+export function getArkModels(): string[] {
+  return getArkModelMetadata().map((model) => model.id)
+}
+
+export function getCursorModelMetadata(): MoonBridgeModelMetadata[] {
+  try {
+    const raw = JSON.parse(readFileSync(getCursorModelCatalogPath(), 'utf8')) as unknown
+    const rows = readMoonBridgeModelCatalogRows(raw)
+    const models: MoonBridgeModelMetadata[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+      const record = row as Record<string, unknown>
+      const id = readMoonBridgeModelId(record)
+      if (!id || models.some((model) => model.id === id)) continue
+      models.push({
+        id,
+        contextWindow: readMoonBridgeTokenCount(
+          record.context_window
+            ?? record.contextWindow
+            ?? record.max_context_window
+            ?? record.maxContextWindow,
+        ),
+      })
+    }
+    return models
+  } catch {
+    return []
+  }
+}
+
+export function getCursorModels(): string[] {
+  return getCursorModelMetadata().map((model) => model.id)
+}
+
+export const CURSOR_FALLBACK_MODEL = 'gpt-5.5-medium'
+export const ARK_FALLBACK_MODEL = 'doubao-seed-2-0-code-preview-260215'
+
+export function getCursorModelSelection(candidate: string | null | undefined): { models: string[]; currentModel: string } {
+  const catalogModels = getCursorModels()
+  const trimmedCandidate = candidate?.trim() ?? ''
+  const fallbackModel = catalogModels[0] ?? CURSOR_FALLBACK_MODEL
+  const hasValidCatalogCandidate = trimmedCandidate.length > 0 && catalogModels.includes(trimmedCandidate)
+  const hasUsableUncatalogedCandidate = catalogModels.length === 0
+    && trimmedCandidate.length > 0
+    && trimmedCandidate !== FREE_MODE_DEFAULT_MODEL
+
+  const currentModel = hasValidCatalogCandidate || hasUsableUncatalogedCandidate
+    ? trimmedCandidate
+    : fallbackModel
+  const baseModels = catalogModels.length > 0 ? catalogModels : [currentModel]
+  const models = baseModels.includes(currentModel)
+    ? [currentModel, ...baseModels.filter((model) => model !== currentModel)]
+    : [currentModel, ...baseModels]
+
+  return { models, currentModel }
+}
+
+export function getArkModelSelection(candidate: string | null | undefined): { models: string[]; currentModel: string } {
+  const catalogModels = getArkModels()
+  const trimmedCandidate = candidate?.trim() ?? ''
+  const fallbackModel = catalogModels[0] ?? ARK_FALLBACK_MODEL
+  const hasValidCatalogCandidate = trimmedCandidate.length > 0 && catalogModels.includes(trimmedCandidate)
+  const hasUsableUncatalogedCandidate = catalogModels.length === 0
+    && trimmedCandidate.length > 0
+    && trimmedCandidate !== FREE_MODE_DEFAULT_MODEL
+
+  const currentModel = hasValidCatalogCandidate || hasUsableUncatalogedCandidate
+    ? trimmedCandidate
+    : fallbackModel
+  const baseModels = catalogModels.length > 0 ? catalogModels : [currentModel]
+  const models = baseModels.includes(currentModel)
+    ? [currentModel, ...baseModels.filter((model) => model !== currentModel)]
+    : [currentModel, ...baseModels]
+
+  return { models, currentModel }
+}
+
 export type WireApi = 'responses' | 'chat'
 
 export interface FreeModeState {
@@ -254,10 +382,41 @@ export interface FreeModeState {
   apiKey: string | null
   model: string
   customKey?: boolean
-  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon'
+  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'ark' | 'cursor'
   customBaseUrl?: string
   wireApi?: WireApi
   providerKeys?: Record<string, string>
+}
+
+export function normalizeFreeModeState(state: FreeModeState | null): FreeModeState | null {
+  if (!state) return null
+  if (state.provider === CURSOR_PROVIDER_ID) {
+    const cursorSelection = getCursorModelSelection(state.model)
+    return {
+      ...state,
+      enabled: true,
+      model: cursorSelection.currentModel,
+      wireApi: undefined,
+    }
+  }
+  if (state.provider === ARK_PROVIDER_ID) {
+    const arkSelection = getArkModelSelection(state.model)
+    return {
+      ...state,
+      enabled: true,
+      model: arkSelection.currentModel,
+      wireApi: undefined,
+    }
+  }
+  return state
+}
+
+export function createDefaultFreeModeState(): FreeModeState {
+  return {
+    enabled: false,
+    apiKey: null,
+    model: FREE_MODE_DEFAULT_MODEL,
+  }
 }
 
 export function createDefaultOpenRouterFreeModeState(): FreeModeState | null {
@@ -295,6 +454,25 @@ export function shouldCreateDefaultFreeModeStateForMissingAuth(
   return current == null && !hasUsableCodexAuth
 }
 
+export function shouldSuppressCommunityFreeModeForCodexAuth(
+  current: FreeModeState | null,
+  hasUsableCodexAuth: boolean,
+): boolean {
+  if (!hasUsableCodexAuth || !current?.enabled) return false
+  if (current.provider === 'custom') return false
+  if (current.customKey === true) return false
+  if (current.provider === 'opencode-zen' && current.apiKey?.trim()) return false
+  return current.provider === 'openrouter' || current.provider === 'opencode-zen' || !current.provider
+}
+
+export function shouldMarkOpenRouterKeyAsCustom(
+  current: FreeModeState | null,
+  explicitApiKey: string,
+): boolean {
+  if (explicitApiKey.trim().length > 0) return true
+  return current?.provider === 'openrouter' && current.customKey === true
+}
+
 export function getFreeModeEnvVars(state: FreeModeState): Record<string, string> {
   if (!state.enabled) return {}
 
@@ -309,60 +487,78 @@ export function getFreeModeEnvVars(state: FreeModeState): Record<string, string>
   return {}
 }
 
+export function filterOpenCodeZenModelsForAuthState(modelIds: string[], apiKey: string | null | undefined): string[] {
+  if (apiKey?.trim()) return modelIds
+  return modelIds.filter((id) => id === OPENCODE_ZEN_DEFAULT_MODEL || id.endsWith('-free'))
+}
+
+function getOpenCodeZenProviderConfigArgs(serverPort?: number): string[] {
+  const providerConfigKey = `model_providers.${OPENCODE_ZEN_RUNTIME_PROVIDER_ID}`
+  const baseUrl = serverPort
+    ? `http://127.0.0.1:${serverPort}/codex-api/zen-proxy/v1`
+    : OPENCODE_ZEN_BASE_URL
+  const authArgs: string[] = serverPort
+    ? ['-c', `${providerConfigKey}.experimental_bearer_token="zen-proxy-token"`]
+    : ['-c', `${providerConfigKey}.env_key="OPENCODE_ZEN_API_KEY"`]
+
+  return [
+    '-c', `${providerConfigKey}.name="OpenCode Zen"`,
+    '-c', `${providerConfigKey}.base_url="${baseUrl}"`,
+    '-c', `${providerConfigKey}.wire_api="responses"`,
+    ...authArgs,
+  ]
+}
+
+export function getProviderCompatibilityConfigArgs(serverPort?: number): string[] {
+  return getOpenCodeZenProviderConfigArgs(serverPort)
+}
+
 export function getFreeModeConfigArgs(state: FreeModeState, serverPort?: number): string[] {
   if (!state.enabled) return []
 
   if (state.provider === 'opencode-zen') {
     const model = state.model?.trim() || OPENCODE_ZEN_DEFAULT_MODEL
-    const baseUrl = serverPort
-      ? `http://127.0.0.1:${serverPort}/codex-api/zen-proxy/v1`
-      : OPENCODE_ZEN_BASE_URL
-    const wireApi = serverPort ? 'responses' : (state.wireApi || 'chat')
-    const authArgs: string[] = serverPort
-      ? ['-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.experimental_bearer_token="zen-proxy-token"`]
-      : ['-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.env_key="OPENCODE_ZEN_API_KEY"`]
     return [
       '-c', `model="${model}"`,
-      '-c', `model_provider="${OPENCODE_ZEN_PROVIDER_ID}"`,
-      '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.name="OpenCode Zen"`,
-      '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.base_url="${baseUrl}"`,
-      '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.wire_api="${wireApi}"`,
-      ...authArgs,
+      '-c', `model_provider="${OPENCODE_ZEN_RUNTIME_PROVIDER_ID}"`,
+      ...getOpenCodeZenProviderConfigArgs(serverPort),
     ]
   }
 
   if (state.provider === 'custom' && state.customBaseUrl) {
+    const providerConfigKey = `model_providers.${CUSTOM_RUNTIME_PROVIDER_ID}`
     const baseUrl = serverPort
       ? `http://127.0.0.1:${serverPort}/codex-api/custom-proxy/v1`
       : state.customBaseUrl
     const wireApi = serverPort ? 'responses' : (state.wireApi || 'responses')
     const authArgs: string[] = serverPort
-      ? ['-c', `model_providers.${CUSTOM_PROVIDER_ID}.experimental_bearer_token="custom-proxy-token"`]
-      : ['-c', `model_providers.${CUSTOM_PROVIDER_ID}.env_key="CUSTOM_ENDPOINT_API_KEY"`]
+      ? ['-c', `${providerConfigKey}.experimental_bearer_token="custom-proxy-token"`]
+      : ['-c', `${providerConfigKey}.env_key="CUSTOM_ENDPOINT_API_KEY"`]
     const modelArgs: string[] = state.model?.trim()
       ? ['-c', `model="${state.model.trim()}"`]
       : []
     return [
       ...modelArgs,
-      '-c', `model_provider="${CUSTOM_PROVIDER_ID}"`,
-      '-c', `model_providers.${CUSTOM_PROVIDER_ID}.name="Custom Endpoint"`,
-      '-c', `model_providers.${CUSTOM_PROVIDER_ID}.base_url="${baseUrl}"`,
-      '-c', `model_providers.${CUSTOM_PROVIDER_ID}.wire_api="${wireApi}"`,
+      '-c', `model_provider="${CUSTOM_RUNTIME_PROVIDER_ID}"`,
+      '-c', `${providerConfigKey}.name="Custom Endpoint"`,
+      '-c', `${providerConfigKey}.base_url="${baseUrl}"`,
+      '-c', `${providerConfigKey}.wire_api="${wireApi}"`,
       ...authArgs,
     ]
   }
 
   if (!state.apiKey) return []
+  const providerConfigKey = `model_providers.${FREE_MODE_RUNTIME_PROVIDER_ID}`
   const baseUrl = serverPort
     ? `http://127.0.0.1:${serverPort}/codex-api/openrouter-proxy/v1`
     : FREE_MODE_BASE_URL
   const bearerToken = serverPort ? 'openrouter-proxy-token' : state.apiKey
   return [
     '-c', `model="${state.model}"`,
-    '-c', `model_provider="${FREE_MODE_PROVIDER_ID}"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.name="OpenRouter Free"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.base_url="${baseUrl}"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.wire_api="responses"`,
-    '-c', `model_providers.${FREE_MODE_PROVIDER_ID}.experimental_bearer_token="${bearerToken}"`,
+    '-c', `model_provider="${FREE_MODE_RUNTIME_PROVIDER_ID}"`,
+    '-c', `${providerConfigKey}.name="OpenRouter Free"`,
+    '-c', `${providerConfigKey}.base_url="${baseUrl}"`,
+    '-c', `${providerConfigKey}.wire_api="responses"`,
+    '-c', `${providerConfigKey}.experimental_bearer_token="${bearerToken}"`,
   ]
 }

@@ -101,6 +101,22 @@ export type CommandExecutionData = {
   exitCode: number | null
 }
 
+export type UiToolCallStatus = 'inProgress' | 'completed' | 'failed'
+export type UiToolCallKind = 'mcp' | 'collab' | 'webSearch' | 'cursor'
+export type UiToolCallData = {
+  kind: UiToolCallKind
+  title: string
+  name: string
+  status: UiToolCallStatus
+  server: string | null
+  input: string
+  output: string
+  error: string
+  progress: string
+  durationMs: number | null
+  meta: string[]
+}
+
 export type UiFileAttachment = { label: string; path: string }
 export type UiFileChangeOperation = 'add' | 'delete' | 'update'
 export type UiFileChangeStatus = 'inProgress' | 'completed' | 'failed' | 'declined'
@@ -113,8 +129,7 @@ export type UiFileChange = {
   removedLineCount: number
 }
 
-export type UiReviewTab = 'changes' | 'findings'
-export type UiReviewScope = 'workspace' | 'baseBranch'
+export type UiReviewScope = 'workspace' | 'baseBranch' | 'commit'
 export type UiReviewWorkspaceView = 'unstaged' | 'staged'
 export type UiReviewAction = 'stage' | 'unstage' | 'revert'
 export type UiReviewActionLevel = 'all' | 'file' | 'hunk'
@@ -162,6 +177,7 @@ export type UiReviewSnapshot = {
   workspaceView: UiReviewWorkspaceView
   baseBranch: string | null
   baseBranchOptions: string[]
+  commitSha: string | null
   headBranch: string | null
   mergeBaseSha: string | null
   generatedAtIso: string
@@ -172,6 +188,8 @@ export type UiReviewSnapshot = {
   }
   files: UiReviewFile[]
 }
+
+export type UiReviewSummary = UiReviewSnapshot['summary']
 
 export type UiReviewFinding = {
   id: string
@@ -216,6 +234,7 @@ export type UiMessage = {
   rawPayload?: string
   isUnhandled?: boolean
   commandExecution?: CommandExecutionData
+  toolCall?: UiToolCallData
   plan?: UiPlanData
   turnId?: string
   turnIndex?: number
@@ -299,6 +318,8 @@ export type UiAccountUnavailableReason = 'payment_required'
 
 export type UiAccountEntry = {
   accountId: string
+  storageId: string
+  userId: string | null
   authMode: string | null
   email: string | null
   planType: string | null

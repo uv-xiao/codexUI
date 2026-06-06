@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeThreadGroupsV2, normalizeThreadMessagesV2 } from './v2'
+import { normalizeThreadGroupsV2, normalizeThreadMessagesV2, readThreadInProgressFromResponse } from './v2'
 import type { ThreadListResponse, ThreadReadResponse } from '../appServerDtos'
 
 function threadReadResponseWithContent(content: ThreadReadResponse['thread']['turns'][number]['items'][number][]): ThreadReadResponse {
@@ -104,6 +104,468 @@ Reply with &lt;/instructions&gt; and A &amp; B
       turnId: 'turn-1',
       turnIndex: 12,
     })
+  })
+
+  it('renders failed turn errors as chat system messages', () => {
+    const response = threadReadResponseWithContent([{
+      type: 'userMessage',
+      id: 'user-4',
+      content: [{ type: 'text', text: 'hi', text_elements: [] }],
+    }])
+    response.thread.turns[0].status = 'failed'
+    response.thread.turns[0].error = {
+      message: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
+      codexErrorInfo: null,
+      additionalDetails: null,
+    }
+
+    const messages = normalizeThreadMessagesV2(response)
+
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toMatchObject({
+      id: 'turn-1-error',
+      role: 'system',
+      text: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
+      messageType: 'turnError',
+      turnId: 'turn-1',
+      turnIndex: 0,
+    })
+  })
+
+  it('uses turn index fallback ids for failed turns with blank ids', () => {
+    const response = threadReadResponseWithContent([])
+    response.thread.turns = [
+      {
+        id: '',
+        status: 'failed',
+        error: {
+          message: 'first failed turn',
+          codexErrorInfo: null,
+          additionalDetails: null,
+        },
+        items: [],
+      },
+      {
+        id: '   ',
+        status: 'failed',
+        error: {
+          message: 'second failed turn',
+          codexErrorInfo: null,
+          additionalDetails: null,
+        },
+        items: [],
+      },
+    ]
+
+    const messages = normalizeThreadMessagesV2(response, 8)
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        id: 'turn-8-error',
+        text: 'first failed turn',
+        turnId: undefined,
+        turnIndex: 8,
+      }),
+      expect.objectContaining({
+        id: 'turn-9-error',
+        text: 'second failed turn',
+        turnId: undefined,
+        turnIndex: 9,
+      }),
+    ])
+  })
+
+  it('renders MCP tool calls as timeline tool-call cards', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'mcpToolCall',
+      id: 'mcp-1',
+      server: 'filesystem',
+      tool: 'read_file',
+      status: 'completed',
+      arguments: { path: 'README.md' },
+      result: { content: [{ type: 'text', text: 'ok' }], structuredContent: null },
+      error: null,
+      durationMs: 42,
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'mcp-1',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'mcp',
+        title: 'filesystem.read_file',
+        status: 'completed',
+        server: 'filesystem',
+        input: JSON.stringify({ path: 'README.md' }, null, 2),
+        output: JSON.stringify({ content: [{ type: 'text', text: 'ok' }], structuredContent: null }, null, 2),
+        meta: ['Server: filesystem', '42 ms'],
+      },
+    })
+  })
+
+  it('renders collaboration agent tool calls as timeline tool-call cards', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'collabAgentToolCall',
+      id: 'collab-1',
+      tool: 'spawnAgent',
+      status: 'inProgress',
+      senderThreadId: 'thread-parent',
+      receiverThreadIds: ['thread-child'],
+      prompt: 'Inspect the parser.',
+      agentsStates: {
+        'thread-child': { status: 'running', message: 'Reading files' },
+      },
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'collab-1',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'collab',
+        title: 'Agent tool: spawnAgent',
+        status: 'inProgress',
+        input: 'Inspect the parser.',
+        output: JSON.stringify({ 'thread-child': { status: 'running', message: 'Reading files' } }, null, 2),
+        meta: ['From: thread-parent', 'Targets: thread-child'],
+      },
+    })
+  })
+
+  it('renders web search items as timeline tool-call cards', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'webSearch',
+      id: 'web-1',
+      query: 'OpenAI Codex docs',
+      action: { type: 'search', query: 'OpenAI Codex docs', queries: null },
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'web-1',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'webSearch',
+        title: 'Web search',
+        status: 'completed',
+        input: JSON.stringify({ type: 'search', query: 'OpenAI Codex docs', queries: null }, null, 2),
+        meta: ['Query: OpenAI Codex docs'],
+      },
+    })
+  })
+
+  it('renders Cursor shell tool-call commentary as command execution', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-1',
+      text: [
+        'Cursor shell completed',
+        'call_id: call_1_fc_2',
+        'args: {"command":"ls -la","workingDirectory":"/tmp/project"}',
+        'command: ls -la',
+        'cwd: /tmp/project',
+        'output: {"success":{"command":"ls -la","exitCode":0,"stdout":"total 1\\n-rw-r--r-- file\\n","stderr":"","interleavedOutput":"total 1\\n-rw-r--r-- file\\n","workingDirectory":"/tmp/project"}}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_1_fc_2',
+      role: 'system',
+      text: 'ls -la',
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: 'ls -la',
+        cwd: '/tmp/project',
+        status: 'completed',
+        aggregatedOutput: 'total 1\n-rw-r--r-- file\n',
+        exitCode: 0,
+      },
+    })
+  })
+
+  it('renders Cursor shell tool-call commentary from hidden full payload', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-hidden',
+      text: [
+        'Ran `ls -la`',
+        '  └ total 1',
+        '    -rw-r--r-- file',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_hidden_1.json',
+        '<codex-ui-data>{"type":"cursor_tool_call","subtype":"completed","call_id":"call_hidden_1","tool":"shell","arguments":{"command":"ls -la","workingDirectory":"/tmp/project"},"status":null,"output":{"success":{"command":"ls -la","exitCode":0,"stdout":"total 1\\n-rw-r--r-- file\\n","stderr":"","interleavedOutput":"total 1\\n-rw-r--r-- file\\n","workingDirectory":"/tmp/project"}}}</codex-ui-data>',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_hidden_1',
+      role: 'system',
+      text: 'ls -la',
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: 'ls -la',
+        cwd: '/tmp/project',
+        status: 'completed',
+        aggregatedOutput: 'total 1\n-rw-r--r-- file\n',
+        exitCode: 0,
+      },
+    })
+  })
+
+  it('preserves shell command backslash escapes from hidden Cursor payloads', () => {
+    const command = String.raw`printf '%s\n' "$HOME"`
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-hidden-escaped-command',
+      text: [
+        `Ran \`${command}\``,
+        '  └ /home/test',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_hidden_escape.json',
+        `<codex-ui-data>${JSON.stringify({
+          type: 'cursor_tool_call',
+          subtype: 'completed',
+          call_id: 'call_hidden_escape',
+          tool: 'shell',
+          arguments: { command, workingDirectory: '/tmp/project' },
+          status: null,
+          output: {
+            success: {
+              command,
+              exitCode: 0,
+              stdout: '/home/test\n',
+              stderr: '',
+              interleavedOutput: '/home/test\n',
+              workingDirectory: '/tmp/project',
+            },
+          },
+        })}</codex-ui-data>`,
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_hidden_escape',
+      text: command,
+      messageType: 'commandExecution',
+      commandExecution: {
+        command,
+      },
+    })
+    expect(messages[0]?.commandExecution?.command).not.toContain(String.raw`\\n`)
+    expect(messages[0]?.commandExecution?.command).not.toContain("'%s\n'")
+  })
+
+  it('preserves shell command newline escapes from Cursor args previews', () => {
+    const escapedCommand = String.raw`printf '%s\n' "$HOME"`
+    const previewCommand = `printf '%s\n' "$HOME"`
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-preview-escaped-command',
+      text: [
+        `Cursor shell completed`,
+        'call_id: call_preview_escape',
+        `args: ${JSON.stringify({ command: previewCommand, workingDirectory: '/tmp/project' })}`,
+        `output: ${JSON.stringify({
+          success: {
+            exitCode: 0,
+            stdout: '/home/test\n',
+            stderr: '',
+            interleavedOutput: '/home/test\n',
+            workingDirectory: '/tmp/project',
+          },
+        })}`,
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_preview_escape',
+      text: escapedCommand,
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: escapedCommand,
+        aggregatedOutput: '/home/test\n',
+      },
+    })
+    expect(messages[0]?.commandExecution?.command).not.toContain("'%s\n'")
+  })
+
+  it('does not render payload-path-only Cursor commentary as a fake tool card', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-path-only',
+      text: [
+        'Ran `ls -la`',
+        '  └ total 1',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_path_only.json',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-tool-path-only',
+      role: 'assistant',
+      messageType: 'agentMessage',
+    })
+  })
+
+  it('hides incomplete Cursor shell tool-call commentary from persisted history', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-started',
+      text: [
+        'Cursor shell running',
+        'call_id: call_1_fc_2',
+        'args: {"command":"ls -la","workingDirectory":"/tmp/project"}',
+        'command: ls -la',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toEqual([])
+  })
+
+  it('renders non-shell Cursor tool-call commentary without raw protocol text', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-read-tool',
+      text: [
+        'Cursor tool `read` completed',
+        'call_id: call_read_1',
+        'args: {"path":"src/index.ts"}',
+        'output: {"content":"export const ok = true\\n"}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-tool-call_read_1',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'cursor',
+        title: 'Cursor tool: read',
+        name: 'read',
+        status: 'completed',
+        server: 'cursor-cli',
+        input: '{\n  "path": "src/index.ts"\n}',
+        output: '{\n  "content": "export const ok = true\\n"\n}',
+        error: '',
+        progress: '',
+        meta: ['Cursor CLI'],
+      },
+    })
+    expect(messages[0]?.text).toContain('Cursor tool: read (completed)')
+    expect(messages[0]?.text).toContain('"path": "src/index.ts"')
+    expect(messages[0]?.text).not.toContain('[cursor tool_call')
+  })
+
+  it('renders proxy Cursor tool-call commentary from Called format', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'msg_cursor_tool_completed_call_read_proxy',
+      text: [
+        'Called Cursor tool `read`',
+        '  └ args: {"path":"src/index.ts"}',
+        '  └ output: {"content":"export const ok = true\\n"}',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_read_proxy.json',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-tool-call_read_proxy',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'cursor',
+        name: 'read',
+        status: 'completed',
+        input: '{\n  "path": "src/index.ts"\n}',
+        output: '{\n  "content": "export const ok = true\\n"\n}',
+      },
+    })
+  })
+
+  it('hides incomplete proxy Cursor tool-call commentary from persisted history', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'msg_cursor_tool_started_call_glob_proxy',
+      text: [
+        'Calling Cursor tool `glob`',
+        '  └ args: {"globPattern":"**/*.ts","targetDirectory":"/tmp/project"}',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_glob_proxy.json',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toEqual([])
+  })
+
+  it('marks Cursor shell tool-call errors as failed command executions', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-error',
+      text: [
+        'Cursor shell completed (exit 1)',
+        'call_id: call_error_fc_2',
+        'args: {"command":"false","workingDirectory":"/tmp/project"}',
+        'command: false',
+        'cwd: /tmp/project',
+        'output: {"error":{"message":"command failed"}}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_error_fc_2',
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: 'false',
+        cwd: '/tmp/project',
+        status: 'failed',
+        aggregatedOutput: 'command failed',
+        exitCode: null,
+      },
+    })
+  })
+
+  it('preserves stdout from Cursor shell tool-call failure payloads', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-failure',
+      text: [
+        'Cursor shell completed (exit 1)',
+        'call_id: call_failure_fc_2',
+        'args: {"command":"printf \\"recursive_files_excluding_git \\"; false","workingDirectory":"/tmp/project"}',
+        'command: printf "recursive_files_excluding_git "; false',
+        'cwd: /tmp/project',
+        'output: {"failure":{"command":"printf \\"recursive_files_excluding_git \\"; false","exitCode":1,"stdout":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","stderr":"","interleavedOutput":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","workingDirectory":"/tmp/project"},"isBackground":false}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_failure_fc_2',
+      messageType: 'commandExecution',
+      commandExecution: {
+        status: 'failed',
+        aggregatedOutput: 'recursive_files_excluding_git 185664\ntop_level_regular_files 14\n',
+        exitCode: 1,
+      },
+    })
+  })
+})
+
+describe('readThreadInProgressFromResponse', () => {
+  it('treats active thread status objects as in progress', () => {
+    const response = threadReadResponseWithContent([])
+    ;(response.thread as unknown as { status: { type: string } }).status = { type: 'active' }
+
+    expect(readThreadInProgressFromResponse(response)).toBe(true)
   })
 })
 

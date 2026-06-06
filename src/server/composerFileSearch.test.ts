@@ -37,6 +37,17 @@ describe('searchComposerPaths', () => {
     expect(byPath.get('real/nested')?.isSymlink).toBe(false)
   })
 
+  it('keeps partial results when ripgrep reports a symlink loop', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await writeFile(join(tempDir, 'alpha.txt'), 'alpha')
+    await symlink(tempDir, join(tempDir, 'loop'))
+
+    const results = await searchComposerPaths(tempDir, 'alpha', 20)
+
+    expect(results.some((entry) => entry.path === 'alpha.txt')).toBe(true)
+  })
+
   it('supports fuzzy matching for misspelled file names', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
 
@@ -47,5 +58,26 @@ describe('searchComposerPaths', () => {
 
     expect(results[0]?.path).toBe('install-configs.py')
     expect(results.some((entry) => entry.path === 'install-configs.py')).toBe(true)
+  })
+
+  it('prefers simpler paths when matches have the same quality', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await mkdir(join(tempDir, 'SeedKernelBench'), { recursive: true })
+    await writeFile(join(tempDir, 'SeedKernelBench', 'README.md'), 'root')
+    await mkdir(join(tempDir, '.worktrees', 'op_134_153', 'SeedKernelBench'), { recursive: true })
+    await writeFile(join(tempDir, '.worktrees', 'op_134_153', 'SeedKernelBench', 'README.md'), 'worktree')
+    await mkdir(join(tempDir, '_workspace.tmp', 'deep', '3rdparty', 'SeedKernelBench'), { recursive: true })
+    await writeFile(join(tempDir, '_workspace.tmp', 'deep', '3rdparty', 'SeedKernelBench', 'README.md'), 'workspace')
+
+    const results = await searchComposerPaths(tempDir, 'SeedKernelBench', 20)
+
+    expect(results[0]?.path).toBe('SeedKernelBench')
+    expect(results.findIndex((entry) => entry.path === 'SeedKernelBench')).toBeLessThan(
+      results.findIndex((entry) => entry.path === '.worktrees/op_134_153/SeedKernelBench'),
+    )
+    expect(results.findIndex((entry) => entry.path === 'SeedKernelBench')).toBeLessThan(
+      results.findIndex((entry) => entry.path === '_workspace.tmp/deep/3rdparty/SeedKernelBench'),
+    )
   })
 })

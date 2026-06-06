@@ -121,6 +121,22 @@ const answer = 42
     expect(html).not.toContain('title="/深色主题"')
   })
 
+  it('does not link a lone root path fragment after inline code', () => {
+    const html = render('`agent`/Codex')
+
+    expect(html).toContain('<code class="message-inline-code"')
+    expect(html).toContain('>agent</code>/Codex')
+    expect(html).not.toContain('message-file-link')
+  })
+
+  it('preserves backslash escapes in command inline code', () => {
+    const html = render(String.raw`Ran \`printf '%s\n' "$HOME"\``)
+
+    expect(html).toContain(String.raw`printf '%s\n' "$HOME"`)
+    expect(html).not.toContain(String.raw`printf '%s\\n' "$HOME"`)
+    expect(html).not.toContain("printf '%s\n' &quot;$HOME&quot;")
+  })
+
   it('parses local markdown links with spaces in the target', () => {
     const html = render('MARK [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)')
 
@@ -140,10 +156,41 @@ const answer = 42
   it('links file paths that appear inside inline code', () => {
     const html = render('Run `./src/App.vue:3-7` before continuing.')
 
-    expect(html).toContain('<a class="message-file-link message-inline-code-link"')
+    expect(html).toMatch(/Run <code class="message-inline-code"[^>]*><a class="message-file-link message-inline-code-link"/u)
     expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/App.vue?line=3-7"')
     expect(html).toContain('title="./src/App.vue:3-7"')
-    expect(html).toMatch(/<code class="message-inline-code"[^>]*>\.\/src\/App\.vue:3-7<\/code>/u)
+    expect(html).toContain('>./src/App.vue:3-7</a></code> before continuing.')
+  })
+
+  it('keeps command inline code as code while linking embedded file paths', () => {
+    const html = render('`npx vitest run src/composables/useDesktopState.test.ts src/api/normalizers/v2.test.ts src/server/freeMode.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts`')
+
+    expect(html).toMatch(/<code class="message-inline-code"[^>]*>npx vitest run /u)
+    expect(html).toContain('message-inline-code-link')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/composables/useDesktopState.test.ts"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/api/normalizers/v2.test.ts"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/server/freeMode.test.ts"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/server/codexAppServerBridge.inlinePayload.test.ts"')
+    expect(html).not.toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/npx')
+  })
+
+  it('links directory paths that appear inside inline code', () => {
+    const html = render('Open `.superpowers/plans/2026-05-18-codex-cursor/` next.')
+
+    expect(html).toMatch(/Open <code class="message-inline-code"[^>]*><a class="message-file-link message-inline-code-link"/u)
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/.superpowers/plans/2026-05-18-codex-cursor"')
+    expect(html).toContain('>.superpowers/plans/2026-05-18-codex-cursor/</a></code> next.')
+  })
+
+  it('expands tilde paths from root workspaces', () => {
+    const html = markdownRenderer.renderMarkdownContent('Open `~/work/my-agent-configs/AGENTS.md` next.', {
+      ...baseContext,
+      cwd: '/root/work/my-agent-configs/repos/codexUI',
+    }).html
+
+    expect(html).toContain('href="/codex-local-browse/root/work/my-agent-configs/AGENTS.md"')
+    expect(html).toContain('>~/work/my-agent-configs/AGENTS.md</a></code> next.')
+    expect(html).not.toContain('/root/work/my-agent-configs/repos/codexUI/~/work')
   })
 
   it('renders local markdown images through the local image route', () => {

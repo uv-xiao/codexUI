@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
-import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
+import { loadExtensionRegistry } from "./src/server/extensionRoutes";
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from "./src/server/katexAssets";
 import tailwindcss from "@tailwindcss/vite";
 import { spawnSync } from "node:child_process";
@@ -331,22 +332,23 @@ export default defineConfig({
             }
             const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
             const name = typeof record?.name === "string" ? record.name : "";
+            const type = record?.type === "directory" ? "directory" : "file";
             try {
-              const filePath = await createLocalBrowseFile(localPath, name);
-              sendJson(res, 201, { data: { path: filePath } });
+              const createdPath = await createLocalBrowseEntry(localPath, name, type);
+              sendJson(res, 201, { data: { path: createdPath } });
             } catch (error) {
               const mutationError = error instanceof LocalBrowseMutationError ? error : null;
-              sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Create file failed." });
+              sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Create failed." });
             }
             return;
           }
 
           try {
-            await deleteLocalBrowseFile(localPath);
+            await deleteLocalBrowseEntry(localPath);
             sendJson(res, 200, { ok: true });
           } catch (error) {
             const mutationError = error instanceof LocalBrowseMutationError ? error : null;
-            sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Delete file failed." });
+            sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Delete failed." });
           }
         });
         server.middlewares.use(async (req, res, next) => {
@@ -357,6 +359,7 @@ export default defineConfig({
           const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-browse".length));
           const newProjectName = url.searchParams.get("newProjectName") ?? "";
           const lineRange = url.searchParams.get("line") ?? "";
+          const rawMode = url.searchParams.get("raw") === "1" || url.searchParams.get("raw") === "true";
           if (!localPath || !isAbsolute(localPath)) {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
@@ -375,7 +378,7 @@ export default defineConfig({
               return;
             }
 
-            if (await isTextEditableFile(localPath)) {
+            if (!rawMode && await isTextEditableFile(localPath)) {
               res.statusCode = 302;
               res.setHeader("Location", toEditHref(localPath, newProjectName, lineRange));
               res.end();
@@ -500,6 +503,46 @@ export default defineConfig({
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: "Write failed." }));
           });
+        });
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url) return next();
+          const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith("/codex-api/extensions")) return next();
+
+          if (req.method === "GET" && url.pathname === "/codex-api/extensions") {
+            sendJson(res, 200, { data: loadExtensionRegistry() });
+            return;
+          }
+
+          const bridgeMatch = url.pathname.match(/^\/codex-api\/extensions\/([^/]+)\/codex\/ask$/u);
+          if (req.method === "POST" && bridgeMatch) {
+            const extensionId = decodeURIComponent(bridgeMatch[1] ?? "");
+            const registry = loadExtensionRegistry();
+            const extension = registry.extensions.find((candidate) => candidate.id === extensionId);
+            if (!extension) {
+              sendJson(res, 404, { error: "Extension is not enabled or could not be loaded." });
+              return;
+            }
+
+            const body = await readJsonRequestBody(req).catch(() => ({}));
+            const record = body && typeof body === "object" && !Array.isArray(body)
+              ? body as Record<string, unknown>
+              : {};
+            const context = record.context && typeof record.context === "object" && !Array.isArray(record.context)
+              ? record.context as Record<string, unknown>
+              : {};
+            sendJson(res, 202, {
+              data: {
+                accepted: true,
+                extensionId,
+                kind: typeof context.kind === "string" ? context.kind : "extension-help",
+                bridge: "codex-extension-bridge-stub",
+              },
+            });
+            return;
+          }
+
+          next();
         });
         server.middlewares.use(bridge);
       },

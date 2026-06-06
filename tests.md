@@ -19,38 +19,260 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - <cleanup action, if any>
 
-### Feature: Project recency sort, pins, and mobile move mode
+### Feature: Historical session command rendering
 
 #### Prerequisites
-- App is running from this repository on `feature/project-recency-sort-upstream`.
-- At least two visible projects exist with threads updated at different times.
+- App server is running from this repository.
+- A historical thread exists whose session JSONL contains `exec_command` tool calls that are not present in the stored `thread/read` turn items.
 - Light and dark themes are both available from Settings.
 
 #### Steps
-1. Open the sidebar in light theme.
-2. Open Projects -> Organize and confirm `Recent projects` is selected by default.
-3. Confirm projects appear in descending recent thread activity order.
-4. Tap the Projects header reorder icon and confirm move mode starts, all current project thread lists collapse, and drag handles are visible.
-5. Drag a non-top project above the first project while still in recent mode.
-6. Confirm the moved project appears in the pinned prefix, recent mode remains selected, and project threads do not expand from the drag release.
-7. Tap `Done`, open the moved project's menu, choose `Unpin project`, and confirm it returns to its recency-derived position.
-8. Switch to `Manual project order`, drag a project, and confirm the manual order sticks independently of recent-mode pins.
-9. Enter sidebar search text and confirm project move mode/dragging cannot start while the project list is filtered.
-10. Repeat steps 1-9 in dark theme.
+1. Open the historical thread from the sidebar or by direct `#/thread/<id>` route.
+2. Confirm command execution entries appear in the conversation at their original position between the surrounding user and assistant messages.
+3. For a thread whose stored `thread/read` result has one merged assistant message, confirm command execution entries still appear between the matching assistant text fragments when the session JSONL preserves those fragments.
+4. For a thread whose stored `thread/read` result already contains command execution entries grouped before the assistant text, confirm those existing command cards are reordered between the matching assistant text fragments.
+5. For a thread that contains `response_item` entries after `task_complete`, confirm recovered command cards appear in the matching `rollout-*` section rather than the previous completed turn.
+6. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
+7. Switch to light theme and dark theme, then repeat the same thread rendering check.
 
 #### Expected Results
-- Recent mode ignores saved manual `projectOrder` except for explicit pinned project overrides.
-- Recent-mode drags pin the moved project without switching the persisted sort mode to manual.
-- Recent-mode drag and pin actions update only the pinned project override list and do not rewrite saved manual order.
-- Unpinning removes the override and restores the project to recency order.
-- Manual project order remains a separate full-list ordering mode.
-- Move mode collapses project thread lists, restores prior expansion state on exit, and is blocked while search filters the sidebar.
-- Reorder icon, `Done`, drag handles, pin labels, and menus remain readable in light and dark themes.
+- Historical `exec_command` calls recovered from session JSONL render as command execution cards in `thread/read` results.
+- Command cards preserve command text, output, exit code, and duration when available.
+- When session assistant text fragments can be matched to a merged stored assistant message, recovered command cards are interleaved between those fragments instead of being grouped before or after the whole message.
+- Existing recovered command cards are reused and reordered instead of duplicated.
+- Command cards recovered from orphan post-completion `response_item` entries stay with the matching synthesized `rollout-*` assistant messages.
+- Recovered command entries stay ordered with the surrounding conversation items and are not dropped by older-message pagination.
 
 #### Rollback/Cleanup
-- Tap `Done` to leave move mode.
-- Reset the sidebar Organize menu to the preferred project sort mode.
-- Remove any temporary chats or workspace roots created for verification.
+- No cleanup is required.
+
+### Feature: Direct host CodexUI deployment with optional Docker Tailscale
+
+#### Prerequisites
+- Docker Compose is available on the server.
+- The repository has been built or can build with `npm run build:frontend` and `npm run build:cli`.
+- A Tailscale node is already authenticated, or the operator can complete the auth URL shown by the Tailscale wrapper when testing iOS access.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `NO_PROXY='*' no_proxy='*' CODEXUI_BUILD_ON_UP=1 scripts/codexui-deploy.sh up`.
+2. Confirm the output prints a direct Mac/browser URL, such as `http://115.27.161.184:5900`.
+3. Run `NO_PROXY='*' no_proxy='*' scripts/codexui-deploy.sh status`.
+4. Confirm the status output shows a `codexui-host` tmux session and does not require a running Docker Tailscale container.
+5. Confirm the host target URL returns `200 OK` with `curl --noproxy '*' -I http://<public-or-lan-host-ip>:5900/`.
+6. From a Mac on a routeable network, open `http://<public-or-lan-host-ip>:5900` directly and sign in with the generated password when password protection is enabled.
+7. While `5900` is occupied, run `NO_PROXY='*' no_proxy='*' CODEXUI_HOST_SESSION=codexui-autotest CODEXUI_HOST_PORT=5900 CODEXUI_BUILD_ON_UP=0 scripts/codexui-deploy.sh up`.
+8. Confirm the autotest output prints the effective direct URL with the next available port, such as `http://<public-or-lan-host-ip>:5901`.
+9. Clean up the autotest session with `CODEXUI_HOST_SESSION=codexui-autotest scripts/codexui-deploy.sh down`.
+10. Confirm any previously opened `codexui-tailscale` container is stopped after the direct `up` action.
+11. Run `NO_PROXY='*' no_proxy='*' CODEXUI_BUILD_ON_UP=0 scripts/docker-tailscale-ios.sh up`.
+12. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh status`.
+13. Confirm the Tailscale status output shows a `codexui-tailscale` Docker container and Tailscale Serve proxying to the effective host CodexUI URL.
+14. From an iOS device on the tailnet, open `https://codexui-ios.tail27dc02.ts.net/`.
+15. Verify the app renders in light theme.
+16. Switch to dark theme and verify the app renders without blank startup, light-only surfaces, or unreadable controls.
+17. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh restart-tailscale` and confirm `serve status` still proxies to the host CodexUI URL.
+
+#### Expected Results
+- The host CodexUI process runs outside Docker and binds to the configured host IP and port.
+- Direct deployment does not enable Tailscale and stops this workflow's Docker Tailscale container if it is running.
+- Docker is used only when the Tailscale wrapper is explicitly invoked.
+- If the requested port is occupied, the deployment prints and uses the effective fallback port selected by codexUI.
+- Mac direct access uses the server's routeable public or LAN IP, not `127.0.0.1` and not the private WireGuard address.
+- iOS tailnet access proxies to the same host CodexUI process.
+- Light and dark themes both render the normal app bundle without Safari-only startup diagnostics.
+
+#### Rollback/Cleanup
+- Run `scripts/codexui-deploy.sh down` to stop the Docker Tailscale container and the host CodexUI tmux session.
+- Stop any separately started public listener tmux session, such as `tmux kill-session -t codexui-public`, if it was created for direct Mac testing.
+
+### Feature: Full upstream and Light-of-Hers rebase integration
+
+#### Prerequisites
+- Use the rebased integration worktree.
+- Install dependencies with Corepack if `pnpm` is not directly on `PATH`.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `corepack pnpm exec vitest run src/composables/useDesktopState.test.ts src/api/codexGateway.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/server/freeMode.test.ts src/api/normalizers/v2.test.ts`.
+2. Run `corepack pnpm run build:frontend`.
+3. Run `corepack pnpm run build:cli`.
+4. Start a temporary profiling server with `corepack pnpm run dev --host 127.0.0.1 --port 4173`.
+5. Run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 corepack pnpm run profile:browser`.
+6. In light theme, open the app and confirm provider selection, composer file mentions, thread rendering, and slash-goal command UI are visible and usable.
+7. Switch to dark theme and repeat the same visual checks.
+
+#### Expected Results
+- The focused Vitest suite passes.
+- Frontend and CLI builds complete.
+- The browser profile writes JSON, screenshot, and trace artifacts under `output/playwright/`.
+- No provider dropdown, thread surface, composer mention list, or goal notice is unreadable in light or dark theme.
+
+#### Rollback/Cleanup
+- Stop only the temporary server bound to port `4173`.
+- Remove the temporary worktree if the rebased branch is not merged.
+
+### Feature: Live turn output does not flicker away before persistence
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread is available where Codex can stream reasoning and run at least one command.
+- Browser devtools Network panel is available.
+
+#### Steps
+1. Open the thread and send a prompt that causes a multi-step response with reasoning and a command.
+2. While the turn is still running, watch the live reasoning, assistant text, and command card.
+3. When assistant text starts after reasoning, confirm the previous live reasoning text remains visible during the active turn.
+4. When the turn completes, watch the command card until the follow-up `thread/read` refresh finishes.
+5. Repeat once in dark theme.
+
+#### Expected Results
+- Live reasoning is not cleared merely because assistant text starts streaming.
+- Live command/tool cards remain visible after `turn/completed` until the persisted thread messages replace them.
+- The conversation does not briefly collapse to only the newest thinking/status overlay before the final persisted output appears.
+
+#### Rollback/Cleanup
+- Stop any disposable test turn if it is still running.
+
+### Feature: GitHub-style local editor syntax highlighting
+
+#### Prerequisites
+- App server is running from this repository.
+- A local source file is available, preferably TypeScript, Python, Rust, or Markdown.
+- Light and dark themes are both available from the operating system or browser color-scheme setting.
+
+#### Steps
+1. Open the source file through the local edit route.
+2. In light theme, confirm the editor uses a GitHub-like light surface with distinct keyword, string, comment, number, function, tag, and selection colors.
+3. Switch to dark theme and reload or wait for the editor to react to the color-scheme change.
+4. Confirm the editor switches to GitHub dark highlighting and the gutter, active line, cursor, and selection remain readable.
+5. For a Markdown file, open `Preview` and confirm fenced code blocks use the same GitHub-style light and dark syntax colors.
+
+#### Expected Results
+- Local editor pages use `ace/theme/github` in light mode and `ace/theme/github_dark` in dark mode.
+- Syntax highlighting is visibly richer than plain text in both themes.
+- Markdown editor previews keep code fences readable and aligned with the selected color scheme.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Feature: Startup background refresh scheduling
+
+#### Prerequisites
+- App server is running from this repository.
+- Browser devtools Network panel is available.
+- At least one workspace root and one Git-backed project are available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the app home route and hard-refresh the browser.
+2. Confirm the thread list and composer become usable before Telegram, first-launch card, terminal status, and project suggestion requests finish.
+3. In Network, confirm startup does not issue `/codex-api/git/repository-status` for every sidebar project.
+4. In Network, confirm concurrent `/codex-api/workspace-roots-state` calls are coalesced to a single request during reload.
+5. Open a project menu for a Git-backed project and confirm the Git status request is made lazily.
+6. Switch to light theme and dark theme, then reopen the project menu.
+
+#### Expected Results
+- Startup keeps critical thread/provider loading ahead of non-critical settings and helper refreshes.
+- Sidebar project Git checks do not fan out during page reload.
+- The project menu still shows `New worktree` for Git projects after its lazy status check finishes.
+- Light and dark project menus remain readable while the lazy menu item appears.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Asset: Conversation avatars are optimized
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread with conversation messages is available.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Confirm the agent and user avatars render in the conversation list.
+3. Verify the avatar images still look crisp at the rendered size.
+4. Switch to dark theme.
+5. Confirm the same avatars still render correctly and remain legible against the dark UI surfaces.
+
+#### Expected Results
+- Conversation avatars render normally in both themes.
+- The images remain visually sharp at the small display size.
+- No layout shift or clipping appears around the avatar boxes.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Feature: Conversation markdown renderer loads after first paint
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread with markdown content is available, preferably including a code fence and a math expression.
+- Browser devtools Network panel is available.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme and reload the page.
+2. Watch the Network panel during the refresh and confirm the conversation shell appears before the markdown renderer and KaTeX assets finish loading.
+3. Confirm the first visible conversation content uses the lightweight fallback rendering and then upgrades to rich markdown after the async renderer loads.
+4. Verify code fences still render with syntax highlighting after the enhancement finishes.
+5. Verify math content renders correctly after KaTeX CSS is loaded.
+6. Switch to dark theme and repeat the refresh check.
+
+#### Expected Results
+- First paint is no longer blocked on the full markdown/KaTeX renderer chunk.
+- Rich markdown still appears after the lazy-loaded renderer finishes.
+- Code blocks and math remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Feature: Composer helper lazy loading
+
+#### Prerequisites
+- App server is running from this repository.
+- Browser devtools Network panel is available.
+- At least one workspace folder is available for file mention checks.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the app home route and hard-refresh the browser.
+2. Confirm the initial network burst no longer includes `markdownRenderer`, composer file mention, or composer skill mention modules.
+3. Open the markdown preview in the composer and confirm the markdown renderer module loads only when preview is shown.
+4. Select a workspace folder, type `@` and `$` mention prefixes in the composer, and confirm the file and skill mention helper modules load on demand.
+5. Switch to light theme and dark theme, then repeat the preview and mention checks.
+
+#### Expected Results
+- The initial composer load avoids the markdown rendering stack and mention helper modules.
+- Markdown preview still renders correctly after it is opened.
+- File and skill mentions still work after their helper modules load lazily.
+- Light and dark theme composer surfaces remain readable.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Feature: Markdown editor preview for local files
+
+#### Prerequisites
+- App server is running from this repository.
+- A writable local `.md` file is available, or a temporary markdown file can be created under a test folder.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open a local markdown file through the local edit route.
+2. Click `Preview` to open the rendered panel.
+3. Confirm inline and block math render with proper KaTeX formatting, including subscript and superscript placement.
+4. Switch to light theme and repeat the preview check.
+5. Switch to dark theme and repeat the preview check.
+
+#### Expected Results
+- The preview panel renders markdown with the same KaTeX styling used by the main app.
+- Formula fragments such as `$L_0$` keep their subscript spacing and do not collapse to plain `L0` text.
+- The KaTeX MathML layer remains hidden, so rendered math is not duplicated by raw accessibility text.
+- Light and dark preview surfaces both stay readable.
+
+#### Rollback/Cleanup
+- Delete any temporary markdown file created for the check.
 
 ### Feature: Thread heartbeat automations
 
@@ -58,37 +280,23 @@ This file tracks manual regression and feature verification steps.
 - App is running from this repository.
 - At least one local thread exists in the sidebar.
 - Local Codex home is writable (`$CODEX_HOME` or `~/.codex`).
-- Light and dark themes are both available from Settings.
 
 #### Steps
-1. In light theme, open the sidebar thread menu for a thread without an attached automation.
+1. Open the sidebar thread menu for a thread without an attached automation.
 2. Confirm the menu shows `Add automation…`.
 3. Click `Add automation…`.
 4. Fill name, prompt, RRULE schedule, and set status to `Paused`.
 5. Save the automation and reopen the same thread menu.
-6. Confirm the menu now shows `Manage automations…` and the thread row shows an automation chip.
-7. Open `Manage automations…`, confirm the saved values are prefilled, then click `Add another automation`.
-8. Fill a second automation with a different name and RRULE, save it, and confirm both automations appear in the dialog list.
-9. Select each automation from the list and confirm its own prompt, RRULE, and status load independently.
-10. Click `Run now` for one saved automation while the thread is idle and confirm the automation run is queued or starts in the selected thread.
-11. Start a normal thread turn, reopen `Manage automations…`, click `Run now` for another saved automation, and confirm it waits in the queue until the active turn can finish.
-12. Remove one automation and confirm the other remains attached to the same thread.
-13. Switch to dark theme, reopen `Manage automations…`, and confirm the list, inputs, textarea, status select, `Run now`, and queued-run notice remain readable.
-14. Select a thread that already contains automation runs and confirm both the automation prompt card and the assistant reply are visible.
-15. Remove the final automation and confirm the thread menu returns to `Add automation…`.
+6. Confirm the menu now shows `Edit automation…` and the thread row shows an automation chip.
+7. Open `Edit automation…`, confirm the saved values are prefilled, then remove the automation.
 
 #### Expected Results
-- Multiple thread-scoped heartbeat automations can be created under the Codex automations store with the same `target_thread_id`.
-- The automation manager is hosted from the thread menu and supports adding, selecting, editing, and removing individual automations.
-- `Run now` enqueues the selected automation immediately using a Codex.app-style heartbeat payload with `automation_id`, `current_time_iso`, and `instructions`, without requiring a schedule tick.
-- Automation heartbeat prompts render as visible user-side cards labeled `Sent via automation`; raw heartbeat XML is not shown.
-- Manual runs use the existing thread queue, so they do not interrupt an active turn and run in order when the thread is available.
-- Removing one automation does not remove other automations attached to the same thread.
-- Removing the final automation removes the thread row automation chip and returns the menu to `Add automation…`.
-- Light and dark theme automation manager surfaces remain readable.
+- Thread-scoped heartbeat automations are created under the Codex automations store and attached by `target_thread_id`.
+- The automation editor is hosted from the thread menu and uses Codex.app wording.
+- Removing the automation removes the thread row automation chip and returns the menu to `Add automation…`.
 
 #### Rollback/Cleanup
-- Remove any test automations from the thread automation dialog or delete their folders under `$CODEX_HOME/automations/<automation-id>/`.
+- Remove any test automation from the thread automation dialog or delete its folder under `$CODEX_HOME/automations/<automation-id>/`.
 
 ### Feature: Projectless new chat folders
 
@@ -249,6 +457,58 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Remove the selected skill chip(s) before leaving the thread, if needed.
 
+### Feature: Composer $ skill autocomplete
+
+#### Prerequisites
+- App is running from this repository.
+- At least one installed skill is available.
+- A thread composer is visible and editable.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open an existing thread in light theme.
+2. Click into the composer input and type `$` followed by part of an installed skill name.
+3. Confirm the skill suggestion popup appears under the input.
+4. Use Arrow keys or click a suggestion.
+5. Confirm the chosen skill token is inserted directly into the input, with the cursor placed after it, like `@` path completion.
+6. Submit the message and confirm the turn starts normally.
+7. Switch to dark theme and repeat steps 2 through 6.
+
+#### Expected Results
+- Typing `$` opens a skill suggestion list filtered from the installed skills.
+- Selecting a skill writes the chosen `$skill` text back into the composer instead of only setting footer state.
+- The inserted skill token stays in the draft until the user edits it or sends the message.
+- Light and dark autocomplete surfaces remain readable and the active row highlight is visible in both themes.
+
+#### Rollback/Cleanup
+- Clear the draft or switch threads if you do not want to keep the test message.
+
+### Feature: Composer path autocomplete inserts ./
+
+#### Prerequisites
+- App is running from this repository.
+- At least one installed skill is available.
+- A thread composer is visible and editable.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open an existing thread in light theme.
+2. Click into the composer input and type `@` followed by part of an existing file path.
+3. Confirm the file suggestion popup appears under the input.
+4. Pick a suggestion with Enter, Tab, or mouse click.
+5. Confirm the chosen path is inserted as `./...` in the input, not `@...`.
+6. Submit the message and confirm the file attachment is still recognized.
+7. Switch to dark theme and repeat steps 2 through 6.
+
+#### Expected Results
+- Typing `@` still opens the file suggestion list.
+- Selecting a path replaces the trigger with `./` in the draft text.
+- The submitted turn still treats the inline path as a file attachment.
+- Light and dark autocomplete surfaces remain readable and the active row highlight is visible in both themes.
+
+#### Rollback/Cleanup
+- Clear the draft or switch threads if you do not want to keep the test message.
+
 ### Feature: Skills Hub local-only installed skills
 
 #### Prerequisites
@@ -271,265 +531,6 @@ This file tracks manual regression and feature verification steps.
 
 ---
 
-### Docker Tailscale iOS deployment workflow
-
-#### Feature/Change Name
-Docker Compose workflow for running codexUI with a Tailscale sidecar for iPhone/iPad access.
-
-#### Prerequisites/Setup
-1. Docker and Docker Compose v2 are available for the current user.
-2. `/dev/net/tun` is available to containers.
-3. `~/.codex` contains the Codex auth/config state to mount into the UI container.
-4. `~/.agents` exists if agent configuration should be visible inside the UI container.
-5. Optional: `TS_AUTHKEY` is set to a valid Tailscale auth key for unattended login.
-
-#### Steps
-1. Run `scripts/docker-tailscale-ios.sh up`.
-2. Confirm the script builds `codexui-local:docker-tailscale` and starts `codexui-ios` plus `codexui-tailscale`.
-3. Confirm `curl -fsSI http://127.0.0.1:5900/` returns HTTP 200.
-4. If no `TS_AUTHKEY` was provided, open the printed Tailscale auth URL and confirm the sidecar does not exit or rotate the auth URL while waiting.
-5. After authentication, run `scripts/docker-tailscale-ios.sh serve`.
-6. Run `scripts/docker-tailscale-ios.sh status` and confirm Tailscale Serve lists a proxy for `localhost:5900`.
-7. From an iPhone or iPad connected to the same tailnet, open the printed HTTPS MagicDNS URL.
-8. In light theme, confirm the UI loads and the expected project/thread list is visible.
-9. Switch to dark theme and confirm the UI remains readable with no light-only route surfaces.
-
-#### Expected Results
-- codexUI runs in Docker on local port `127.0.0.1:5900`.
-- The UI container can access mounted Codex state, agent config, and the original `$HOME` workspace paths.
-- The Tailscale sidecar shares the codexUI network namespace and serves `localhost:5900`.
-- iOS Safari can reach the UI through the private Tailscale HTTPS URL.
-- Light theme and dark theme both render correctly.
-
-#### Rollback/Cleanup
-- Run `scripts/docker-tailscale-ios.sh down` to stop containers while preserving the Tailscale state volume.
-- Remove the persisted Tailscale node identity only if needed with `docker volume rm codexui-tailscale-state`.
-
----
-
-### Pinned threads remain visible during background pagination
-
-#### Feature/Change Name
-Pinned threads are no longer removed from the Pinned section while the sidebar is still loading older thread-list pages.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev`)
-2. More than 50 total unarchived threads exist
-3. At least one older thread outside the initial recent page is pinned
-4. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, reload the app.
-2. Immediately open the sidebar Pinned section.
-3. Confirm pinned rows from older history remain in the Pinned section after the initial thread list appears.
-4. Wait for background thread pagination to finish.
-5. Confirm the same pinned rows remain visible and can still be selected.
-6. Switch to dark theme and repeat steps 1-5.
-
-#### Expected Results
-- Saved pinned thread IDs are preserved while only the initial thread-list page is loaded.
-- Missing pinned IDs are pruned only after the full thread list has loaded.
-- Pinned rows remain readable and selectable in both light and dark themes.
-
-#### Rollback/Cleanup
-- Unpin any disposable threads created only for this test.
-
----
-
-### Startup avoids duplicate setup probes
-
-#### Feature/Change Name
-Startup loads Git repository status only for the active thread/new-thread cwd or an opened project menu, shares workspace-root state reads, and returns free-mode status without waiting on OpenRouter model discovery.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 4173`)
-2. Browser runtime profiler available (`pnpm run profile:browser`)
-3. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser`.
-2. Inspect the generated `output/playwright/browser-runtime-profile-*.json`.
-3. Confirm startup does not call `/codex-api/git/repository-status` once per visible project.
-4. Confirm startup performs at most one `/codex-api/workspace-roots-state` GET before user actions.
-5. Confirm `/codex-api/free-mode/status` completes without waiting for a live `https://openrouter.ai/api/v1/models` request.
-6. Open a thread and confirm at most the selected thread cwd is checked with `/codex-api/git/repository-status`.
-7. Open the project action menu for several projects and confirm Git-backed actions still appear only for Git repositories after each menu-specific status check.
-8. Switch to dark theme and repeat steps 1-7.
-
-#### Expected Results
-- Initial sidebar Git status hydration does not scan every visible project.
-- The `/codex-api/git/repository-status/batch` endpoint is not used.
-- Git status checks are lazy and scoped to the active thread/new-thread cwd or the project menu being opened.
-- App startup and initial thread loading share workspace-root state loading instead of issuing duplicate startup reads.
-- Free-mode status returns cached or fallback model options immediately and refreshes model discovery in the background.
-- Git-backed project menu actions remain correct in light theme and dark theme.
-- Free-mode controls remain readable and functional in light theme and dark theme.
-
-#### Rollback/Cleanup
-- Remove generated `output/playwright/browser-runtime-profile-*` artifacts if they are not needed for comparison evidence.
-
----
-
-### Revert PR 131 project recency and mobile move mode
-
-#### Feature/Change Name
-PR #131 revert: remove project recency ordering and mobile project move mode while preserving later sidebar actions.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev`)
-2. Sidebar has at least two projects and projectless chats
-3. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, open the sidebar Projects section.
-2. Open the Projects organize menu.
-3. Confirm the menu still exposes thread organization and chat sort controls, but does not expose project recency/manual sort controls.
-4. Open a project action menu and confirm browse, rename, remove, worktree, and git status actions still behave normally.
-5. On a mobile-sized viewport, confirm there is no project move mode affordance or drag handle from PR #131.
-6. Switch to dark theme and repeat steps 1-5.
-
-#### Expected Results
-- Project recency/manual sort controls from PR #131 are absent.
-- Project pinning/move mode controls from PR #131 are absent.
-- Existing sidebar project actions and git-status menu behavior remain available.
-- Sidebar rows, menus, and actions remain readable in light and dark themes.
-
-#### Rollback/Cleanup
-- None.
-
----
-
-### Qodo review fixes for PR 130 and PR 131 reverts
-
-#### Feature/Change Name
-Fix review regressions from reverting PR #130 and PR #131.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev`)
-2. Sidebar has multiple projects, including duplicate folder leaf names when available
-3. Sidebar has at least one projectless chat
-4. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, search the sidebar so the project list is filtered.
-2. Try to drag a project row while search is active.
-3. Confirm no project drag or reorder starts during the filtered search view.
-4. Clear search and drag a project row, then release it and confirm the follow-up click does not collapse or expand the dragged project unexpectedly.
-5. Open a project menu near the bottom of the scrollable sidebar and confirm the menu opens upward only when needed and stays within the visible sidebar boundary.
-6. Open or create a project whose folder leaf name collides with another root and confirm the intended full-path-disambiguated project moves to the top.
-7. Confirm projectless chats with empty cwd remain visible when workspace roots are configured.
-8. Switch to dark theme and repeat steps 1-7.
-
-#### Expected Results
-- Project dragging is disabled during sidebar search.
-- Drag completion does not trigger an accidental project collapse or expansion.
-- Project menu direction uses the rendered menu height and avoids viewport/sidebar overflow.
-- Duplicate folder leaf names use the disambiguated project order name.
-- Empty-cwd projectless chats remain visible.
-- Sidebar rows, menus, and drag states remain readable in light and dark themes.
-
-#### Rollback/Cleanup
-- None.
-
----
-
-### Composer mode scoping and Fast mode support
-
-#### Feature/Change Name
-Plan mode is scoped to the current chat instead of becoming the default for every chat, and Fast mode is available for supported GPT 5.4 and GPT 5.5 model IDs.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev`)
-2. At least two existing threads are available
-3. Model list includes `gpt-5.4` or a `gpt-5.4-*` variant and `gpt-5.5` or a `gpt-5.5-*` variant
-4. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, open thread A, open the composer add menu, and enable Plan mode.
-2. Open thread B and confirm Plan mode is off by default.
-3. Return to thread A and confirm Plan mode remains on for that thread.
-4. Open Start new thread, enable Plan mode, send a first message, and confirm the created thread starts in Plan mode.
-5. Return to Start new thread again and confirm Plan mode is off for the next new chat.
-6. Select `gpt-5.4` or a `gpt-5.4-*` model and confirm the Fast mode switch is visible.
-7. Select `gpt-5.5` or a `gpt-5.5-*` model and confirm the Fast mode switch is visible.
-8. Select an unsupported model family and confirm the Fast mode switch is hidden.
-9. Switch to dark theme and repeat steps 1-8.
-
-#### Expected Results
-- Enabling Plan mode in one existing thread does not enable it in other existing threads.
-- A new-chat Plan mode selection applies to the created chat but does not persist as the default for later new chats.
-- Fast mode is visible for GPT 5.4 and GPT 5.5 model IDs, including dashed variants.
-- Fast mode remains hidden for unsupported model families.
-- Composer controls and menus remain readable in light and dark themes.
-
-#### Rollback/Cleanup
-- Turn Plan mode off in any test threads if desired.
-
----
-
-### Lazy project Git status checks
-
-#### Feature/Change Name
-Project Git repository status is loaded lazily from project menus instead of scanning every visible project during startup.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev --host 127.0.0.1 --port 4173`)
-2. Sidebar contains multiple projects, including at least one Git-backed project and one non-Git project
-3. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, load the home route and confirm the Projects section renders normally.
-2. Open browser devtools or runtime profile output and confirm startup does not issue one `/codex-api/git/repository-status` request per visible project.
-3. Open the action menu for a Git-backed project.
-4. Confirm the menu remains readable and the `New worktree` item appears after the Git status check completes.
-5. Right-click the header row for the same Git-backed project.
-6. Confirm the context menu remains readable and the `New worktree` item appears after the Git status check completes.
-7. Open the action menu for a non-Git project.
-8. Confirm the menu remains readable and `New worktree` is not shown.
-9. Switch to dark theme and repeat steps 3 through 8.
-
-#### Expected Results
-- Startup avoids eager Git status scans for all project rows.
-- Opening a project menu through click or right-click still loads that project's Git status on demand.
-- Menus re-measure placement after async Git status updates add the `New worktree` row.
-- `New worktree` remains available for Git-backed projects and hidden for non-Git projects.
-- Project menus remain usable and visually consistent in both light and dark themes.
-
-#### Rollback/Cleanup
-- None.
-
----
-
-### Thread archive recovery and sidebar pruning
-
-#### Feature/Change Name
-Deleting a thread recovers from Codex `no rollout found` archive failures and removes successfully archived threads from the sidebar immediately.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev`)
-2. Codex CLI available on `PATH`
-3. At least one normal thread and one newly-created thread that has not yet produced a rollout
-4. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, create a new empty thread from the sidebar.
-2. Open that thread's menu and choose `Delete thread`.
-3. Confirm the thread disappears from the sidebar without a `no rollout found` error.
-4. Rename another visible thread, then delete it.
-5. Confirm the renamed thread disappears immediately and does not reappear after sidebar refresh/background pagination.
-6. Call `thread/list` with `archived:false` through `/codex-api/rpc` and confirm the deleted thread ids are absent.
-7. Call `thread/list` with `archived:true` and confirm the deleted thread ids are present.
-8. Switch to dark theme and repeat steps 1-5.
-
-#### Expected Results
-- Empty or not-yet-materialized threads are archived after CodexUI sets a fallback name and retries.
-- Already archived threads are treated as archived instead of surfacing a stale `no rollout found` error.
-- The sidebar prunes archived ids from its accumulated paginated list before refreshing.
-- Older unarchived threads may appear as the list refills, but archived threads do not remain visible.
-- Behavior is consistent in light and dark themes.
-
-#### Rollback/Cleanup
-- None.
 ### Unread thread cutoff state
 
 #### Feature/Change Name
@@ -647,67 +648,6 @@ The accidental `npx run dev` command starts the repository dev wrapper instead o
 
 #### Rollback/Cleanup
 - Stop any dev server process started for validation.
-
----
-
-### Selected skills visible on sent chat messages
-
-#### Feature/Change Name
-Selected composer skills are shown as skill chips on the user message after send/history load.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev`)
-2. At least one installed skill is available in the composer `Skills` dropdown
-3. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, open an existing thread or start a new thread.
-2. Open the composer `Skills` dropdown and select one skill.
-3. Type and send a short message.
-4. Confirm the sent user message shows a `Skill` chip with the selected skill name.
-5. Click the skill chip and confirm the current browser tab opens the skill `SKILL.md` file through the local browse view.
-6. Refresh or reopen the thread and confirm the same skill chip remains visible and clickable in history.
-7. Switch to dark theme and repeat steps 2-6 with another message.
-
-#### Expected Results
-- Selected skills are visible on the user message, not only in the composer before send.
-- Skill chips show the skill name and expose the skill path in the tooltip.
-- Skill chips link to the selected skill file using the local browse route in the current tab.
-- Skill chips remain visible after thread history reload.
-- Skill chips are readable in both light and dark themes.
-
-#### Rollback/Cleanup
-- Remove disposable test messages/threads if needed.
-
----
-
-### Session skill recovery cache and multi-message placement
-
-#### Feature/Change Name
-Recovered selected-skill metadata is cached per session log and attached to the latest user message in the turn.
-
-#### Prerequisites/Setup
-1. Dev server running (`pnpm run dev`)
-2. At least one installed skill is available in the composer `Skills` dropdown
-3. Light theme and dark theme both available from the appearance switcher
-
-#### Steps
-1. In light theme, open an existing thread or start a new thread.
-2. Select one skill from the composer `Skills` dropdown.
-3. Type and send a short message.
-4. Refresh or reopen the same thread twice.
-5. Confirm the sent user message still shows one skill chip and does not accumulate duplicate chips.
-6. Switch to dark theme and repeat steps 2-5 with another message.
-7. Run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts`.
-
-#### Expected Results
-- Skill metadata recovered from session JSONL remains visible after repeated history loads.
-- Repeated loads reuse the unchanged session recovery parse instead of reparsing the same log for every turn-bearing RPC.
-- In turns with multiple user-message items, recovered skill chips are attached to the latest user message in that turn.
-- Skill chips remain readable in both light and dark themes.
-
-#### Rollback/Cleanup
-- Remove disposable test messages/threads if needed.
 
 ---
 
@@ -908,7 +848,7 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Steps
 1. In light theme, send a message containing: `Added [`TrustedBrowserLauncher.kt`](/home/ubuntu/andClaw-srcmatch/app/src/main/java/com/coderred/andclaw/ui/util/TrustedBrowserLauncher.kt)`.
 2. Confirm the rendered message shows one clickable file link with visible text `TrustedBrowserLauncher.kt`.
-3. Click the link and confirm it opens local browse for `/home/ubuntu/andClaw-srcmatch/app/src/main/java/com/coderred/andclaw/ui/util/TrustedBrowserLauncher.kt`.
+3. Click the link and confirm it opens the local editor for `/home/ubuntu/andClaw-srcmatch/app/src/main/java/com/coderred/andclaw/ui/util/TrustedBrowserLauncher.kt`.
 4. Right-click the same link and choose `Copy link`, then paste it into a text field and inspect it.
 5. Switch to dark theme and repeat steps 1-4.
 
@@ -1728,39 +1668,6 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - If needed, run another sync pull/push to restore previous skill state in the sync repo.
 
-### Feature: Public shared skills pull overwrites only shared skills
-
-#### Prerequisites
-- App running from this repository with Skills Hub available.
-- GitHub skills sync is not configured/logged in.
-- Local shared skills directory exists at `~/.codex/skills/shared_skills`.
-
-#### Steps
-1. Create a temporary local-only skill folder under `~/.codex/skills/shared_skills`, or edit a tracked shared skill file in that directory.
-2. Note the parent `~/.codex/skills` status, including any unrelated local edits outside `shared_skills`.
-3. Open `Skills Hub`.
-4. Trigger `Pull` from the `Skills Sync (GitHub)` panel.
-5. Wait for the pull success toast.
-6. Inspect `~/.codex/skills/shared_skills` and compare it with the public `OpenClawAndroid/skills` `android` branch.
-7. Inspect `~/.codex/skills` and verify unrelated parent-level files were not reset or cleaned by the unauthenticated pull.
-8. If `~/.codex/skills/shared_skills/.git` is a git file or worktree/submodule-style pointer, repeat the pull and verify the nested repo is not reinitialized.
-9. Inspect the `/codex-api/skills-sync/pull` response and verify `data.synced` matches the number of direct shared skill folders with `SKILL.md`.
-10. In light theme, verify the Skills Hub list reloads and does not show stale local-only skills.
-11. Switch to dark theme and verify the same Skills Hub state remains readable and current.
-
-#### Expected Results
-- Public unauthenticated pull resets only the nested `shared_skills` repo to the public upstream `android` branch.
-- Local uncommitted edits and local-only untracked skill folders inside `shared_skills` are removed by the pull.
-- Parent-level `~/.codex/skills` files outside `shared_skills` are not reset or cleaned.
-- Existing git-file/worktree/submodule-style shared skills repos are reused, not reinitialized.
-- The pull response reports the shared skills count from `~/.codex/skills/shared_skills`, not the parent skills directory.
-- The installed skills list reloads immediately after the pull in both light and dark theme.
-- Private GitHub sync repos still preserve local edits through the bidirectional sync path.
-
-#### Rollback/Cleanup
-- Recreate any intentionally removed local-only shared skill if it should be kept.
-- Use private sync `Push` only after confirming the public pull result should be mirrored elsewhere.
-
 ### Feature: Force Refresh Skills button in Skills Sync panel
 
 #### Prerequisites
@@ -2142,6 +2049,59 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 
 #### Rollback/Cleanup
 - Close any opened file tabs and remove temporary test messages if needed.
+
+### Feature: Conversation turn avatars show agent and user images
+
+#### Prerequisites
+- App server is running from this repository.
+- Open a thread that already contains at least one assistant message and one user message, or send a short prompt to create them.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the app in light theme and select a thread with both user and assistant replies.
+2. Confirm each assistant turn starts with a 64px square avatar on its own line.
+3. Confirm each user turn starts with the provided 64px square avatar on its own line and the message content starts on the next line.
+4. If needed, send a short prompt such as `avatar smoke test` and confirm both turns show the avatar first, then the message content starts on the next line.
+5. Switch to dark theme and repeat the same check on the same thread.
+
+#### Expected Results
+- Each assistant turn begins with a visible 64px square agent avatar on its own line.
+- Each user turn begins with a visible 64px square user avatar on its own line.
+- The message content starts on the next line instead of running directly after the avatar.
+- The avatar image comes from `public/icons/agent-avatar.png`.
+- The user avatar image comes from `public/icons/user-avatar.png`.
+- The avatar stays readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Delete or ignore any disposable test thread/message created for the check.
+
+### Feature: Composer @ search includes folders and symlinks
+
+#### Prerequisites
+- Start the app from this repository (`pnpm run dev`).
+- Open a thread whose `cwd` contains at least one folder and one symlink you can safely reference.
+- Have a temporary folder and symlink available inside the workspace if the current tree does not already contain one.
+
+#### Steps
+1. Switch the app to `Light` theme.
+2. Focus the composer and type `@` followed by a folder name from the current workspace.
+3. Confirm a folder result appears in the mention list and shows a folder-style icon.
+4. Select the folder result and confirm it becomes a file attachment chip.
+5. Type `@` again and search for a symlink path or symlink target name.
+6. Confirm the symlink result appears with a symlink indicator and can be selected.
+7. Send the message and confirm the attached folder/symlink path is preserved in the sent message.
+8. Switch the app to `Dark` theme and repeat steps 2-7.
+
+#### Expected Results
+- `@` search returns both files and folders from the workspace.
+- Symlinked paths also appear in the suggestion list.
+- Folder rows use a folder icon and symlink rows are visibly marked.
+- Selected folder and symlink paths attach the same way as file paths.
+- Light theme and dark theme both keep the suggestion list readable.
+
+#### Rollback/Cleanup
+- Remove any temporary symlink or folder created only for this test.
+- Clear attached chips or discard the test message if you do not want to keep it.
 
 ### Feature: Frontend missing-entry 404 page auto-redirects to chat
 
@@ -2706,12 +2666,12 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 1. Send this exact message:
    `[hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)`
 2. In the rendered message, confirm it appears as one clickable file link.
-3. Click the link and confirm it opens local browse for the full file path.
+3. Click the link and confirm it opens the local editor for the full file path.
 4. Right-click and use `Copy link`, then verify pasted URL still points to the same full path.
 
 #### Expected Results
 - Markdown link is parsed as one link token (not split at `)` inside the path).
-- Clicking navigates to the full file path in local browse view.
+- Clicking navigates to the full file path in local editor view.
 - Copied link contains the complete encoded path.
 
 #### Rollback/Cleanup
@@ -2729,12 +2689,12 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
    [`/Users/igor/temp/TestChat/qwe.txt`](/Users/igor/temp/TestChat/qwe.txt)
 2. In the rendered message, confirm it appears as one clickable file link.
 3. Verify the visible link text is `/Users/igor/temp/TestChat/qwe.txt` (without backticks).
-4. Click the link and confirm it opens local browse for the full file path.
+4. Click the link and confirm it opens the local editor for the full file path.
 
 #### Expected Results
 - Backticks inside markdown label do not break markdown-link parsing.
 - The label renders as plain link text (no backtick glyphs).
-- Clicking opens `/codex-local-browse/Users/igor/temp/TestChat/qwe.txt`.
+- Clicking opens `/codex-local-edit/Users/igor/temp/TestChat/qwe.txt`.
 
 #### Rollback/Cleanup
 - Remove test file if it was created only for this verification.
@@ -2762,6 +2722,71 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 
 #### Rollback/Cleanup
 - Remove `<project cwd>/redroid_mainactivity.png` if it was created only for this verification.
+
+### Feature: TestChat markdown GFM + KaTeX render check
+
+#### Prerequisites
+- App is running from this repository.
+- `TestChat` is available as a project and opened in the composer.
+- Verify once in light theme and once in dark theme.
+
+#### Steps
+1. Send a message with a unique marker plus mixed markdown:
+   `# GFM + KaTeX render check`
+   `> Blockquote should render as markdown.`
+   `- [x] rendered task item`
+   `- [ ] pending task item`
+   `| Feature | Result |`
+   `| --- | --- |`
+   `| GFM table | ok |`
+   `File link: [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)`
+   `Inline math $E=mc^2$ and display math:`
+   `$$`
+   `\\int_0^1 x^2\\,dx = \\frac{1}{3}`
+   `$$`
+   `\`\`\`ts`
+   `const answer: number = 42`
+   `\`\`\``
+2. Locate the rendered row by the unique marker.
+3. Confirm the row contains a parsed file link, table, task markers, KaTeX, and highlighted code.
+4. Verify the file link has `href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/hosting_manager.py"`, `title="/home/ubuntu/Documents/New Project (2)/hosting_manager.py"`, and visible text `hosting_manager.py`.
+5. Save screenshots to `output/playwright/testchat-markdown-gfm-katex-cjs.png` and `output/playwright/testchat-markdown-gfm-katex-cjs-dark.png`.
+
+#### Expected Results
+- Markdown renders as GitHub-flavored content inside `TestChat`.
+- The file link keeps the full path and encodes spaces in the browse URL.
+- Task list items render as checkbox-style task markers.
+- KaTeX and code highlighting render in both light and dark theme.
+
+---
+
+### Feature: Conversation inline code, composer, and request-panel math-symbol fallback
+
+#### Prerequisites
+- App is running from this repository.
+- `TestChat` is available as a project and opened in the composer.
+- A thread is available that contains inline code spans or fenced code blocks with symbols such as `⊑`, `∧`, `⊥`, `⊔`, `¬`, `≥`, and `ω`.
+- A pending user-input or elicitation request is available in the thread, or can be triggered in the current session.
+- A mobile viewport is available for the font check.
+
+#### Steps
+1. Open the target TestChat thread in light theme.
+2. Confirm inline code spans render symbols like `⊑`, `∧`, `⊥`, `⊔`, `¬`, `≥`, and `ω` with the same light regular-looking fallback as nearby Latin code text, not a thicker system fallback.
+3. Confirm fenced code blocks render the same symbols without the bold mobile fallback.
+4. Type the same symbols into the composer input and confirm they do not switch to the thicker system fallback.
+5. Open the pending request panel and confirm the request title, question text, option labels, and preview text render the same symbols without the thicker fallback.
+6. Switch to dark theme and repeat steps 2-5.
+7. Repeat steps 2-6 in a mobile viewport.
+
+#### Expected Results
+- Inline code keeps the symbol glyphs visually light and consistent with Latin code text.
+- Fenced code blocks no longer show thick mobile fallback glyphs for math symbols.
+- The composer input renders math symbols with the same lighter fallback while normal text remains readable.
+- Pending request panels render the same symbols with the same lighter fallback in both light and dark themes.
+- The result holds on mobile and desktop.
+
+#### Rollback/Cleanup
+- None.
 
 ---
 
@@ -2898,7 +2923,7 @@ stays at `source: "NoValues"` permanently. Feature gate `505458` (worktree) retu
 ### Free Mode (OpenRouter)
 
 #### Feature
-Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI API key. Uses XOR-encrypted community keys that rotate randomly per request. Default model is `openrouter/free` — OpenRouter's meta-model that auto-routes to the least-loaded free model, avoiding per-model rate limits. Model selector shows only free models when free mode is on. Config is isolated from `~/.codex/config.toml` — state stored in `~/.codex/webui-free-mode.json` and passed to app-server via `-c` CLI args.
+Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI API key. Uses XOR-encrypted community keys that rotate randomly per request. Default model is `openrouter/free` — OpenRouter's meta-model that auto-routes to the least-loaded free model, avoiding per-model rate limits. Model selector shows only free models when free mode is on. Config stays inside the running codexUI session and is passed to app-server via `-c` CLI args.
 
 #### Prerequisites
 - Project built: `pnpm run build`.
@@ -2912,7 +2937,7 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 5. Verify the toggle turns on and model dropdown changes to `openrouter/free`.
 6. Click the model dropdown — verify it shows **only** free models (gemma, llama, qwen, etc.) and no GPT/OpenAI default models.
 7. Verify `~/.codex/config.toml` was NOT modified (no `model_provider` or `model` entries added).
-8. Verify `~/.codex/webui-free-mode.json` exists and contains `{"enabled":true,"apiKey":"sk-or-v1-...","model":"openrouter/free"}`.
+8. Verify the active app-server session is using the free-mode provider and that a restart resets the provider back to Codex defaults.
 9. Open a new thread and send a message (e.g. "Say hello").
 10. Verify a response comes back from a free OpenRouter model (may be rate-limited during high demand).
 11. Toggle **Free mode (OpenRouter)** OFF.
@@ -2953,7 +2978,7 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 
 #### Rollback/Cleanup
 - Remove `src/server/freeMode.ts`, revert changes in `codexAppServerBridge.ts`, `codexGateway.ts`, and `App.vue`.
-- Delete `~/.codex/webui-free-mode.json` to clear free mode state.
+- Restart codexUI to clear session-local free mode state.
 
 ### Feature: Codex.app Thread Provider Filter Patch (fix-codex-thread-filter.sh)
 
@@ -3182,12 +3207,12 @@ OpenCode Zen as built-in provider + API format selector for custom endpoints
 - OpenCode Zen appears in provider dropdown alongside Codex/OpenRouter/Custom
 - OpenCode Zen defaults to `wire_api = "chat"` (Chat Completions API)
 - Custom endpoints show an API format selector; default is "Responses API"
-- Provider selection and wireApi are persisted in `~/.codex/webui-free-mode.json`
+- Provider selection and wireApi stay inside the running codexUI session
 - Model list for OpenCode Zen is fetched from `https://opencode.ai/zen/v1/models`
 
 #### Rollback/Cleanup
 - Switch provider back to "Codex" to disable free mode
-- No config files outside the project are modified (state stored in `~/.codex/webui-free-mode.json`)
+- No config files outside the project are modified (state stays in process memory)
 
 ### env_key Authentication for Custom Providers (codex CLI v0.93.0)
 
@@ -3457,6 +3482,64 @@ Model defaults are stored per provider (no cross-provider leakage), and OpenRout
 
 #### Rollback/Cleanup
 - Set provider/model/api format back to preferred defaults
+
+### Moon Bridge provider switch and model catalog
+
+#### Feature/Change Name
+Moon Bridge appears as a provider option and uses only the locally generated Moon Bridge model catalog.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. Moon Bridge catalog generated at `~/.local/share/my-agent-configs/moonbridge/codex/models_catalog.json` or pointed to by `CODEXUI_MOONBRIDGE_MODEL_CATALOG`
+3. At least one existing thread to resume after switching providers
+
+#### Step-by-Step Actions
+1. Switch the UI to light theme.
+2. Open Settings and select `Moon Bridge` from the provider dropdown.
+3. Verify the provider-specific model dropdown shows only Moon Bridge catalog models, not OpenRouter or OpenCode Zen models.
+4. Start or reopen a thread under Codex, note the session/thread id, then switch to `Moon Bridge`.
+5. Verify the app restarts the backend and the same thread can be resumed after the switch.
+6. Switch the UI to dark theme and repeat the Settings check to confirm the provider row stays readable.
+
+#### Expected Results
+- `Moon Bridge` is available alongside `Codex`, `OpenRouter`, `OpenCode Zen`, and `Custom endpoint`.
+- The model list comes from the Moon Bridge catalog only.
+- Switching providers preserves the thread/session id so the conversation can be resumed after the backend restarts, while provider state itself stays session-local.
+- The provider row and dropdown remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Switch provider back to `Codex`.
+- Remove or ignore the Moon Bridge catalog file if it was created just for testing.
+
+### Session-local provider selection
+
+#### Feature/Change Name
+Provider selection follows the current thread/session instead of staying global across the whole app.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. At least two threads or sessions available in the sidebar
+3. Moon Bridge catalog available if one of the test sessions uses `Moon Bridge`
+4. Light and dark themes available from Settings
+
+#### Step-by-Step Actions
+1. Open the app in light theme.
+2. Select thread/session A and set Provider to `Moon Bridge`.
+3. Confirm the model dropdown only shows Moon Bridge catalog models.
+4. Switch to thread/session B that was not configured for Moon Bridge.
+5. Confirm Provider switches back to `Codex` for that session and the model dropdown shows Codex models.
+6. Switch back to session A and confirm `Moon Bridge` is restored.
+7. Switch to dark theme and repeat steps 2-6 once more.
+
+#### Expected Results
+- Provider selection is stored per session/thread, not as a single global UI preference.
+- Switching sessions restores the provider that belongs to that session.
+- Unconfigured sessions default to `Codex`.
+- The model list follows the active session provider instead of leaking the previous session's provider models.
+- Light and dark settings surfaces remain readable while switching providers and sessions.
+
+#### Rollback/Cleanup
+- Switch any test sessions back to `Codex` before leaving them, or close the test threads if they were created only for verification.
 
 ---
 
@@ -4525,7 +4608,7 @@ The thread overflow menu includes a `Copy path` item that copies the selected th
 5. Reopen the same menu in dark theme and verify the item remains readable and in the same position
 
 #### Expected Results
-- The menu order is `Add automation...` or `Manage automations...`, `Browse files`, `Copy path`, `Export chat`, `Create chat fork`, `Rename thread`, `Delete thread`
+- The menu order is `Add automation...`, `Browse files`, `Copy path`, `Export chat`, `Create chat fork`, `Rename thread`, `Delete thread`
 - Clicking `Copy path` closes the menu
 - Clipboard contents equal the thread's `cwd` path
 - Light theme and dark theme both keep the menu item readable
@@ -4958,206 +5041,467 @@ Managed worktree threads remain visible under their matching canonical workspace
 
 ---
 
-### Worktree creation persists across refresh
+### Local editor follows system theme and separates CJK font fallback
 
 #### Feature/Change Name
-Newly created temporary and permanent worktrees are persisted in workspace roots so their threads remain visible after a full browser refresh.
+The `/codex-local-edit/...` Ace editor follows the browser/system light or dark color scheme, keeps Latin/code glyphs on a monospace font, and renders Chinese text through the system UI CJK font fallback.
 
 #### Prerequisites/Setup
 1. Dev server running (`pnpm run dev`)
-2. A Git-backed workspace root is registered and selected in the Start new thread screen
-3. Light theme and dark theme both available from the appearance switcher
+2. A text file containing mixed English, paths, code spans, and Chinese text is available
+3. Browser or device system appearance can be switched between light and dark
+4. A mobile or narrow viewport is available for checking the editor font rendering
 
 #### Steps
-1. In light theme, open Start new thread for the Git-backed workspace root.
-2. Select `New worktree`, send a unique first prompt, and wait for the thread page to open.
-3. Note the created worktree path from the selected folder or thread metadata.
-4. Refresh the browser tab.
-5. Confirm the new worktree-backed project/thread remains visible in the sidebar and can be opened.
-6. Open the project action menu for the original Git-backed project and create a permanent named worktree.
-7. Confirm the permanent worktree appears in the folder/project list, then refresh the browser tab.
-8. Confirm the permanent worktree remains visible after refresh.
-9. Switch to dark theme and repeat steps 1 through 5 with a second unique temporary worktree prompt.
+1. Open the mixed-language file through a `/codex-local-edit/...` URL in light system/browser appearance.
+2. Confirm the toolbar, gutter, active line, selection, and editor surface use a light theme.
+3. Confirm Latin letters, numbers, punctuation, and paths continue to align as monospace text.
+4. Confirm Chinese text renders with one consistent non-heavy system CJK style instead of mixed fallback glyphs.
+5. Switch the browser or system appearance to dark and reload or revisit the same editor URL.
+6. Confirm the page and Ace editor switch to the dark theme and remain readable.
+7. In a mobile viewport, repeat steps 3 and 4.
+8. Edit the file, click `Save`, and confirm the status changes to `Saved`.
 
 #### Expected Results
-- Temporary worktree creation writes the new worktree cwd to persisted workspace roots.
-- Permanent worktree creation writes the new worktree cwd to persisted workspace roots.
-- Full page refresh does not hide the newly created worktree project or its thread.
-- The same behavior works in light theme and dark theme.
-- If workspace-root persistence fails after `git worktree add`, the request fails cleanly and best-effort rollback removes the created worktree instead of leaving retry-prone orphaned worktrees.
+- The standalone editor no longer stays fixed on the dark `tomorrow_night` theme in light system appearance.
+- Light and dark system appearances both theme the surrounding toolbar and Ace editor consistently.
+- Latin/code text remains monospace.
+- Chinese text uses a consistent lighter CJK fallback on mobile instead of alternating with a heavy-looking font.
+- Saving still writes the edited file successfully.
 
 #### Rollback/Cleanup
-- Remove temporary test worktrees with `git worktree remove --force <worktree-path>`.
-- Delete any empty temporary parent directory left under `$CODEX_HOME/worktrees/<id>`.
-- Remove permanent test worktrees with `git worktree remove --force <worktree-path>` and delete their test branch if needed.
+- Revert any disposable text edits made during validation.
 
 ---
 
-### Sidebar chats show more projectless chats
+### Local editor copy reference button
 
 #### Feature/Change Name
-The sidebar Chats section lists the first 10 projectless chats, offers Show more for the rest, and no longer shows the per-section filter button.
+The `/codex-local-edit/...` editor includes a `Copy ref` button that copies the current file path plus the selected line range, or the current line when there is no selection.
 
 #### Prerequisites/Setup
 1. Dev server running (`pnpm run dev`)
-2. Thread history contains more than 10 projectless chats
-3. Light theme and dark theme both available from the appearance switcher
+2. A text file with several visible lines is available
+3. Browser clipboard access is available
+4. Browser or device appearance can be switched between light and dark
 
 #### Steps
-1. In light theme, open the sidebar Chats section.
-2. Count the visible projectless chat rows and confirm only 10 rows are shown initially.
-3. Click Show more and confirm older projectless chat rows beyond the first 10 appear.
-4. Click Show less and confirm the Chats section returns to 10 visible rows.
-5. Confirm the Chats section header only shows the New chat action and does not show a filter button.
-6. Use the main sidebar search button and confirm global thread search still opens and filters chats/projects without the 10-row browsing limit.
-7. Switch to dark theme and repeat steps 1-6.
+1. Open the file through a `/codex-local-edit/...` URL in light appearance.
+2. Select a span covering multiple lines.
+3. Click `Copy ref`.
+4. Paste the clipboard contents into a text field or clipboard inspector and confirm the output is `/absolute/path/to/file:start-end`.
+5. Clear the selection, place the cursor on a single line, and click `Copy ref` again.
+6. Confirm the clipboard now contains `/absolute/path/to/file:line`.
+7. Switch the browser or system appearance to dark and repeat steps 2-6.
 
 #### Expected Results
-- The Chats section shows 10 projectless chats by default according to the selected chat sort mode.
-- Show more expands the section to all projectless chats, and Show less restores the 10-row default.
-- The Chats header does not include a filter action.
-- The New chat action remains available.
-- The main sidebar search remains functional.
-- Rows and header actions remain readable in light and dark themes.
+- The editor shows a `Copy ref` button alongside save controls.
+- Multi-line selections copy a 1-based inclusive line range.
+- Single-line or collapsed selections copy the current line only.
+- Light theme and dark theme both keep the toolbar and status text readable.
+
+#### Rollback/Cleanup
+- Restore any previous clipboard contents manually if needed.
+
+---
+
+### Chinese slash text does not become a file link
+
+#### Feature/Change Name
+Plain Chinese prose containing `/`, such as `系统浅/深色主题`, is not split into an absolute-path file link.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A TestChat thread or disposable local chat is available
+3. Light theme and dark theme are available from the appearance switcher
+
+#### Steps
+1. In light theme, send or render a message containing `本地编辑页的系统浅/深色主题、中文字体都正常。`
+2. Confirm the full text `系统浅/深色主题` remains plain inline text.
+3. Confirm `/深色主题` is not blue, clickable, or rendered as a `.message-file-link`.
+4. Send or render a separate message containing a real absolute path such as `/tmp/example.txt`.
+5. Confirm the real absolute path still renders as a file link.
+6. Switch to dark theme and repeat steps 1 through 5.
+
+#### Expected Results
+- Chinese prose with an internal slash remains plain text in both light and dark themes.
+- The renderer does not split off the slash tail as an absolute path.
+- Real absolute paths that start at a valid boundary still render as local file links.
+
+#### Rollback/Cleanup
+- Delete any disposable validation messages or threads if needed.
+
+---
+
+### Local browse pages follow system theme
+
+#### Feature/Change Name
+`/codex-local-browse/...` directory pages and related local browse surfaces follow the browser or system light/dark theme instead of staying fixed on one palette.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A readable folder path such as `/root/work/my-agent-configs` is available
+3. Browser or device appearance can be switched between light and dark
+
+#### Steps
+1. Open a `/codex-local-browse/...` directory page in light appearance.
+2. Confirm the page background, directory rows, parent link, open button, and edit icons use the light palette.
+3. Switch the browser or system appearance to dark and reload the same directory page.
+4. Confirm the same elements switch to the dark palette and remain readable.
+5. Repeat the check on a narrow/mobile viewport.
+
+#### Expected Results
+- Directory listings no longer use a hard-coded dark palette.
+- The page responds to the browser or system theme in both light and dark modes.
+- Buttons, row cards, and links remain readable on desktop and mobile widths.
 
 #### Rollback/Cleanup
 - None.
 
 ---
 
-### Docker Tailscale iOS proxies to host codexUI
+### Local browse entry create and delete actions
 
 #### Feature/Change Name
-Docker/Tailscale iOS deployment runs codexUI on the host and uses Docker only for the Tailscale Serve node.
+`/codex-local-browse/...` directory pages can create new files and directories in the current folder and delete listed entries from the same page.
 
 #### Prerequisites/Setup
-1. Docker Compose is available.
-2. Host Codex home exists at `~/.codex` and `codex login status` succeeds.
-3. Tailscale auth for the `codexui-ios` node is already configured, or `TS_AUTHKEY` is available.
-4. Light theme and dark theme are both available from Settings.
+1. Dev server running (`pnpm run dev`)
+2. A disposable writable folder exists, for example `tmp/local-browse-entry-actions`
+3. Browser or device appearance can be switched between light and dark
 
 #### Steps
-1. Run `scripts/docker-tailscale-ios.sh up`.
-2. Confirm `tmux has-session -t codexui-host` succeeds.
-3. Confirm `docker ps --filter name=codexui` shows `codexui-tailscale` but does not show a running `codexui-ios` web UI container.
-4. Run `scripts/docker-tailscale-ios.sh status` and confirm the host codexUI URL uses a non-loopback host IP, such as `http://10.101.0.11:5900`.
-5. Confirm Tailscale Serve status proxies to the same host codexUI URL.
-6. From the server, call `curl -fsSI http://<host-ip>:5900/` and confirm HTTP 200.
-7. Open the iOS Tailscale Serve URL in light theme and confirm existing host sessions are listed.
-8. Send a test message in a host-backed session and confirm a normal assistant response starts.
-9. Switch to dark theme and confirm the session list and chat view remain readable.
-10. From Mac without Tailscale, run `ssh -N -L 15900:<host-ip>:5900 uvxiao@115.27.161.184`, open `http://127.0.0.1:15900`, and confirm the same UI loads.
+1. In light appearance, open the disposable folder through `/codex-local-browse/...`.
+2. Enter `draft.md` in the new-file input and click `Create file`.
+3. Confirm the page opens `/codex-local-edit/.../draft.md` and the file exists on disk.
+4. Return to the directory browse page.
+5. Enter `docs` in the new-directory input and click `Create dir`.
+6. Confirm the page refreshes and `docs/` appears as a directory row, and verify `docs` is a real directory on disk.
+7. Click the delete button for `draft.md`, confirm the browser prompt, and verify the row disappears after refresh.
+8. Click the delete button for `docs/`, confirm the directory delete prompt, and verify the row disappears after refresh.
+9. Switch to dark appearance and reload the same directory browse page.
+10. Repeat create/delete with `dark-draft.md` and `dark-docs`.
 
 #### Expected Results
-- codexUI and Codex app-server run on the host, using host `~/.codex`, host proxy environment, host certificates, and host filesystem paths.
-- Docker owns only the Tailscale node; there is no Docker codexUI container and no Docker Codex auth copy.
-- Existing host sessions appear without session-history bind mounts or copied auth.
-- Tailscale Serve reaches host codexUI through the non-loopback host URL.
-- Mac SSH forwarding reaches the same host codexUI URL without Tailscale.
-- Light and dark theme chat surfaces remain readable through the Tailscale Serve URL.
+- New files are created in the currently browsed folder only.
+- New directories are created as real filesystem directories, not zero-byte files.
+- Newly created text files open in the local editor after creation.
+- Delete removes the selected file or directory after confirmation and refreshes the listing.
+- The new inputs, create buttons, status text, and delete buttons remain readable in both light and dark themes.
 
 #### Rollback/Cleanup
-- Run `scripts/docker-tailscale-ios.sh down` to stop the deployment.
-- If a manual SSH tunnel was started, stop it with Ctrl-C.
+- Remove the disposable folder, for example `rm -rf tmp/local-browse-entry-actions`.
 
 ---
 
-### Mac Dock control app for CodexUI
+### Local browse raw links and broken symlinks
 
 #### Feature/Change Name
-Mac-side AppleScript control app opens codexUI through SSH and controls host codexUI plus Docker Tailscale services.
+`/codex-local-browse/...` directory pages tolerate broken symlinks and expose a working raw-file action for editable files.
 
 #### Prerequisites/Setup
-1. Mac can SSH to `uvxiao@115.27.161.184` without an interactive password prompt.
-2. This repository, or at least `scripts/macos-codexui-control.applescript`, is available on the Mac.
-3. Server deployment paths match the defaults in the AppleScript properties.
-4. Host codexUI and Docker Tailscale can be managed by `scripts/docker-tailscale-ios.sh`.
+1. Dev server running (`pnpm run dev`)
+2. A readable folder with a broken symlink is available, for example `/root/.codex/skills`
+3. A disposable folder with an editable text file is available
+4. Browser or device appearance can be switched between light and dark
 
 #### Steps
-1. On the Mac, run `osacompile -o ~/Applications/CodexUI.app scripts/macos-codexui-control.applescript`.
-2. Open `~/Applications/CodexUI.app`.
-3. Choose `Test status` and confirm a status dialog shows the host codexUI HTTP 200 check and Tailscale Serve target.
-4. Reopen the app, choose `Open CodexUI`, and confirm it opens `http://127.0.0.1:15900` through an SSH tunnel.
-5. Reopen the app, choose `Restart services`, and confirm the remote script completes and offers to open the UI.
-6. Reopen the app, choose `Open iOS URL`, and confirm it opens `https://codexui-ios.tail27dc02.ts.net`.
-7. Reopen the app, choose `Stop services`, cancel once, then repeat and confirm stop works only after choosing `Stop`.
-8. Start a stale listener on local port `15900`, choose `Open CodexUI`, and confirm the app clears the stale listener before opening the real UI.
+1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/server/httpServer.test.ts`.
+2. Open `/codex-local-browse/root/.codex/skills` in light appearance.
+3. Confirm the directory page renders instead of returning `File not found`.
+4. Open the disposable folder through `/codex-local-browse/...`.
+5. Click the `Open raw` icon for the editable text file.
+6. Confirm the browser opens the raw file response instead of redirecting to `/codex-local-edit/...`.
+7. Switch to dark appearance and repeat steps 2-6.
 
 #### Expected Results
-- The compiled Dock app provides one-click access to codexUI from Mac.
-- `Open CodexUI` creates or reuses an SSH tunnel without opening a terminal window.
-- `Open CodexUI` verifies the local HTTP endpoint, not only whether port `15900` is open.
-- `Test status`, `Restart services`, and `Stop services` execute the remote deployment wrapper over SSH.
-- The app does not require Docker or Tailscale on the Mac.
+- Broken symlinks are skipped during directory rendering and do not make the entire directory return 404.
+- Normal files, directories, and valid symlinks continue to appear in the listing.
+- The regular file name link still opens editable text files in the local editor.
+- The `Open raw` action opens `/codex-local-browse/...?...raw=1` and returns the raw file content.
+- Directory rows and action buttons remain readable in both light and dark themes.
 
 #### Rollback/Cleanup
-- Remove `~/Applications/CodexUI.app`.
-- Stop any SSH tunnel created by the app with `pkill -f 'ssh .*15900:10.101.0.11:5900'` if needed.
+- Remove disposable files or folders created for the check.
 
 ---
 
-### Upstream and Light-of-Hers feature import
+### Local markdown preview uses browse routes and system theme
 
 #### Feature/Change Name
-Import upstream `friuns2/codexUI` changes and all feature changes from `Light-of-Hers/codexUI` branch `crz/dev`.
+Markdown files opened through the local editor expose a preview button that renders the preview through the local browse routes and matches the browser or system theme.
 
 #### Prerequisites/Setup
-1. Install dependencies with `npm install` or reuse the repository `node_modules`.
-2. Ensure Codex CLI is authenticated for normal Codex provider testing.
-3. For provider-backed model testing, configure OpenCode Zen or Moon Bridge provider state from the app settings.
-4. Start the app with `pnpm run dev --host 127.0.0.1 --port 4173`.
-5. Test once in light theme and once in dark theme.
+1. Dev server running (`pnpm run dev`)
+2. A `.md` or `.markdown` file is available
+3. Browser or device appearance can be switched between light and dark
 
 #### Steps
-1. Open `http://127.0.0.1:4173`.
-2. Confirm the sidebar, project list, automations entry points, and existing chats load normally.
-3. Open a thread and scroll through older turns; confirm paged thread loading continues to show conversation content without duplicate or missing visible turns.
-4. Send a normal Codex message and confirm the assistant response appears.
-5. Enable a provider-backed mode such as OpenCode Zen, choose a provider model, refresh the page, and confirm the provider-specific model selection is restored instead of falling back to the global Codex model.
-6. Compose a message using markdown preview, file mention, and skill mention controls; confirm the composer can switch between editing and preview without losing text.
-7. Expand the composer to fullscreen and collapse it again; confirm the draft content, selected mentions, and send controls remain intact.
-8. Send or load a message containing markdown code spans, normal URLs, `codex://threads/...` links, and file references with line numbers; confirm each link type renders and opens through the expected route.
-9. Trigger an interrupted or queued turn if available; confirm queue state and recovered/interrupted-turn content remain visible after refresh.
-10. Switch to dark theme and repeat steps 2, 6, 7, and 8.
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Confirm a `Preview` button appears only for markdown files.
+3. Click `Preview` and confirm the rendered markdown appears in the preview pane.
+4. Confirm links, images, and code blocks render in the preview.
+5. Switch the browser or system appearance to dark and confirm the preview page matches it.
 
 #### Expected Results
-- Upstream route exclusions, bounded thread payload handling, recovered turn merging, provider state, free-mode defaults, markdown rendering, mention controls, and fullscreen composer behavior work together.
-- Provider-backed model lists are requested with provider models required, and provider-scoped selected models survive refresh.
-- Markdown preview, file mentions, skill mentions, and fullscreen composer controls remain readable and usable in light and dark themes.
-- File links, thread links, and normal URLs are parsed without breaking inline code rendering.
-- No duplicate requests, missing turns, or stale queue state are visible during the tested flows.
+- Markdown preview is available only for markdown files.
+- The preview content renders through the local browse preview route.
+- Preview surfaces stay readable in both light and dark themes.
 
 #### Rollback/Cleanup
-- Disable provider-backed mode if it was enabled only for testing.
-- Stop the `4173` dev server if it was started only for this verification.
+- Revert any disposable file edits made during validation.
 
----
+### Feature: Local markdown preview preserves scroll on edit
 
-### iOS Tailscale Serve restart recovery
-
-#### Feature/Change Name
-Tailscale iOS access keeps host codexUI unchanged and uses reproducible Tailscale Serve HTTP fallback plus `restart-tailscale` recovery for stale Serve or peer state.
-
-#### Prerequisites/Setup
-1. Build and run production codexUI with `scripts/docker-tailscale-ios.sh up`.
-2. iPhone is connected to Tailscale.
-3. Tailscale Serve status lists `https://codexui-ios.tail27dc02.ts.net/`, `http://codexui-ios.tail27dc02.ts.net/`, and `http://codexui-ios.tail27dc02.ts.net:8080/`.
+#### Prerequisites
+- App server is running from this repository.
+- A `.md` or `.markdown` file with enough content to scroll is available.
 
 #### Steps
-1. Run `scripts/docker-tailscale-ios.sh status`.
-2. Confirm the iPhone appears active in Tailscale status.
-3. On iOS Safari, open `http://codexui-ios.tail27dc02.ts.net:8080/?v=<timestamp>`.
-4. Confirm the app renders.
-5. Repeat the app check in iOS Safari light appearance and dark appearance.
-6. Run `scripts/docker-tailscale-ios.sh restart-tailscale`.
-7. Run `scripts/docker-tailscale-ios.sh status` again and confirm `:8080` Serve is still configured.
-8. Reopen the iOS Safari `:8080` URL and confirm the app still renders.
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Open preview and scroll the preview pane away from the top.
+3. Edit the file so the preview rerenders.
+4. Confirm the preview stays near the previous scroll position.
 
 #### Expected Results
-- Tailscale Serve proxies HTTPS, HTTP 80, and HTTP 8080 to the host codexUI server.
-- `restart-tailscale` restores the Docker Tailscale node and reapplies Serve without requiring a new auth flow.
-- The host app remains the normal codexUI bundle, without extra probe pages or Safari-only startup diagnostics.
-- Light and dark theme app surfaces remain readable.
+- The preview does not jump back to the top after rerendering.
+- The preview remains readable at the same approximate scroll position.
 
 #### Rollback/Cleanup
-- Run `scripts/docker-tailscale-ios.sh down` to stop the deployment.
+- Revert any disposable file edits made during validation.
+
+### Feature: Local markdown preview synchronizes editor and preview scroll
+
+#### Prerequisites
+- App server is running from this repository.
+- A `.md` or `.markdown` file with enough content to scroll is available.
+
+#### Steps
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Click `Preview` to show the rendered pane.
+3. Scroll the editor and confirm the preview follows the matching section.
+4. Scroll the preview and confirm the editor follows the corresponding source lines.
+5. Edit the file while the preview is open and confirm the preview stays on the same approximate section instead of jumping back to the top.
+6. Type several characters in the editor with preview open and confirm the editor viewport does not jump upward after the preview refreshes.
+
+#### Expected Results
+- Scrolling the editor keeps the preview aligned to the same content region.
+- Scrolling the preview keeps the editor aligned to the corresponding source lines.
+- Preview updates after edits keep the current position stable.
+- Typing in the editor does not trigger a reverse preview-to-editor scroll jump.
+
+#### Rollback/Cleanup
+- Revert any disposable file edits made during validation.
+
+### Feature: Resizable markdown preview split
+
+#### Prerequisites
+- App server is running from this repository.
+- A `.md` or `.markdown` file is available.
+- A mobile viewport or touch-capable browser context is available.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Click `Preview` to show the rendered pane.
+3. Drag the divider between editor and preview to widen the preview pane.
+4. Confirm the editor and preview resize live while dragging.
+5. Switch to a mobile viewport or touch-capable browser context and repeat the drag check.
+6. Switch to dark theme and repeat the desktop and mobile drag checks.
+
+#### Expected Results
+- The divider between editor and preview is draggable on desktop layouts.
+- The divider remains draggable on mobile or touch-capable layouts, but switches to a vertical split.
+- Preview size updates immediately while dragging and persists for the next markdown editor page.
+- The preview pane can be widened enough to read dense formulas or long rendered lines.
+- Light and dark preview surfaces remain readable during and after resizing.
+
+#### Rollback/Cleanup
+- Close the editor or refresh the page to clear any temporary state from the local split width.
+
+### Feature: Markdown preview double-click source jump
+
+#### Prerequisites
+- App server is running from this repository.
+- A `.md` or `.markdown` file is available.
+
+#### Steps
+1. Open a markdown file through `/codex-local-edit/...`.
+2. Click `Preview` to show the rendered pane.
+3. Double-click a rendered heading, paragraph, list item, or code block in the preview.
+4. Double-click rendered inline math and display math in the preview.
+5. Confirm the editor caret jumps to the matching source line.
+6. Repeat the check after editing the file so the preview rerenders.
+
+#### Expected Results
+- Double-clicking rendered markdown in the preview moves the editor to the corresponding source line.
+- Double-clicking formula text also moves the editor to the corresponding source line.
+- The preview keeps working after rerendering.
+- Link clicks still behave like normal links when they are not double-clicked.
+
+#### Rollback/Cleanup
+- Close the editor or refresh the page to clear any temporary state.
+
+### Feature: Composer markdown preview
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread composer is visible and editable.
+
+#### Steps
+1. Type a markdown-rich draft into the message input.
+2. Click the preview toggle button in the composer controls.
+3. Confirm headings, lists, links, code blocks, and math render in place.
+4. Toggle the preview off and on again after editing the draft.
+5. Repeat at a narrow mobile viewport and in dark theme.
+
+#### Expected Results
+- The composer shows a rendered markdown preview for the current draft.
+- The preview updates as the draft changes.
+- The toggle does not affect the draft content or attachments.
+- The preview and toggle remain readable in light and dark themes.
+
+#### Rollback/Cleanup
+- Close the thread or refresh the page to clear temporary state.
+
+### Feature: Assistant response original text toggle
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread contains an assistant response with markdown formatting such as headings, bold text, links, or fenced code.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Hover the assistant response toolbar and click `Show original`.
+3. Select a partial range inside the displayed raw markdown text.
+4. Click `Hide original` and confirm the raw text panel closes.
+5. Confirm the existing `Copy` button still copies the full response.
+6. Switch to dark theme and repeat steps 2-4.
+
+#### Expected Results
+- The raw markdown source appears below the rendered response without replacing the rendered view.
+- The raw source preserves markdown markers and line breaks and can be partially selected for manual copy.
+- The toggle label changes between `Show original` and `Hide original`.
+- The existing full-response copy behavior is unchanged.
+- Light and dark theme raw source panels and toolbar buttons remain readable.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Feature: Faster reload skips duplicate ancillary refresh
+
+#### Prerequisites
+- App server is running from this repository.
+- Browser profiling dependencies are installed.
+- A dev server can run on a non-conflicting port.
+
+#### Steps
+1. Start the dev server, for example `node scripts/dev.cjs --host 127.0.0.1 --port 5174`.
+2. From outside the repository root, run `PROFILE_BASE_URL=http://127.0.0.1:5174 PROFILE_ROUTE='/' PROFILE_WAIT_MS=6000 node /path/to/codexUI/scripts/profile-browser-runtime.cjs`.
+3. Open the generated JSON report under `output/playwright/`.
+4. Inspect `duplicateCounts` for `skillsList`, `rateLimitsRead`, and `providerModels`.
+5. Inspect the `apiRows` entries for `model/list`, `config/read`, `collaborationMode/list`, and `free-mode/status`.
+6. Run `./node_modules/.bin/vue-tsc --noEmit --pretty false`.
+
+#### Expected Results
+- Initial `refreshAll` does not schedule an ancillary refresh when provider synchronization is about to perform the startup ancillary refresh.
+- Startup profiling no longer shows two rounds of `skills/list`, `account/rateLimits/read`, `model/list`, `config/read`, and `collaborationMode/list` caused by the initialization sequence.
+- Startup profiling does not fetch `/codex-api/provider-models`; full provider model discovery remains reserved for explicit provider changes.
+- `free-mode/status` does not fetch the OpenRouter free-model catalog unless the active provider is OpenRouter.
+- The page still loads the thread list and then synchronizes provider state.
+- TypeScript check passes.
+
+#### Rollback/Cleanup
+- Stop only the temporary dev server started for this test.
+- Remove generated files under `output/playwright/` if they are not needed.
+
+### Feature: Auto-continue unexpectedly interrupted Codex turns
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread has an active Codex turn that can be interrupted by the backend or by a transient browser/session reconnect.
+- Debug logging is available for the local run if deeper inspection is needed.
+
+#### Steps
+1. Start a long-running turn in a thread.
+2. Trigger a non-user interruption condition such as refreshing the page or switching sessions while the turn is active.
+3. Wait for the app-server thread status to return to idle.
+4. Confirm the bridge starts a follow-up turn with `Please continue.` automatically.
+5. Start another long-running turn and click the UI stop button.
+6. Confirm the stopped turn does not auto-continue.
+7. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/api/normalizers/v2.test.ts`.
+
+#### Expected Results
+- Latest interrupted turns on idle threads are detected from `thread/read` snapshots.
+- Interruptions caused by `turn/interrupt` are recorded as intentional stops and skipped.
+- The automatic continuation resumes the thread before calling `turn/start`.
+- The automatic continuation reuses the model returned by `thread/resume` when available.
+- The targeted Vitest suite passes.
+
+#### Rollback/Cleanup
+- Stop any disposable test turn from the UI if it is still running.
+- Remove only temporary test threads if they were created solely for validation.
+
+### Feature: Provider-scoped app-server runtime pool
+
+#### Prerequisites
+- App server is running from this repository.
+- At least two providers are configurable from the sidebar, such as Codex plus OpenRouter, Moon Bridge, OpenCode Zen, or a custom endpoint.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Start the dev server on a non-conflicting port, for example `node scripts/dev.cjs --host 127.0.0.1 --port 5174`.
+2. Connect to `/codex-api/ws` and confirm it receives the `ready` notification without crashing the Vite dev server.
+3. In light theme, start a long-running turn with provider A.
+4. While the turn is active, switch the sidebar provider to provider B.
+5. Switch sessions or refresh the page, then return to the active thread.
+6. Confirm new turns use provider B while the provider A turn can continue delivering events.
+7. Repeat steps 3-6 in dark theme.
+8. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts`.
+9. Run `./node_modules/.bin/vue-tsc --noEmit --pretty false`.
+
+#### Expected Results
+- Opening the WebSocket no longer throws `Cannot read properties of undefined (reading 'onNotification')`.
+- Switching providers does not dispose the previous provider's app-server process.
+- Notifications from existing provider runtimes continue to reach SSE/WebSocket subscribers.
+- User-initiated stops are still recorded against the active runtime's queue processor.
+- Provider switching controls remain readable and usable in light and dark themes.
+- The targeted Vitest suite and TypeScript check pass.
+
+#### Rollback/Cleanup
+- Stop only the temporary dev server started for this test.
+- Switch the sidebar provider back to the preferred default after testing.
+
+### Feature: Expanded command rows show full command text
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread contains at least one `commandExecution` item with a long command that is visibly truncated in the collapsed row.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Click the command row to expand its output.
+3. Confirm the expanded panel shows a `Command` block with the full command text, not just the truncated row label.
+4. Confirm the `Command` block shows line numbers for each command line.
+5. Confirm the `Output` block shows line numbers for each output line.
+6. Confirm long command and output lines wrap inside their blocks and scroll vertically when they exceed the block heights.
+7. Click inside the `Command` block and press `Ctrl+A` or `Cmd+A`.
+8. Confirm only the command block contents are selected, not the rest of the thread.
+9. Click inside the `Output` block and press `Ctrl+A` or `Cmd+A`.
+10. Confirm only the output block contents are selected, not the rest of the thread.
+11. Hover the collapsed command label and confirm the full command is exposed via the tooltip.
+12. Switch to dark theme and repeat steps 2-11.
+
+#### Expected Results
+- Expanded command rows show the complete command string above the output.
+- The command and output blocks show non-selectable line numbers close to the left edge.
+- The output content remains visible and unchanged in its own line-numbered block below the command block.
+- The command and output blocks wrap long lines and scroll vertically when the wrapped content is taller than the block.
+- Select-all while focused inside either block selects only that block's text area.
+- The collapsed row still uses compact truncation for the inline label, but the full command is available on hover.
+- Both light and dark themes keep the command and output blocks readable.
+
+#### Rollback/Cleanup
+- No cleanup is required.

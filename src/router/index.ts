@@ -28,6 +28,11 @@ const router = createRouter({
       component: EmptyRouteView,
     },
     {
+      path: '/extension/:extensionId/:routeId?',
+      name: 'extension',
+      component: EmptyRouteView,
+    },
+    {
       path: '/new-thread',
       redirect: { name: 'home' },
     },

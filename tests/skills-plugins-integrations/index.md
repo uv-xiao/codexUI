@@ -35,3 +35,4 @@ Return to the [manual test index](../../tests.md).
 | [Feature: Nested skill bundles are grouped in discovery](nested-skill-bundles-are-grouped-in-discovery.md) |
 | [First-launch home card for Plugins and Apps](first-launch-home-card-for-plugins-and-apps.md) |
 | [Composer prompts inside Skills dropdown](composer-prompts-inside-skills-dropdown.md) |
+| [Feature: codexUI local extension host](codexui-local-extension-host.md) |

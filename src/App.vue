@@ -80,6 +80,35 @@
             </span>
           </button>
 
+          <template v-if="!isSidebarCollapsed">
+            <button
+              v-for="item in extensionSidebarItems"
+              :key="`${item.extensionId}:${item.routeId}`"
+              class="sidebar-skills-link"
+              :class="{ 'is-active': item.isActive }"
+              type="button"
+              @click="openExtensionRoute(item.extensionId, item.routeId)"
+            >
+              <span class="sidebar-skills-link-icon sidebar-extension-link-icon" aria-hidden="true">
+                <IconTablerBolt />
+              </span>
+              <span class="sidebar-skills-link-copy">
+                <span class="sidebar-skills-link-title">{{ item.label }}</span>
+                <span class="sidebar-skills-link-subtitle">{{ item.subtitle }}</span>
+              </span>
+            </button>
+            <div v-if="extensionRegistryErrors.length > 0" class="sidebar-extension-errors">
+              <p
+                v-for="item in extensionRegistryErrors"
+                :key="`${item.id}:${item.message}`"
+                class="sidebar-extension-error"
+                :title="item.message"
+              >
+                {{ item.id }}: {{ item.message }}
+              </p>
+            </div>
+          </template>
+
           <SidebarThreadTree ref="sidebarThreadTreeRef" :groups="projectGroups" :project-display-name-by-id="projectDisplayNameById"
             :project-git-repo-by-name="projectGitRepoByName"
             :project-cwd-by-name="projectCwdByName"
@@ -542,7 +571,7 @@
         :style="contentStyle"
       >
         <span v-if="isVirtualKeyboardOpen" class="content-keyboard-spacer" aria-hidden="true" />
-        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute">
+        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute || isExtensionRoute">
           <template #leading>
             <SidebarThreadControls
               v-if="isSidebarCollapsed || isMobile"
@@ -556,6 +585,9 @@
               <IconTablerBolt />
             </span>
             <span v-else-if="isAutomationsRoute" class="skills-route-header-icon automations-route-header-icon" aria-hidden="true">
+              <IconTablerBolt />
+            </span>
+            <span v-else-if="isExtensionRoute" class="skills-route-header-icon extension-route-header-icon" aria-hidden="true">
               <IconTablerBolt />
             </span>
           </template>
@@ -626,6 +658,9 @@
               @edit-automation="onEditAutomationFromPanel"
               @create-automation="onCreateAutomationFromPanel"
             />
+          </template>
+          <template v-else-if="isExtensionRoute">
+            <ExtensionRouteHost />
           </template>
           <template v-else-if="isHomeRoute">
             <div class="content-grid content-grid-home">
@@ -1250,12 +1285,15 @@ import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, Telegra
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
+import { fetchExtensionRegistry } from './api/extensions'
+import type { RegisteredExtension } from './extensions/extensionRegistry'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
 const ReviewPane = defineAsyncComponent(() => import('./components/content/ReviewPane.vue'))
 const DirectoryHub = defineAsyncComponent(() => import('./components/content/DirectoryHub.vue'))
 const AutomationsPanel = defineAsyncComponent(() => import('./components/content/AutomationsPanel.vue'))
+const ExtensionRouteHost = defineAsyncComponent(() => import('./components/content/ExtensionRouteHost.vue'))
 const ThreadPendingRequestPanel = defineAsyncComponent(() => import('./components/content/ThreadPendingRequestPanel.vue'))
 const QueuedMessages = defineAsyncComponent(() => import('./components/content/QueuedMessages.vue'))
 const RateLimitStatus = defineAsyncComponent(() => import('./components/content/RateLimitStatus.vue'))
@@ -1775,9 +1813,38 @@ const routeAutomationId = computed(() => {
   const raw = route.query.automationId
   return typeof raw === 'string' ? raw : ''
 })
+const routeExtensionId = computed(() => {
+  const raw = route.params.extensionId
+  return typeof raw === 'string' ? raw : ''
+})
+const routeExtensionRouteId = computed(() => {
+  const raw = route.params.routeId
+  return typeof raw === 'string' && raw.trim().length > 0 ? raw : 'home'
+})
+const extensionRegistryItems = ref<RegisteredExtension[]>([])
+const extensionRegistryErrors = ref<Array<{ id: string; message: string }>>([])
+const isExtensionRoute = computed(() => route.name === 'extension')
+const selectedExtension = computed(() => (
+  extensionRegistryItems.value.find((extension) => extension.id === routeExtensionId.value) ?? null
+))
+const selectedExtensionRoute = computed(() => (
+  selectedExtension.value?.routes.find((candidate) => candidate.id === routeExtensionRouteId.value) ?? null
+))
+const extensionSidebarItems = computed(() => extensionRegistryItems.value.flatMap((extension) =>
+  extension.sidebar.map((item) => ({
+    extensionId: extension.id,
+    routeId: item.routeId,
+    label: item.label,
+    subtitle: item.subtitle ?? extension.name,
+    isActive: isExtensionRoute.value &&
+      routeExtensionId.value === extension.id &&
+      routeExtensionRouteId.value === item.routeId,
+  })),
+))
 const contentTitle = computed(() => {
   if (isAutomationsRoute.value) return t('Automations')
   if (isSkillsRoute.value) return t('Skills')
+  if (isExtensionRoute.value) return selectedExtensionRoute.value?.label ?? selectedExtension.value?.name ?? t('Extension')
   if (isHomeRoute.value) return t('Start new thread')
   return selectedThread.value?.title ?? t('Choose a thread')
 })
@@ -1842,9 +1909,9 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 ))
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
-const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
+const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && !isExtensionRoute.value && selectedThreadId.value.trim().length > 0)
 const threadSessionId = computed(() => selectedThreadId.value.trim())
-const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && threadSessionId.value.length > 0)
+const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && !isExtensionRoute.value && threadSessionId.value.length > 0)
 const copiedThreadSessionId = ref('')
 let copiedThreadSessionIdResetTimer: ReturnType<typeof setTimeout> | null = null
 const isAccountSwitchBlocked = computed(() =>
@@ -1891,6 +1958,20 @@ function dismissFirstLaunchPluginsCard(): void {
 function onOpenPluginsHomeCard(): void {
   dismissFirstLaunchPluginsCard()
   void router.push({ name: 'skills', query: { tab: 'plugins' } })
+}
+
+async function loadExtensions(): Promise<void> {
+  try {
+    const registry = await fetchExtensionRegistry()
+    extensionRegistryItems.value = registry.extensions
+    extensionRegistryErrors.value = registry.errors
+  } catch (error) {
+    extensionRegistryItems.value = []
+    extensionRegistryErrors.value = [{
+      id: 'registry',
+      message: error instanceof Error ? error.message : 'Failed to load extensions.',
+    }]
+  }
 }
 
 function copyTextWithSelectionFallback(text: string): boolean {
@@ -2613,6 +2694,11 @@ function onSelectAutomationInPanel(automationId: string): void {
   if (route.name !== 'automations') return
   if (routeAutomationId.value === automationId) return
   void router.replace({ name: 'automations', query: automationId ? { automationId } : {} })
+}
+
+function openExtensionRoute(extensionId: string, routeId: string): void {
+  void router.push({ name: 'extension', params: { extensionId, routeId } })
+  if (isMobile.value) setSidebarCollapsed(true)
 }
 
 async function onEditAutomationFromPanel(payload: AutomationEditRequest): Promise<void> {
@@ -4389,7 +4475,7 @@ function onImplementPlan(payload: { turnId: string }): void {
 
 
 async function copySelectedThreadChat(): Promise<void> {
-  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value) return
+  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || isExtensionRoute.value) return
   if (!selectedThread.value || filteredMessages.value.length === 0) return
   const markdown = buildThreadMarkdown()
   try {
@@ -4910,6 +4996,7 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
 
 async function initialize(): Promise<void> {
   await router.isReady()
+  await loadExtensions()
   await refreshMoonBridgeModelIds().catch(() => {})
 
   if (route.name === 'thread' && routeThreadId.value) {
@@ -4922,7 +5009,7 @@ async function initialize(): Promise<void> {
   })
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)
-  } else if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
+  } else if (route.name === 'home' || route.name === 'skills' || route.name === 'automations' || route.name === 'extension') {
     primeSelectedThread('', { persist: false })
   }
   void loadAccountsState({ silent: true })
@@ -4946,7 +5033,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
     do {
       hasPendingRouteSync = false
 
-      if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
+      if (route.name === 'home' || route.name === 'skills' || route.name === 'automations' || route.name === 'extension') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
           await applySelectedProviderState().catch(() => {})
@@ -5020,7 +5107,7 @@ watch(
   () => selectedThreadId.value,
   async (threadId) => {
     if (!hasInitialized.value) return
-    if (!isRouteSyncInProgress.value && !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value) {
+    if (!isRouteSyncInProgress.value && !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && !isExtensionRoute.value) {
       if (!threadId) {
         if (route.name !== 'home') {
           await router.replace({ name: 'home' })
@@ -5358,6 +5445,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply bg-amber-500;
 }
 
+.sidebar-extension-link-icon {
+  @apply bg-sky-600;
+}
+
 .sidebar-skills-link-icon :deep(svg) {
   @apply h-5 w-5;
 }
@@ -5374,6 +5465,14 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply truncate text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500;
 }
 
+.sidebar-extension-errors {
+  @apply mx-2 mt-1 flex flex-col gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2;
+}
+
+.sidebar-extension-error {
+  @apply truncate text-xs font-medium text-red-700;
+}
+
 .sidebar-thread-controls-header-host {
   @apply ml-1;
 }
@@ -5384,6 +5483,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .automations-route-header-icon {
   @apply bg-amber-500 shadow-[0_16px_32px_-20px_rgba(245,158,11,0.9)];
+}
+
+.extension-route-header-icon {
+  @apply bg-sky-600 shadow-[0_16px_32px_-20px_rgba(2,132,199,0.9)];
 }
 
 .skills-route-header-icon :deep(svg) {

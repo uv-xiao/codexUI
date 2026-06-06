@@ -1,0 +1,11 @@
+{
+  "extensions": [
+    {
+      "id": "notes",
+      "path": "/home/uvxiao/.codex/worktrees/bdcd/notes/packages/codexui-notes-extension",
+      "settings": {
+        "runtimeBaseUrl": "http://127.0.0.1:5173"
+      }
+    }
+  ]
+}

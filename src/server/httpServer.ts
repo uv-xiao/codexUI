@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
+import { createExtensionRoutesMiddleware } from './extensionRoutes.js'
 import { createAuthSession } from './authMiddleware.js'
 import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
@@ -86,7 +87,10 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
   // 2. Bridge middleware for /codex-api/*
   app.use(bridge)
 
-  // 3. Serve local images referenced in markdown (desktop parity for absolute image paths)
+  // 3. Local extension registry and bridge endpoints.
+  app.use('/codex-api/extensions', createExtensionRoutesMiddleware())
+
+  // 4. Serve local images referenced in markdown (desktop parity for absolute image paths)
   app.get('/codex-local-image', (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const localPath = normalizeLocalImagePath(rawPath)
@@ -125,7 +129,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     })
   })
 
-  // 4. Serve local files inline for direct file open.
+  // 5. Serve local files inline for direct file open.
   app.get('/codex-local-file', (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const localPath = normalizeLocalPath(rawPath)
@@ -142,7 +146,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     })
   })
 
-  // 5. Return JSON directory listings for the integrated folder picker.
+  // 6. Return JSON directory listings for the integrated folder picker.
   app.get('/codex-local-directories', async (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const showHidden = typeof req.query.showHidden === 'string'
@@ -166,7 +170,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
   })
 
-  // 6. Serve local files by path to preserve relative asset loading for HTML.
+  // 7. Serve local files by path to preserve relative asset loading for HTML.
   app.get('/codex-local-browse/*path', async (req, res) => {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
@@ -239,7 +243,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
   })
 
-  // 7. Edit text-like local files.
+  // 8. Edit text-like local files.
   app.get('/codex-local-edit/*path', async (req, res) => {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
@@ -303,12 +307,12 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
 
   const hasFrontendAssets = existsSync(spaEntryFile)
 
-  // 8. Static files from Vue build
+  // 9. Static files from Vue build
   if (hasFrontendAssets) {
     app.use(express.static(distDir))
   }
 
-  // 9. SPA fallback
+  // 10. SPA fallback
   app.use((_req, res) => {
     if (!hasFrontendAssets) {
       res

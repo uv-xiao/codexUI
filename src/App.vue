@@ -81,50 +81,56 @@
           </button>
 
           <template v-if="!isSidebarCollapsed">
-            <button
+            <section
               v-for="section in extensionSidebarSections"
               :key="`${section.extensionId}:${section.routeId}`"
-              class="sidebar-skills-link"
-              :class="{ 'is-active': section.isActive }"
-              type="button"
-              @click="openExtensionRoute(section.extensionId, section.routeId)"
+              class="sidebar-extension-section"
             >
-              <span class="sidebar-skills-link-icon sidebar-extension-link-icon" aria-hidden="true">
-                <IconTablerBolt />
-              </span>
-              <span class="sidebar-skills-link-copy">
-                <span class="sidebar-skills-link-title">{{ section.label }}</span>
-                <span class="sidebar-skills-link-subtitle">{{ section.subtitle }}</span>
-              </span>
-            </button>
-            <div
-              v-for="section in extensionSidebarSections"
-              :key="`${section.extensionId}:${section.routeId}:tree`"
-              class="sidebar-extension-tree"
-            >
-              <template v-for="node in section.nodes" :key="node.id">
-                <button
-                  class="sidebar-extension-node sidebar-extension-node-series"
-                  :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, node.selection) }"
-                  type="button"
-                  @click="selectExtensionSidebarNode(section.extensionId, section.routeId, node.selection)"
-                >
-                  <span class="sidebar-extension-node-label">{{ node.label }}</span>
-                  <span v-if="node.count !== undefined" class="sidebar-extension-node-count">{{ node.count }}</span>
-                </button>
-                <button
-                  v-for="child in node.children ?? []"
-                  :key="child.id"
-                  class="sidebar-extension-node sidebar-extension-node-child"
-                  :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, child.selection) }"
-                  type="button"
-                  @click="selectExtensionSidebarNode(section.extensionId, section.routeId, child.selection)"
-                >
-                  <span class="sidebar-extension-node-label">{{ child.label }}</span>
-                  <span v-if="child.count !== undefined" class="sidebar-extension-node-count">{{ child.count }}</span>
-                </button>
-              </template>
-            </div>
+              <SidebarMenuRow
+                as="button"
+                class="sidebar-extension-section-toggle"
+                type="button"
+                :aria-expanded="isExtensionSidebarSectionExpanded(section.key)"
+                :data-active="section.isActive"
+                @click="toggleExtensionSidebarSection(section)"
+              >
+                <template #left>
+                  <IconTablerChevronRight v-if="!isExtensionSidebarSectionExpanded(section.key)" class="sidebar-extension-chevron" />
+                  <IconTablerChevronDown v-else class="sidebar-extension-chevron" />
+                </template>
+                <span class="sidebar-extension-section-copy">
+                  <span class="sidebar-extension-section-title">{{ section.label }}</span>
+                  <span class="sidebar-extension-section-subtitle">{{ section.subtitle }}</span>
+                </span>
+              </SidebarMenuRow>
+              <div
+                v-if="isExtensionSidebarSectionExpanded(section.key)"
+                class="sidebar-extension-tree"
+              >
+                <template v-for="node in section.nodes" :key="node.id">
+                  <button
+                    class="sidebar-extension-node sidebar-extension-node-series"
+                    :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, node.selection) }"
+                    type="button"
+                    @click="selectExtensionSidebarNode(section.extensionId, section.routeId, node.selection)"
+                  >
+                    <span class="sidebar-extension-node-label">{{ node.label }}</span>
+                    <span v-if="node.count !== undefined" class="sidebar-extension-node-count">{{ node.count }}</span>
+                  </button>
+                  <button
+                    v-for="child in node.children ?? []"
+                    :key="child.id"
+                    class="sidebar-extension-node sidebar-extension-node-child"
+                    :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, child.selection) }"
+                    type="button"
+                    @click="selectExtensionSidebarNode(section.extensionId, section.routeId, child.selection)"
+                  >
+                    <span class="sidebar-extension-node-label">{{ child.label }}</span>
+                    <span v-if="child.count !== undefined" class="sidebar-extension-node-count">{{ child.count }}</span>
+                  </button>
+                </template>
+              </div>
+            </section>
             <div v-if="extensionRegistryErrors.length > 0" class="sidebar-extension-errors">
               <p
                 v-for="item in extensionRegistryErrors"
@@ -1256,12 +1262,15 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DesktopLayout from './components/layout/DesktopLayout.vue'
+import SidebarMenuRow from './components/sidebar/SidebarMenuRow.vue'
 import SidebarThreadTree from './components/sidebar/SidebarThreadTree.vue'
 import ContentHeader from './components/content/ContentHeader.vue'
 import ThreadComposer from './components/content/ThreadComposer.vue'
 import ComposerDropdown from './components/content/ComposerDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerChevronDown from './components/icons/IconTablerChevronDown.vue'
+import IconTablerChevronRight from './components/icons/IconTablerChevronRight.vue'
 import IconTablerCopy from './components/icons/IconTablerCopy.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
@@ -1333,6 +1342,7 @@ const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
 const ACCOUNTS_SECTION_COLLAPSED_STORAGE_KEY = 'codex-web-local.accounts-section-collapsed.v1'
 const TERMINAL_QUICK_COMMAND_STORAGE_KEY = 'codex-web-local.terminal-quick-commands.v1'
+const EXTENSION_SIDEBAR_SECTION_EXPANSION_STORAGE_KEY = 'codex-web-local.extension-sidebar-section-expansion.v1'
 const TOGGLE_TERMINAL_COMMAND_VALUE = '__toggle_terminal__'
 const STARTUP_FAST_BACKGROUND_REFRESH_DELAY_MS = 150
 const STARTUP_SLOW_BACKGROUND_REFRESH_DELAY_MS = 900
@@ -1854,6 +1864,7 @@ const extensionRegistryItems = ref<RegisteredExtension[]>([])
 const extensionRegistryErrors = ref<Array<{ id: string; message: string }>>([])
 const extensionSidebarNodesByKey = ref<Record<string, ExtensionSidebarNode[]>>({})
 const selectedExtensionSelections = ref<Record<string, Record<string, unknown>>>({})
+const expandedExtensionSidebarSections = ref<Record<string, boolean>>(loadExtensionSidebarSectionExpansionState())
 const isExtensionRoute = computed(() => route.name === 'extension')
 const selectedExtension = computed(() => (
   extensionRegistryItems.value.find((extension) => extension.id === routeExtensionId.value) ?? null
@@ -1863,6 +1874,7 @@ const selectedExtensionRoute = computed(() => (
 ))
 const extensionSidebarSections = computed(() => extensionRegistryItems.value.flatMap((extension) =>
   extension.sidebar.map((item) => ({
+    key: extensionSidebarSectionKey(extension.id, item.routeId),
     extensionId: extension.id,
     routeId: item.routeId,
     label: item.label,
@@ -2005,6 +2017,49 @@ async function loadExtensions(): Promise<void> {
       id: 'registry',
       message: error instanceof Error ? error.message : 'Failed to load extensions.',
     }]
+  }
+}
+
+function extensionSidebarSectionKey(extensionId: string, routeId: string): string {
+  return `${extensionId}:${routeId}`
+}
+
+function loadExtensionSidebarSectionExpansionState(): Record<string, boolean> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(EXTENSION_SIDEBAR_SECTION_EXPANSION_STORAGE_KEY) || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, boolean] =>
+        typeof entry[0] === 'string' && typeof entry[1] === 'boolean',
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function persistExtensionSidebarSectionExpansionState(): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(
+    EXTENSION_SIDEBAR_SECTION_EXPANSION_STORAGE_KEY,
+    JSON.stringify(expandedExtensionSidebarSections.value),
+  )
+}
+
+function isExtensionSidebarSectionExpanded(key: string): boolean {
+  return expandedExtensionSidebarSections.value[key] === true
+}
+
+function toggleExtensionSidebarSection(section: { key: string; extensionId: string; routeId: string; isActive: boolean }): void {
+  const nextExpanded = !isExtensionSidebarSectionExpanded(section.key)
+  expandedExtensionSidebarSections.value = {
+    ...expandedExtensionSidebarSections.value,
+    [section.key]: nextExpanded,
+  }
+  persistExtensionSidebarSectionExpansionState()
+  if (nextExpanded && !section.isActive) {
+    openExtensionRoute(section.extensionId, section.routeId)
   }
 }
 
@@ -5598,16 +5653,44 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply truncate text-xs font-medium text-red-700;
 }
 
+.sidebar-extension-section {
+  @apply mx-0 mb-1;
+}
+
+.sidebar-extension-section-toggle {
+  @apply mx-2 cursor-pointer hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 dark:hover:bg-zinc-900;
+}
+
+.sidebar-extension-section-toggle[data-active='true'] {
+  @apply bg-zinc-100 text-zinc-950 dark:bg-zinc-900 dark:text-zinc-50;
+}
+
+.sidebar-extension-chevron {
+  @apply h-4 w-4;
+}
+
+.sidebar-extension-section-copy {
+  @apply flex min-w-0 flex-col;
+}
+
+.sidebar-extension-section-title {
+  @apply truncate text-sm font-normal text-zinc-500 select-none dark:text-zinc-400;
+}
+
+.sidebar-extension-section-subtitle {
+  @apply truncate text-[11px] font-medium text-zinc-400 dark:text-zinc-500;
+}
+
 .sidebar-extension-tree {
-  @apply mx-2 mb-2 flex flex-col gap-0.5 border-l border-zinc-200 pl-2;
+  @apply mx-2 mb-2 mt-0.5 flex flex-col gap-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800;
 }
 
 .sidebar-extension-node {
-  @apply flex min-h-7 w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-950;
+  @apply flex min-h-7 w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-50;
 }
 
 .sidebar-extension-node.is-active {
-  @apply bg-sky-50 text-sky-800;
+  @apply bg-sky-50 text-sky-800 dark:bg-sky-950 dark:text-sky-200;
 }
 
 .sidebar-extension-node-child {
@@ -5619,7 +5702,7 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .sidebar-extension-node-count {
-  @apply shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500;
+  @apply shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400;
 }
 
 .sidebar-thread-controls-header-host {
@@ -5648,22 +5731,6 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 :global(:root.dark) .sidebar-skills-link-subtitle {
   @apply text-zinc-400;
-}
-
-:global(:root.dark) .sidebar-extension-tree {
-  @apply border-zinc-800;
-}
-
-:global(:root.dark) .sidebar-extension-node {
-  @apply text-zinc-400 hover:bg-zinc-900 hover:text-zinc-50;
-}
-
-:global(:root.dark) .sidebar-extension-node.is-active {
-  @apply bg-sky-950 text-sky-200;
-}
-
-:global(:root.dark) .sidebar-extension-node-count {
-  @apply bg-zinc-800 text-zinc-400;
 }
 
 .content-body {

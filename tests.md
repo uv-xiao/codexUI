@@ -46,34 +46,44 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
-### Feature: Host CodexUI with Docker Tailscale access workflow
+### Feature: Direct host CodexUI deployment with optional Docker Tailscale
 
 #### Prerequisites
 - Docker Compose is available on the server.
 - The repository has been built or can build with `npm run build:frontend` and `npm run build:cli`.
-- A Tailscale node is already authenticated, or the operator can complete the auth URL shown by the script.
+- A Tailscale node is already authenticated, or the operator can complete the auth URL shown by the Tailscale wrapper when testing iOS access.
 - Light theme and dark theme are both available from Settings.
 
 #### Steps
-1. Run `NO_PROXY='*' no_proxy='*' CODEXUI_BUILD_ON_UP=1 scripts/docker-tailscale-ios.sh up`.
-2. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh status`.
-3. Confirm the status output shows a `codexui-host` tmux session and a `codexui-tailscale` Docker container.
-4. Confirm the host target URL returns `200 OK` with `curl --noproxy '*' -I http://<host-ip>:5900/`.
-5. From a Mac on a routeable network, open `http://<public-host-ip>:5900` directly and sign in with the generated password when password protection is enabled.
-6. From an iOS device on the tailnet, open `https://codexui-ios.tail27dc02.ts.net/`.
-7. Verify the app renders in light theme.
-8. Switch to dark theme and verify the app renders without blank startup, light-only surfaces, or unreadable controls.
-9. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh restart-tailscale` and confirm `serve status` still proxies to the host CodexUI URL.
+1. Run `NO_PROXY='*' no_proxy='*' CODEXUI_BUILD_ON_UP=1 scripts/codexui-deploy.sh up`.
+2. Confirm the output prints a direct Mac/browser URL, such as `http://115.27.161.184:5900`.
+3. Run `NO_PROXY='*' no_proxy='*' scripts/codexui-deploy.sh status`.
+4. Confirm the status output shows a `codexui-host` tmux session and does not require a running Docker Tailscale container.
+5. Confirm the host target URL returns `200 OK` with `curl --noproxy '*' -I http://<public-or-lan-host-ip>:5900/`.
+6. From a Mac on a routeable network, open `http://<public-or-lan-host-ip>:5900` directly and sign in with the generated password when password protection is enabled.
+7. While `5900` is occupied, run `NO_PROXY='*' no_proxy='*' CODEXUI_HOST_SESSION=codexui-autotest CODEXUI_HOST_PORT=5900 CODEXUI_BUILD_ON_UP=0 scripts/codexui-deploy.sh up`.
+8. Confirm the autotest output prints the effective direct URL with the next available port, such as `http://<public-or-lan-host-ip>:5901`.
+9. Clean up the autotest session with `CODEXUI_HOST_SESSION=codexui-autotest scripts/codexui-deploy.sh down`.
+10. Confirm any previously opened `codexui-tailscale` container is stopped after the direct `up` action.
+11. Run `NO_PROXY='*' no_proxy='*' CODEXUI_BUILD_ON_UP=0 scripts/docker-tailscale-ios.sh up`.
+12. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh status`.
+13. Confirm the Tailscale status output shows a `codexui-tailscale` Docker container and Tailscale Serve proxying to the effective host CodexUI URL.
+14. From an iOS device on the tailnet, open `https://codexui-ios.tail27dc02.ts.net/`.
+15. Verify the app renders in light theme.
+16. Switch to dark theme and verify the app renders without blank startup, light-only surfaces, or unreadable controls.
+17. Run `NO_PROXY='*' no_proxy='*' scripts/docker-tailscale-ios.sh restart-tailscale` and confirm `serve status` still proxies to the host CodexUI URL.
 
 #### Expected Results
 - The host CodexUI process runs outside Docker and binds to the configured host IP and port.
-- Docker is used only for the Tailscale node and Tailscale Serve proxy.
+- Direct deployment does not enable Tailscale and stops this workflow's Docker Tailscale container if it is running.
+- Docker is used only when the Tailscale wrapper is explicitly invoked.
+- If the requested port is occupied, the deployment prints and uses the effective fallback port selected by codexUI.
 - Mac direct access uses the server's routeable public or LAN IP, not `127.0.0.1` and not the private WireGuard address.
 - iOS tailnet access proxies to the same host CodexUI process.
 - Light and dark themes both render the normal app bundle without Safari-only startup diagnostics.
 
 #### Rollback/Cleanup
-- Run `scripts/docker-tailscale-ios.sh down` to stop the Docker Tailscale container and the host CodexUI tmux session.
+- Run `scripts/codexui-deploy.sh down` to stop the Docker Tailscale container and the host CodexUI tmux session.
 - Stop any separately started public listener tmux session, such as `tmux kill-session -t codexui-public`, if it was created for direct Mac testing.
 
 ### Feature: Full upstream and Light-of-Hers rebase integration

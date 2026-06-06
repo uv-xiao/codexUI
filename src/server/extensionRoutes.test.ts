@@ -51,7 +51,7 @@ describe('extension routes middleware', () => {
             id: 'notes',
             name: 'Notes',
             routes: [{ id: 'home', label: 'Learning', url: '/codexui-extension/' }],
-            sidebar: [{ label: 'Learning', routeId: 'home' }],
+            sidebar: [{ label: 'Learning', routeId: 'home', itemsUrl: '/api/codexui/sidebar' }],
           },
         },
       ],
@@ -68,7 +68,7 @@ describe('extension routes middleware', () => {
             {
               id: 'notes',
               routes: [{ id: 'home', url: 'http://127.0.0.1:5173/codexui-extension/' }],
-              sidebar: [{ label: 'Learning', routeId: 'home' }],
+              sidebar: [{ label: 'Learning', routeId: 'home', itemsUrl: 'http://127.0.0.1:5173/api/codexui/sidebar' }],
             },
           ],
           errors: [],

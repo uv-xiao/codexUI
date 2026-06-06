@@ -81,22 +81,53 @@
           </button>
 
           <template v-if="!isSidebarCollapsed">
-            <button
-              v-for="item in extensionSidebarItems"
-              :key="`${item.extensionId}:${item.routeId}`"
-              class="sidebar-skills-link"
-              :class="{ 'is-active': item.isActive }"
-              type="button"
-              @click="openExtensionRoute(item.extensionId, item.routeId)"
+            <template
+              v-for="section in extensionSidebarSections"
+              :key="`${section.extensionId}:${section.routeId}`"
             >
-              <span class="sidebar-skills-link-icon sidebar-extension-link-icon" aria-hidden="true">
-                <IconTablerBolt />
-              </span>
-              <span class="sidebar-skills-link-copy">
-                <span class="sidebar-skills-link-title">{{ item.label }}</span>
-                <span class="sidebar-skills-link-subtitle">{{ item.subtitle }}</span>
-              </span>
-            </button>
+              <button
+                class="sidebar-skills-link"
+                :class="{ 'is-active': section.isActive }"
+                type="button"
+                :aria-expanded="isExtensionSidebarSectionExpanded(section.key)"
+                @click="toggleExtensionSidebarEntry(section)"
+              >
+                <span class="sidebar-skills-link-icon sidebar-extension-link-icon" aria-hidden="true">
+                  <IconTablerBolt />
+                </span>
+                <span class="sidebar-skills-link-copy">
+                  <span class="sidebar-skills-link-title">{{ section.label }}</span>
+                  <span class="sidebar-skills-link-subtitle">{{ section.subtitle }}</span>
+                </span>
+              </button>
+              <div
+                v-if="isExtensionSidebarSectionExpanded(section.key)"
+                class="sidebar-extension-tree"
+              >
+                <template v-for="node in section.nodes" :key="node.id">
+                  <button
+                    class="sidebar-extension-node sidebar-extension-node-series"
+                    :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, node.selection) }"
+                    type="button"
+                    @click="selectExtensionSidebarNode(section.extensionId, section.routeId, node.selection)"
+                  >
+                    <span class="sidebar-extension-node-label">{{ node.label }}</span>
+                    <span v-if="node.count !== undefined" class="sidebar-extension-node-count">{{ node.count }}</span>
+                  </button>
+                  <button
+                    v-for="child in node.children ?? []"
+                    :key="child.id"
+                    class="sidebar-extension-node sidebar-extension-node-child"
+                    :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, child.selection) }"
+                    type="button"
+                    @click="selectExtensionSidebarNode(section.extensionId, section.routeId, child.selection)"
+                  >
+                    <span class="sidebar-extension-node-label">{{ child.label }}</span>
+                    <span v-if="child.count !== undefined" class="sidebar-extension-node-count">{{ child.count }}</span>
+                  </button>
+                </template>
+              </div>
+            </template>
             <div v-if="extensionRegistryErrors.length > 0" class="sidebar-extension-errors">
               <p
                 v-for="item in extensionRegistryErrors"
@@ -1285,7 +1316,8 @@ import type { GitCommitFileChange, GitCommitOption, LocalDirectoryEntry, Telegra
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { copyTextToClipboard } from './utils/clipboard'
-import { fetchExtensionRegistry } from './api/extensions'
+import { fetchExtensionRegistry, fetchExtensionSidebarNodes } from './api/extensions'
+import type { ExtensionSidebarNode } from './api/extensions'
 import type { RegisteredExtension } from './extensions/extensionRegistry'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
@@ -1304,6 +1336,7 @@ const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
 const ACCOUNTS_SECTION_COLLAPSED_STORAGE_KEY = 'codex-web-local.accounts-section-collapsed.v1'
 const TERMINAL_QUICK_COMMAND_STORAGE_KEY = 'codex-web-local.terminal-quick-commands.v1'
+const EXTENSION_SIDEBAR_SECTION_EXPANSION_STORAGE_KEY = 'codex-web-local.extension-sidebar-section-expansion.v1'
 const TOGGLE_TERMINAL_COMMAND_VALUE = '__toggle_terminal__'
 const STARTUP_FAST_BACKGROUND_REFRESH_DELAY_MS = 150
 const STARTUP_SLOW_BACKGROUND_REFRESH_DELAY_MS = 900
@@ -1823,6 +1856,9 @@ const routeExtensionRouteId = computed(() => {
 })
 const extensionRegistryItems = ref<RegisteredExtension[]>([])
 const extensionRegistryErrors = ref<Array<{ id: string; message: string }>>([])
+const extensionSidebarNodesByKey = ref<Record<string, ExtensionSidebarNode[]>>({})
+const selectedExtensionSelections = ref<Record<string, Record<string, unknown>>>({})
+const expandedExtensionSidebarSections = ref<Record<string, boolean>>(loadExtensionSidebarSectionExpansionState())
 const isExtensionRoute = computed(() => route.name === 'extension')
 const selectedExtension = computed(() => (
   extensionRegistryItems.value.find((extension) => extension.id === routeExtensionId.value) ?? null
@@ -1830,12 +1866,14 @@ const selectedExtension = computed(() => (
 const selectedExtensionRoute = computed(() => (
   selectedExtension.value?.routes.find((candidate) => candidate.id === routeExtensionRouteId.value) ?? null
 ))
-const extensionSidebarItems = computed(() => extensionRegistryItems.value.flatMap((extension) =>
+const extensionSidebarSections = computed(() => extensionRegistryItems.value.flatMap((extension) =>
   extension.sidebar.map((item) => ({
+    key: extensionSidebarSectionKey(extension.id, item.routeId),
     extensionId: extension.id,
     routeId: item.routeId,
     label: item.label,
     subtitle: item.subtitle ?? extension.name,
+    nodes: extensionSidebarNodesByKey.value[`${extension.id}:${item.routeId}`] ?? [],
     isActive: isExtensionRoute.value &&
       routeExtensionId.value === extension.id &&
       routeExtensionRouteId.value === item.routeId,
@@ -1965,12 +2003,93 @@ async function loadExtensions(): Promise<void> {
     const registry = await fetchExtensionRegistry()
     extensionRegistryItems.value = registry.extensions
     extensionRegistryErrors.value = registry.errors
+    await loadExtensionSidebarNodes(registry.extensions)
   } catch (error) {
     extensionRegistryItems.value = []
+    extensionSidebarNodesByKey.value = {}
     extensionRegistryErrors.value = [{
       id: 'registry',
       message: error instanceof Error ? error.message : 'Failed to load extensions.',
     }]
+  }
+}
+
+function extensionSidebarSectionKey(extensionId: string, routeId: string): string {
+  return `${extensionId}:${routeId}`
+}
+
+function loadExtensionSidebarSectionExpansionState(): Record<string, boolean> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(EXTENSION_SIDEBAR_SECTION_EXPANSION_STORAGE_KEY) || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, boolean] =>
+        typeof entry[0] === 'string' && typeof entry[1] === 'boolean',
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function persistExtensionSidebarSectionExpansionState(): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(
+    EXTENSION_SIDEBAR_SECTION_EXPANSION_STORAGE_KEY,
+    JSON.stringify(expandedExtensionSidebarSections.value),
+  )
+}
+
+function isExtensionSidebarSectionExpanded(key: string): boolean {
+  return expandedExtensionSidebarSections.value[key] === true
+}
+
+function setExtensionSidebarSectionExpanded(key: string, isExpanded: boolean): void {
+  expandedExtensionSidebarSections.value = {
+    ...expandedExtensionSidebarSections.value,
+    [key]: isExpanded,
+  }
+  persistExtensionSidebarSectionExpansionState()
+}
+
+function toggleExtensionSidebarEntry(section: { key: string; extensionId: string; routeId: string; isActive: boolean }): void {
+  if (!section.isActive) {
+    setExtensionSidebarSectionExpanded(section.key, true)
+    openExtensionRoute(section.extensionId, section.routeId, { closeMobile: false })
+    return
+  }
+
+  const nextExpanded = !isExtensionSidebarSectionExpanded(section.key)
+  setExtensionSidebarSectionExpanded(section.key, nextExpanded)
+}
+
+async function loadExtensionSidebarNodes(extensions: RegisteredExtension[]): Promise<void> {
+  const nextNodes: Record<string, ExtensionSidebarNode[]> = {}
+  const errors: Array<{ id: string; message: string }> = []
+
+  await Promise.all(extensions.flatMap((extension) =>
+    extension.sidebar.map(async (item) => {
+      const key = `${extension.id}:${item.routeId}`
+      if (!item.itemsUrl) {
+        nextNodes[key] = []
+        return
+      }
+      try {
+        nextNodes[key] = await fetchExtensionSidebarNodes(item.itemsUrl)
+      } catch (error) {
+        nextNodes[key] = []
+        errors.push({
+          id: extension.id,
+          message: error instanceof Error ? error.message : 'Failed to load extension sidebar.',
+        })
+      }
+    }),
+  ))
+
+  extensionSidebarNodesByKey.value = nextNodes
+  if (errors.length > 0) {
+    extensionRegistryErrors.value = [...extensionRegistryErrors.value, ...errors]
   }
 }
 
@@ -2696,9 +2815,75 @@ function onSelectAutomationInPanel(automationId: string): void {
   void router.replace({ name: 'automations', query: automationId ? { automationId } : {} })
 }
 
-function openExtensionRoute(extensionId: string, routeId: string): void {
+function openExtensionRoute(
+  extensionId: string,
+  routeId: string,
+  options: { closeMobile?: boolean } = {},
+): void {
   void router.push({ name: 'extension', params: { extensionId, routeId } })
+  clearExtensionSelection(extensionId)
+  if ((options.closeMobile ?? true) && isMobile.value) setSidebarCollapsed(true)
+}
+
+function isExtensionSelectionActive(extensionId: string, selection: Record<string, unknown> | undefined): boolean {
+  if (!selection) return false
+  return JSON.stringify(selectedExtensionSelections.value[extensionId] ?? null) === JSON.stringify(toPlainExtensionSelection(selection))
+}
+
+function postExtensionSelection(extensionId: string, selection: Record<string, unknown>): void {
+  const plainSelection = toPlainExtensionSelection(selection)
+  const payload = { type: 'codexui-extension-selection', extensionId, selection: plainSelection }
+  try {
+    window.localStorage.setItem(`codexui.extension.${extensionId}.selection`, JSON.stringify(plainSelection))
+  } catch {
+    // Local storage is best-effort; postMessage still updates already-loaded panes.
+  }
+
+  const frame = document.querySelector<HTMLIFrameElement>('iframe.extension-route-frame')
+  frame?.contentWindow?.postMessage(payload, '*')
+}
+
+function toPlainExtensionSelection(selection: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(selection)) as Record<string, unknown>
+}
+
+function clearExtensionSelection(extensionId: string): void {
+  selectedExtensionSelections.value = {
+    ...selectedExtensionSelections.value,
+    [extensionId]: {},
+  }
+  const payload = { type: 'codexui-extension-selection', extensionId, selection: null }
+  try {
+    window.localStorage.removeItem(`codexui.extension.${extensionId}.selection`)
+  } catch {
+    // Local storage is best-effort; postMessage still updates already-loaded panes.
+  }
+  const frame = document.querySelector<HTMLIFrameElement>('iframe.extension-route-frame')
+  frame?.contentWindow?.postMessage(payload, '*')
+  window.setTimeout(() => frame?.contentWindow?.postMessage(payload, '*'), 250)
+}
+
+async function selectExtensionSidebarNode(
+  extensionId: string,
+  routeId: string,
+  selection: Record<string, unknown> | undefined,
+): Promise<void> {
+  if (!selection) {
+    openExtensionRoute(extensionId, routeId)
+    return
+  }
+  const plainSelection = toPlainExtensionSelection(selection)
+  selectedExtensionSelections.value = {
+    ...selectedExtensionSelections.value,
+    [extensionId]: plainSelection,
+  }
+  if (!(isExtensionRoute.value && routeExtensionId.value === extensionId && routeExtensionRouteId.value === routeId)) {
+    await router.push({ name: 'extension', params: { extensionId, routeId } })
+  }
   if (isMobile.value) setSidebarCollapsed(true)
+  await nextTick()
+  postExtensionSelection(extensionId, plainSelection)
+  window.setTimeout(() => postExtensionSelection(extensionId, plainSelection), 250)
 }
 
 async function onEditAutomationFromPanel(payload: AutomationEditRequest): Promise<void> {
@@ -5430,11 +5615,11 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .sidebar-skills-link {
-  @apply mx-2 flex items-center gap-3 rounded-2xl border border-transparent bg-transparent px-3 py-2.5 text-left text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-950 cursor-pointer;
+  @apply mx-2 flex items-center gap-3 rounded-2xl border border-transparent bg-transparent px-3 py-2.5 text-left text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-950 cursor-pointer dark:text-zinc-200 dark:hover:bg-zinc-900 dark:hover:text-zinc-50;
 }
 
 .sidebar-skills-link.is-active {
-  @apply border-transparent bg-zinc-100 text-zinc-950;
+  @apply border-transparent bg-zinc-100 text-zinc-950 dark:bg-zinc-900 dark:text-zinc-50;
 }
 
 .sidebar-skills-link-icon {
@@ -5471,6 +5656,30 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-extension-error {
   @apply truncate text-xs font-medium text-red-700;
+}
+
+.sidebar-extension-tree {
+  @apply mx-2 mb-2 mt-0.5 flex flex-col gap-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800;
+}
+
+.sidebar-extension-node {
+  @apply flex min-h-7 w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-50;
+}
+
+.sidebar-extension-node.is-active {
+  @apply bg-sky-50 text-sky-800 dark:bg-sky-950 dark:text-sky-200;
+}
+
+.sidebar-extension-node-child {
+  @apply ml-3 w-[calc(100%-0.75rem)] text-[11px] text-zinc-500;
+}
+
+.sidebar-extension-node-label {
+  @apply min-w-0 truncate;
+}
+
+.sidebar-extension-node-count {
+  @apply shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400;
 }
 
 .sidebar-thread-controls-header-host {

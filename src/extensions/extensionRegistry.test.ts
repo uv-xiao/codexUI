@@ -6,7 +6,7 @@ const validManifest = {
   name: 'Notes',
   version: '0.1.0',
   routes: [{ id: 'home', label: 'Learning', url: '/codexui-extension/' }],
-  sidebar: [{ label: 'Learning', routeId: 'home', subtitle: 'Courses and notebooks' }],
+  sidebar: [{ label: 'Learning', routeId: 'home', subtitle: 'Courses and notebooks', itemsUrl: '/api/codexui/sidebar' }],
 }
 
 describe('extension registry', () => {
@@ -24,7 +24,12 @@ describe('extension registry', () => {
     expect(registry.errors).toEqual([])
     expect(registry.extensions).toHaveLength(1)
     expect(registry.extensions[0]?.sidebar).toEqual([
-      { label: 'Learning', routeId: 'home', subtitle: 'Courses and notebooks' },
+      {
+        label: 'Learning',
+        routeId: 'home',
+        subtitle: 'Courses and notebooks',
+        itemsUrl: 'http://127.0.0.1:5173/api/codexui/sidebar',
+      },
     ])
     expect(registry.extensions[0]?.routes).toEqual([
       { id: 'home', label: 'Learning', url: 'http://127.0.0.1:5173/codexui-extension/' },

@@ -18,6 +18,7 @@ export type ExtensionSidebarManifest = {
   label: string
   routeId: string
   subtitle?: string
+  itemsUrl?: string
 }
 
 export type ExtensionManifest = {
@@ -32,13 +33,17 @@ export type RegisteredExtensionRoute = ExtensionRouteManifest & {
   url: string
 }
 
+export type RegisteredExtensionSidebar = ExtensionSidebarManifest & {
+  itemsUrl?: string
+}
+
 export type RegisteredExtension = {
   id: string
   name: string
   version?: string
   settings: ExtensionSettings
   routes: RegisteredExtensionRoute[]
-  sidebar: ExtensionSidebarManifest[]
+  sidebar: RegisteredExtensionSidebar[]
 }
 
 export type ExtensionLoadError = {
@@ -104,6 +109,7 @@ function parseSidebar(value: unknown): ExtensionSidebarManifest {
     label: readNonEmptyString(value, 'label'),
     routeId: readNonEmptyString(value, 'routeId'),
     subtitle: readOptionalString(value, 'subtitle'),
+    itemsUrl: readOptionalString(value, 'itemsUrl'),
   }
 }
 
@@ -145,6 +151,10 @@ function resolveRouteUrl(url: string, settings: ExtensionSettings): string {
   return new URL(url, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString()
 }
 
+function resolveOptionalUrl(url: string | undefined, settings: ExtensionSettings): string | undefined {
+  return url ? resolveRouteUrl(url, settings) : undefined
+}
+
 export function buildExtensionRegistry(configFile: ExtensionConfigFile): ExtensionRegistry {
   const configs = Array.isArray(configFile.extensions) ? configFile.extensions : []
   const extensions: RegisteredExtension[] = []
@@ -182,7 +192,10 @@ export function buildExtensionRegistry(configFile: ExtensionConfigFile): Extensi
           ...route,
           url: resolveRouteUrl(route.url, settings),
         })),
-        sidebar: manifest.sidebar,
+        sidebar: manifest.sidebar.map((item) => ({
+          ...item,
+          itemsUrl: resolveOptionalUrl(item.itemsUrl, settings),
+        })),
       })
     } catch (error) {
       errors.push({

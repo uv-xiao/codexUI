@@ -6,8 +6,16 @@
         <p>{{ subtitle }}</p>
       </div>
       <div v-if="selectedNote" class="learning-toolbar-actions">
-        <button class="learning-action" type="button" @click="openJupyter('notebook')">Notebook 7</button>
-        <button class="learning-action learning-action-primary" type="button" @click="openJupyter('lab')">JupyterLab</button>
+        <button
+          v-for="mode in LEARNING_VIEW_MODES"
+          :key="mode.id"
+          class="learning-action"
+          :class="{ 'is-active': activeViewMode === mode.id }"
+          type="button"
+          @click="selectViewMode(mode.id)"
+        >
+          {{ mode.label }}
+        </button>
       </div>
     </div>
 
@@ -49,6 +57,7 @@ import {
   type LearningSeriesSummary,
 } from '../../api/learning'
 import { renderMarkdownContent } from './markdownRenderer'
+import { LEARNING_VIEW_MODES, type LearningViewMode } from './learningViewModes'
 
 const props = defineProps<{
   extensionId: string
@@ -62,6 +71,7 @@ const selectedNote = ref<LearningNotePayload | null>(null)
 const isLoading = ref(false)
 const error = ref('')
 const jupyterUrl = ref('')
+const activeViewMode = ref<LearningViewMode>('view')
 
 const subtitle = computed(() => {
   if (selectedNote.value) return selectedNote.value.path
@@ -94,6 +104,7 @@ function readStoredSelection(): Record<string, unknown> | null {
 
 function applySelection(selection: Record<string, unknown> | null): void {
   jupyterUrl.value = ''
+  activeViewMode.value = 'view'
   const kind = typeof selection?.kind === 'string' ? selection.kind : ''
   if (kind === 'note' && typeof selection?.slug === 'string') {
     selectedSeriesId.value = typeof selection.seriesId === 'string' ? selection.seriesId : ''
@@ -149,6 +160,20 @@ function selectSeries(seriesId: string): void {
   selectedNoteSlug.value = ''
   selectedNote.value = null
   jupyterUrl.value = ''
+  activeViewMode.value = 'view'
+}
+
+function showStaticView(): void {
+  jupyterUrl.value = ''
+  activeViewMode.value = 'view'
+}
+
+function selectViewMode(mode: LearningViewMode): void {
+  if (mode === 'view') {
+    showStaticView()
+    return
+  }
+  void openJupyter(mode)
 }
 
 async function openJupyter(ui: 'lab' | 'notebook'): Promise<void> {
@@ -158,6 +183,7 @@ async function openJupyter(ui: 'lab' | 'notebook'): Promise<void> {
   try {
     const result = await fetchLearningJupyterOpenUrl(props.extensionId, selectedNote.value.jupyterPath, ui)
     jupyterUrl.value = result.url
+    activeViewMode.value = ui
   } catch (loadError) {
     error.value = loadError instanceof Error ? loadError.message : 'Failed to open Jupyter.'
   } finally {
@@ -179,6 +205,7 @@ watch(() => props.extensionId, () => {
   selectedNoteSlug.value = ''
   selectedNote.value = null
   jupyterUrl.value = ''
+  activeViewMode.value = 'view'
   void loadSeries()
 })
 </script>
@@ -240,7 +267,7 @@ watch(() => props.extensionId, () => {
   font-weight: 600;
 }
 
-.learning-action-primary {
+.learning-action.is-active {
   border-color: rgb(2 132 199);
   background: rgb(2 132 199);
   color: white;
@@ -327,7 +354,7 @@ watch(() => props.extensionId, () => {
   color: rgb(244 244 245);
 }
 
-:global(:root.dark) .learning-action-primary {
+:global(:root.dark) .learning-action.is-active {
   border-color: rgb(14 165 233);
   background: rgb(14 165 233);
   color: rgb(8 47 73);

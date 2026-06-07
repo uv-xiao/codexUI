@@ -2,6 +2,11 @@
   <section class="extension-route-host">
     <div v-if="isLoading" class="extension-route-state">Loading extension...</div>
     <div v-else-if="error" class="extension-route-state extension-route-error">{{ error }}</div>
+    <LearningPanel
+      v-else-if="selectedRoute?.kind === 'learning' && selectedExtension"
+      :extension-id="selectedExtension.id"
+      :title="selectedRoute.label"
+    />
     <template v-else-if="routeUrl">
       <iframe
         class="extension-route-frame"
@@ -18,6 +23,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { fetchExtensionRegistry } from '../../api/extensions'
 import type { RegisteredExtension } from '../../extensions/extensionRegistry'
+import LearningPanel from './LearningPanel.vue'
 
 const route = useRoute()
 const isLoading = ref(false)

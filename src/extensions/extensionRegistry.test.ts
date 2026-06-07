@@ -32,7 +32,29 @@ describe('extension registry', () => {
       },
     ])
     expect(registry.extensions[0]?.routes).toEqual([
-      { id: 'home', label: 'Learning', url: 'http://127.0.0.1:5173/codexui-extension/' },
+      { id: 'home', label: 'Learning', kind: 'iframe', url: 'http://127.0.0.1:5173/codexui-extension/' },
+    ])
+  })
+
+  it('registers native learning routes without iframe URLs', () => {
+    const registry = buildExtensionRegistry({
+      extensions: [
+        {
+          id: 'notes',
+          settings: { learningConfig: '/tmp/notes/codexui.learning.toml' },
+          manifest: {
+            id: 'notes',
+            name: 'Notes',
+            routes: [{ id: 'home', label: 'Learning', kind: 'learning' }],
+            sidebar: [{ label: 'Learning', routeId: 'home', itemsUrl: '/codex-api/learning/notes/sidebar' }],
+          },
+        },
+      ],
+    })
+
+    expect(registry.errors).toEqual([])
+    expect(registry.extensions[0]?.routes).toEqual([
+      { id: 'home', label: 'Learning', kind: 'learning', url: '' },
     ])
   })
 

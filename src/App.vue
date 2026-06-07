@@ -109,13 +109,22 @@
                     class="sidebar-extension-node sidebar-extension-node-series"
                     :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, node.selection) }"
                     type="button"
-                    @click="selectExtensionSidebarNode(section.extensionId, section.routeId, node.selection)"
+                    :aria-expanded="hasExtensionSidebarNodeChildren(node) ? isExtensionSidebarNodeExpanded(section.extensionId, node.id) : undefined"
+                    @click="toggleExtensionSidebarNode(section.extensionId, section.routeId, node)"
                   >
+                    <IconTablerChevronDown
+                      v-if="hasExtensionSidebarNodeChildren(node) && isExtensionSidebarNodeExpanded(section.extensionId, node.id)"
+                      class="sidebar-extension-node-chevron"
+                    />
+                    <IconTablerChevronRight
+                      v-else-if="hasExtensionSidebarNodeChildren(node)"
+                      class="sidebar-extension-node-chevron"
+                    />
                     <span class="sidebar-extension-node-label">{{ node.label }}</span>
                     <span v-if="node.count !== undefined" class="sidebar-extension-node-count">{{ node.count }}</span>
                   </button>
                   <button
-                    v-for="child in node.children ?? []"
+                    v-for="child in isExtensionSidebarNodeExpanded(section.extensionId, node.id) ? node.children ?? [] : []"
                     :key="child.id"
                     class="sidebar-extension-node sidebar-extension-node-child"
                     :class="{ 'is-active': isExtensionSelectionActive(section.extensionId, child.selection) }"
@@ -1265,6 +1274,8 @@ import ThreadComposer from './components/content/ThreadComposer.vue'
 import ComposerDropdown from './components/content/ComposerDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerChevronDown from './components/icons/IconTablerChevronDown.vue'
+import IconTablerChevronRight from './components/icons/IconTablerChevronRight.vue'
 import IconTablerCopy from './components/icons/IconTablerCopy.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
@@ -1337,6 +1348,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
 const ACCOUNTS_SECTION_COLLAPSED_STORAGE_KEY = 'codex-web-local.accounts-section-collapsed.v1'
 const TERMINAL_QUICK_COMMAND_STORAGE_KEY = 'codex-web-local.terminal-quick-commands.v1'
 const EXTENSION_SIDEBAR_SECTION_EXPANSION_STORAGE_KEY = 'codex-web-local.extension-sidebar-section-expansion.v1'
+const EXTENSION_SIDEBAR_NODE_EXPANSION_STORAGE_KEY = 'codex-web-local.extension-sidebar-node-expansion.v1'
 const TOGGLE_TERMINAL_COMMAND_VALUE = '__toggle_terminal__'
 const STARTUP_FAST_BACKGROUND_REFRESH_DELAY_MS = 150
 const STARTUP_SLOW_BACKGROUND_REFRESH_DELAY_MS = 900
@@ -1859,6 +1871,7 @@ const extensionRegistryErrors = ref<Array<{ id: string; message: string }>>([])
 const extensionSidebarNodesByKey = ref<Record<string, ExtensionSidebarNode[]>>({})
 const selectedExtensionSelections = ref<Record<string, Record<string, unknown>>>({})
 const expandedExtensionSidebarSections = ref<Record<string, boolean>>(loadExtensionSidebarSectionExpansionState())
+const expandedExtensionSidebarNodes = ref<Record<string, boolean>>(loadExtensionSidebarNodeExpansionState())
 const isExtensionRoute = computed(() => route.name === 'extension')
 const selectedExtension = computed(() => (
   extensionRegistryItems.value.find((extension) => extension.id === routeExtensionId.value) ?? null
@@ -2051,6 +2064,60 @@ function setExtensionSidebarSectionExpanded(key: string, isExpanded: boolean): v
     [key]: isExpanded,
   }
   persistExtensionSidebarSectionExpansionState()
+}
+
+function extensionSidebarNodeKey(extensionId: string, nodeId: string): string {
+  return `${extensionId}:${nodeId}`
+}
+
+function loadExtensionSidebarNodeExpansionState(): Record<string, boolean> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(EXTENSION_SIDEBAR_NODE_EXPANSION_STORAGE_KEY) || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, boolean] =>
+        typeof entry[0] === 'string' && typeof entry[1] === 'boolean',
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function persistExtensionSidebarNodeExpansionState(): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(
+    EXTENSION_SIDEBAR_NODE_EXPANSION_STORAGE_KEY,
+    JSON.stringify(expandedExtensionSidebarNodes.value),
+  )
+}
+
+function isExtensionSidebarNodeExpanded(extensionId: string, nodeId: string): boolean {
+  return expandedExtensionSidebarNodes.value[extensionSidebarNodeKey(extensionId, nodeId)] === true
+}
+
+function setExtensionSidebarNodeExpanded(extensionId: string, nodeId: string, isExpanded: boolean): void {
+  expandedExtensionSidebarNodes.value = {
+    ...expandedExtensionSidebarNodes.value,
+    [extensionSidebarNodeKey(extensionId, nodeId)]: isExpanded,
+  }
+  persistExtensionSidebarNodeExpansionState()
+}
+
+function hasExtensionSidebarNodeChildren(node: ExtensionSidebarNode): boolean {
+  return Array.isArray(node.children) && node.children.length > 0
+}
+
+function toggleExtensionSidebarNode(
+  extensionId: string,
+  routeId: string,
+  node: ExtensionSidebarNode,
+): void {
+  if (hasExtensionSidebarNodeChildren(node)) {
+    setExtensionSidebarNodeExpanded(extensionId, node.id, !isExtensionSidebarNodeExpanded(extensionId, node.id))
+  }
+  void selectExtensionSidebarNode(extensionId, routeId, node.selection)
 }
 
 function toggleExtensionSidebarEntry(section: { key: string; extensionId: string; routeId: string; isActive: boolean }): void {
@@ -2841,6 +2908,7 @@ function postExtensionSelection(extensionId: string, selection: Record<string, u
 
   const frame = document.querySelector<HTMLIFrameElement>('iframe.extension-route-frame')
   frame?.contentWindow?.postMessage(payload, '*')
+  window.dispatchEvent(new CustomEvent('codexui-extension-selection', { detail: payload }))
 }
 
 function toPlainExtensionSelection(selection: Record<string, unknown>): Record<string, unknown> {
@@ -2861,6 +2929,7 @@ function clearExtensionSelection(extensionId: string): void {
   const frame = document.querySelector<HTMLIFrameElement>('iframe.extension-route-frame')
   frame?.contentWindow?.postMessage(payload, '*')
   window.setTimeout(() => frame?.contentWindow?.postMessage(payload, '*'), 250)
+  window.dispatchEvent(new CustomEvent('codexui-extension-selection', { detail: payload }))
 }
 
 async function selectExtensionSidebarNode(
@@ -5664,6 +5733,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-extension-node {
   @apply flex min-h-7 w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-50;
+}
+
+.sidebar-extension-node-chevron {
+  @apply h-3.5 w-3.5 shrink-0 text-zinc-400;
 }
 
 .sidebar-extension-node.is-active {

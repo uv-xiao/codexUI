@@ -11,7 +11,8 @@ export type ExtensionConfig = {
 export type ExtensionRouteManifest = {
   id: string
   label: string
-  url: string
+  url?: string
+  kind?: 'iframe' | 'learning'
 }
 
 export type ExtensionSidebarManifest = {
@@ -31,6 +32,7 @@ export type ExtensionManifest = {
 
 export type RegisteredExtensionRoute = ExtensionRouteManifest & {
   url: string
+  kind: 'iframe' | 'learning'
 }
 
 export type RegisteredExtensionSidebar = ExtensionSidebarManifest & {
@@ -94,10 +96,19 @@ function parseRoute(value: unknown): ExtensionRouteManifest {
   if (!isRecord(value)) {
     throw new Error('Expected route entries to be objects.')
   }
+  const kind = readOptionalString(value, 'kind') ?? 'iframe'
+  if (kind !== 'iframe' && kind !== 'learning') {
+    throw new Error('Expected route kind to be "iframe" or "learning".')
+  }
+  const url = readOptionalString(value, 'url')
+  if (kind === 'iframe' && !url) {
+    throw new Error('Expected non-empty string field "url".')
+  }
   return {
     id: readNonEmptyString(value, 'id'),
     label: readNonEmptyString(value, 'label'),
-    url: readNonEmptyString(value, 'url'),
+    kind,
+    url,
   }
 }
 
@@ -155,6 +166,10 @@ function resolveOptionalUrl(url: string | undefined, settings: ExtensionSettings
   return url ? resolveRouteUrl(url, settings) : undefined
 }
 
+function routeUrlForRegistry(route: ExtensionRouteManifest, settings: ExtensionSettings): string {
+  return resolveOptionalUrl(route.url, settings) ?? ''
+}
+
 export function buildExtensionRegistry(configFile: ExtensionConfigFile): ExtensionRegistry {
   const configs = Array.isArray(configFile.extensions) ? configFile.extensions : []
   const extensions: RegisteredExtension[] = []
@@ -190,7 +205,8 @@ export function buildExtensionRegistry(configFile: ExtensionConfigFile): Extensi
         settings,
         routes: manifest.routes.map((route) => ({
           ...route,
-          url: resolveRouteUrl(route.url, settings),
+          kind: route.kind ?? 'iframe',
+          url: routeUrlForRegistry(route, settings),
         })),
         sidebar: manifest.sidebar.map((item) => ({
           ...item,

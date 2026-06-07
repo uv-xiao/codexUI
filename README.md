@@ -2,13 +2,69 @@
 
 This repository is a fork of upstream `friuns2/codexUI`. README maintenance rule: keep the upstream-derived `codexapp` documentation folded below this fork preface, and describe this fork's extensions at the top before the upstream material.
 
-This fork adds and maintains extensions on top of upstream, with emphasis on:
+This fork is a large feature fork. At the current `main`, it is 156 non-merge
+commits ahead of upstream `main`. The upstream app is still the base, but this
+fork adds and maintains a broader product surface:
 
-- a local extension-host route and extension registry scaffolding;
-- a direct host deployment workflow for Mac/browser access through `scripts/codexui-deploy.sh`;
-- an explicit Docker Tailscale iOS workflow through `scripts/docker-tailscale-ios.sh`, with Tailscale disabled unless that wrapper is used;
-- a Mac Dock control app script for opening, testing, restarting, and stopping direct/Tailscale CodexUI deployments;
-- the rebased upstream and Light-Of-Hers feature stack integrated into this fork.
+- **Local extension host**: `.codexui/extensions.json` loading, extension
+  manifest validation, extension route/sidebar registration, load-error
+  isolation, extension sidebar tree selection, and a bridge endpoint for
+  extension-originated Codex help requests.
+- **Native Learning system**: a codexUI-owned Learning pane backed by an
+  external notes repository, TOML content-source configuration, series/note
+  ordering, Markdown/IPYNB `View`, embedded Notebook 7, embedded JupyterLab,
+  dynamic Jupyter port selection, same-origin Jupyter proxying, and public-host
+  Safari compatibility.
+- **Light-Of-Hers-derived provider stack**: Cursor CLI, Moon Bridge, Ark Coding
+  Plan, OpenRouter/free, OpenCode Zen, and custom endpoint flows integrated into
+  the provider selector and app-server runtime path.
+- **Provider/session correctness**: session-local provider selection,
+  provider-scoped model state, per-provider app-server pooling, provider-aware
+  thread RPC routing, model refresh repair, provider switch persistence, and
+  re-resume behavior after provider changes.
+- **Cursor runtime support**: `codex-cursor` command resolution, Cursor model
+  catalog loading, Cursor tool-call normalization/grouping, shell command
+  recovery, compact payload-path resolution, failure output preservation, and
+  automatic context-overflow compaction.
+- **Goal and slash-command flow**: `/goal` command handling in codexUI, routing
+  file-mention and skill slash commands into the goal workflow, and cleared-goal
+  notice cleanup.
+- **Composer upgrades**: inline `@` file/folder/symlink search, relative path
+  insertion, ranked file mention results, `$` skill autocomplete, mention
+  scrolling, Markdown preview with math support, context-usage status, and
+  queued-message versus steer-current-turn behavior.
+- **Conversation rendering upgrades**: GitHub-style code highlighting, broader
+  language detection, code copy controls, command line numbers, scoped
+  select-all, original text toggle, assistant/user avatars, mobile tool-call
+  cards, pending tool-call visibility, and richer command/output expansion.
+- **History and realtime resilience**: full thread-history loading, recovered
+  command ordering, orphan command preservation, persisted model/provider
+  recovery, live output preservation until persisted, event-driven realtime
+  updates, intentional stop handling, active-turn cross-checks before
+  interrupts, and automatic continuation after unexpected interruption.
+- **Local browse and editor surfaces**: themed local file browser, file create
+  and delete actions, directory creation, editor save shortcut interception,
+  line-range links, preview-to-source-line jumps, mobile/resizable Markdown
+  previews, KaTeX asset loading, broken-symlink tolerance, and direct absolute
+  file-link opening.
+- **Markdown and link handling**: GFM plus KaTeX rendering, inline code file
+  references, session base paths, directory links, tilde/root path expansion,
+  Chinese slash-path guards, local image preview coverage, and safer avoidance
+  of false file links.
+- **Deployment and network workflows**: `codex-ui-dev` launcher support,
+  direct-host deployment via `scripts/codexui-deploy.sh`, Docker Tailscale iOS
+  workflow via `scripts/docker-tailscale-ios.sh`, Cloudflare tunnel opt-in,
+  Tailscale trusted CIDR handling, host URL status reporting, and a Mac Dock
+  control app script for direct/Tailscale operations.
+- **Performance and diagnostics**: deferred Markdown/bootstrap work, lazy
+  composer helpers, startup sidecar refresh deferral, duplicate reload refresh
+  avoidance, avatar asset size reduction, provider-model startup fixes, debug
+  logs for SSE/WebSocket/reconnect/runtime state, and profiler scripts for
+  browser/runtime checks.
+- **Tests and manuals**: expanded unit coverage for provider routing,
+  normalizers, local browsing, extension loading, learning content, Jupyter
+  proxying, composer mentions, Markdown rendering, command resolution, and
+  documented manual test cases under `tests/`.
 
 Light-Of-Hers' `crz/dev` fork contributed a significant feature stack that is acknowledged here as part of this fork's integrated history. The current branch rebases and adapts those ideas alongside upstream changes rather than presenting them as solely original to this fork.
 

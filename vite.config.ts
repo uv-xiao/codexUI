@@ -2,6 +2,8 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
 import { loadExtensionRegistry } from "./src/server/extensionRoutes";
+import { handleLearningContentRequest } from "./src/server/learningContent";
+import { handleLearningJupyterProxyRequest, handleLearningJupyterProxyUpgrade } from "./src/server/learningJupyter";
 import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from "./src/server/katexAssets";
 import tailwindcss from "@tailwindcss/vite";
@@ -166,6 +168,7 @@ export default defineConfig({
 
             httpServer.on("upgrade", (req, socket, head) => {
               const requestUrl = new URL(req.url ?? "", "http://localhost");
+              if (handleLearningJupyterProxyUpgrade(req, socket, head)) return;
               if (requestUrl.pathname !== "/codex-api/ws") return;
               wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
                 wss.emit("connection", ws, req);
@@ -507,6 +510,8 @@ export default defineConfig({
         server.middlewares.use(async (req, res, next) => {
           if (!req.url) return next();
           const url = new URL(req.url, "http://localhost");
+          if (await handleLearningContentRequest(req, res, url)) return;
+          if (handleLearningJupyterProxyRequest(req, res)) return;
           if (!url.pathname.startsWith("/codex-api/extensions")) return next();
 
           if (req.method === "GET" && url.pathname === "/codex-api/extensions") {

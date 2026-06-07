@@ -6,6 +6,8 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createExtensionRoutesMiddleware } from './extensionRoutes.js'
+import { createLearningContentRoutesMiddleware } from './learningContent.js'
+import { handleLearningJupyterProxyRequest, handleLearningJupyterProxyUpgrade } from './learningJupyter.js'
 import { createAuthSession } from './authMiddleware.js'
 import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
@@ -90,7 +92,14 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
   // 3. Local extension registry and bridge endpoints.
   app.use('/codex-api/extensions', createExtensionRoutesMiddleware())
 
-  // 4. Serve local images referenced in markdown (desktop parity for absolute image paths)
+  // 4. Native learning content sources and codexUI-owned Jupyter proxy.
+  app.use('/codex-api/learning', createLearningContentRoutesMiddleware())
+  app.use((req, res, next) => {
+    if (handleLearningJupyterProxyRequest(req, res)) return
+    next()
+  })
+
+  // 5. Serve local images referenced in markdown (desktop parity for absolute image paths)
   app.get('/codex-local-image', (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
     const localPath = normalizeLocalImagePath(rawPath)
@@ -344,6 +353,9 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
 
       server.on('upgrade', (req: IncomingMessage, socket, head) => {
         const url = new URL(req.url ?? '', 'http://localhost')
+        if (handleLearningJupyterProxyUpgrade(req, socket as import('node:net').Socket, head)) {
+          return
+        }
         if (url.pathname !== '/codex-api/ws') {
           return
         }

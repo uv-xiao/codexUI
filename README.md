@@ -12,6 +12,82 @@ This fork adds and maintains extensions on top of upstream, with emphasis on:
 
 Light-Of-Hers' `crz/dev` fork contributed a significant feature stack that is acknowledged here as part of this fork's integrated history. The current branch rebases and adapts those ideas alongside upstream changes rather than presenting them as solely original to this fork.
 
+## Fork-Specific Usage
+
+Upstream `friuns2/codexUI` remains the base app: normal Codex chat, project,
+thread, provider, and deployment flows should still work as upstream users
+expect. This fork keeps additional integrations above that base.
+
+### Cursor, Moon, and Ark CLI Providers
+
+The Light-Of-Hers-derived provider stack lets codexUI route a thread through
+wrapper CLIs instead of only the default Codex CLI. In the provider selector,
+choose `Cursor CLI`, `Moon Bridge`, or `Ark Coding Plan`.
+
+The wrapper command must be available on `PATH`, or configured explicitly:
+
+```bash
+export CODEXUI_CODEX_CURSOR_COMMAND=/path/to/codex-cursor
+export CODEXUI_CODEX_MOON_COMMAND=/path/to/codex-moon
+export CODEXUI_CODEX_ARK_COMMAND=/path/to/codex-ark
+pnpm run dev --host 0.0.0.0 --port 4173
+```
+
+`Cursor CLI` accepts model metadata from
+`CODEXUI_CURSOR_MODEL_CATALOG` or, by default,
+`$XDG_DATA_HOME/my-agent-configs/cursor/codex/models_catalog.json`.
+Moon and Ark use matching `CODEXUI_MOONBRIDGE_MODEL_CATALOG` and
+`CODEXUI_ARK_MODEL_CATALOG` overrides. If no catalog is present, codexUI keeps
+a conservative fallback model so the provider remains selectable.
+
+### Native Learning Notes
+
+The Learning integration is fork-specific. codexUI owns the web UI, sidebar
+behavior, Markdown/IPYNB preview, and Jupyter proxy. A notes repository only
+provides content and a TOML content-source file.
+
+Configure a local, gitignored `.codexui/extensions.json` in this repo:
+
+```json
+{
+  "extensions": [
+    {
+      "id": "notes",
+      "path": "/absolute/path/to/notes/packages/codexui-notes-extension",
+      "settings": {
+        "learningConfig": "/absolute/path/to/notes/codexui.learning.toml"
+      }
+    }
+  ]
+}
+```
+
+The notes-side `codexui.learning.toml` declares the content root, notes/assets
+directories, Jupyter preference, and optional `[order.series]` /
+`[order.notes.<series>]` ordering. Missing order entries fall back to
+alphabetic sorting.
+
+In the app, open `Learning` from the same left rail as `Skills` and
+`Automations`. The right pane stays inside codexUI and offers:
+
+- `View`: codexUI's direct rendered view for Markdown and IPYNB notes;
+- `Notebook 7`: embedded Jupyter Notebook for editable notebook work;
+- `JupyterLab`: embedded JupyterLab for full notebook/project workflows.
+
+When serving from a remote machine for local Safari, start codexUI as a detached
+process group so the server survives the terminal session:
+
+```bash
+setsid pnpm run dev --host 0.0.0.0 --port 4173 > /tmp/codexui-dev.log 2>&1 &
+```
+
+### Upstream Delta Rule
+
+When rebasing from upstream, keep fork-only behavior documented in this
+preface before the upstream-derived documentation below. In particular, do not
+hide Cursor/Moon/Ark provider routing, extension-host behavior, native Learning,
+or direct-host deployment assumptions inside PR descriptions only.
+
 The sections below are folded from upstream-style documentation unless explicitly marked as fork-specific.
 
 ---

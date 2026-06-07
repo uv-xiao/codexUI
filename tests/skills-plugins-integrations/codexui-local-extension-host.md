@@ -2,10 +2,10 @@
 
 ## Prerequisites
 
-- Branch `codex/learning-sidebar-state` is checked out in `/home/uvxiao/codexUI`.
-- The notes runtime is running from `/home/uvxiao/.codex/worktrees/bdcd/notes` with `pixi run web-dev`.
-- `.codexui/extensions.json` points at the notes extension package and a reachable notes runtime URL.
-- The notes extension manifest includes a sidebar `itemsUrl` such as `/api/codexui/sidebar`.
+- The codexUI branch contains the native Learning route and Jupyter proxy.
+- The notes repository contains `packages/codexui-notes-extension/codexui.extension.json` and `codexui.learning.toml`.
+- `.codexui/extensions.json` points at the notes extension package and sets `settings.learningConfig` to the notes repository's `codexui.learning.toml`.
+- The notes extension manifest includes a sidebar `itemsUrl` such as `/codex-api/learning/notes/sidebar`.
 
 ## Actions
 

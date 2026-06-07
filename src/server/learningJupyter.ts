@@ -16,10 +16,21 @@ type JupyterSession = {
   token: string
   process: ChildProcess
   target: string
+  ready: Promise<void>
 }
 
 const sessions = new Map<string, JupyterSession>()
-const proxy = httpProxy.createProxyServer({ ws: true, changeOrigin: false })
+const proxy = httpProxy.createProxyServer({ ws: true, changeOrigin: true })
+
+proxy.on('error', (error: Error, _req: IncomingMessage, res: ServerResponse | Socket) => {
+  console.warn(`[jupyter-proxy] ${error.message}`)
+  if ('headersSent' in res) {
+    if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' })
+    res.end('Bad Gateway')
+    return
+  }
+  res.destroy()
+})
 
 function findFreePort(startPort: number): Promise<number> {
   return new Promise((resolvePort, reject) => {
@@ -63,6 +74,22 @@ function waitForPort(port: number, timeoutMs = 20000): Promise<void> {
   })
 }
 
+async function waitForJupyterHttp(target: string, baseUrl: string, token: string, timeoutMs = 20000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  const url = `${target}${baseUrl}api?token=${encodeURIComponent(token)}`
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url)
+      await response.arrayBuffer().catch(() => undefined)
+      if (response.status < 500) return
+    } catch {
+      // Jupyter can bind the port before the HTTP app is ready.
+    }
+    await new Promise((resolveRetry) => setTimeout(resolveRetry, 150))
+  }
+  throw new Error('Jupyter did not become HTTP-ready before the timeout.')
+}
+
 function resolveJupyterCommand(rootDir: string): { command: string; argsPrefix: string[] } {
   const configured = process.env.CODEXUI_JUPYTER_COMMAND?.trim()
   if (configured) return { command: configured, argsPrefix: [] }
@@ -85,7 +112,10 @@ function pathForJupyter(path: string, rootDir: string): string {
 
 async function startSession(sourceId: string, config: LearningContentConfig): Promise<JupyterSession> {
   const existing = sessions.get(sourceId)
-  if (existing && existing.rootDir === config.rootDir && existing.process.exitCode === null) return existing
+  if (existing && existing.rootDir === config.rootDir && existing.process.exitCode === null) {
+    await existing.ready
+    return existing
+  }
 
   const port = await findFreePort(Number(process.env.CODEXUI_JUPYTER_START_PORT ?? '8890'))
   const token = randomBytes(18).toString('hex')
@@ -123,9 +153,17 @@ async function startSession(sourceId: string, config: LearningContentConfig): Pr
     token,
     process: child,
     target: `http://127.0.0.1:${port}`,
+    ready: Promise.resolve(),
   }
+  session.ready = waitForPort(port).then(() => waitForJupyterHttp(session.target, session.baseUrl, session.token))
   sessions.set(sourceId, session)
-  await waitForPort(port)
+  try {
+    await session.ready
+  } catch (error) {
+    if (sessions.get(sourceId) === session) sessions.delete(sourceId)
+    child.kill()
+    throw error
+  }
   return session
 }
 

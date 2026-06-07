@@ -25,6 +25,14 @@ async function createLearningFixture(): Promise<{ dir: string; configPath: strin
     '[jupyter]',
     'enabled = true',
     'preferred_ui = "lab"',
+    '',
+    '[order.series]',
+    'kernels = 10',
+    'cs336 = 20',
+    '',
+    '[order.notes.cs336]',
+    'index = 0',
+    '"00-whole-stack" = 10',
   ].join('\n'), 'utf8')
   await writeFile(join(dir, 'notes', 'cs336', 'index.md'), '# CS336\n\nOverview.', 'utf8')
   await writeFile(join(dir, 'notes', 'cs336', '00-whole-stack.ipynb'), JSON.stringify({
@@ -34,6 +42,8 @@ async function createLearningFixture(): Promise<{ dir: string; configPath: strin
     ],
     metadata: { language_info: { name: 'python' } },
   }), 'utf8')
+  await mkdir(join(dir, 'notes', 'kernels'), { recursive: true })
+  await writeFile(join(dir, 'notes', 'kernels', 'index.md'), '# Kernels\n\nOverview.', 'utf8')
   return { dir, configPath: join(dir, 'codexui.learning.toml') }
 }
 
@@ -45,6 +55,8 @@ describe('learning content source', () => {
     expect(config.rootDir).toBe(fixture.dir)
     expect(config.notesDir).toBe(join(fixture.dir, 'notes'))
     expect(config.jupyter.preferredUi).toBe('lab')
+    expect(config.order.series).toEqual({ cs336: 20, kernels: 10 })
+    expect(config.order.notes.cs336).toEqual({ index: 0, '00-whole-stack': 10 })
   })
 
   it('scans markdown and ipynb notes into series summaries', async () => {
@@ -54,12 +66,20 @@ describe('learning content source', () => {
 
     expect(series).toEqual([
       {
+        id: 'kernels',
+        title: 'Kernels',
+        count: 1,
+        notes: [
+          { slug: 'kernels/index', title: 'Kernels', type: 'markdown', path: 'notes/kernels/index.md' },
+        ],
+      },
+      {
         id: 'cs336',
         title: 'CS336',
         count: 2,
         notes: [
-          { slug: 'cs336/00-whole-stack', title: 'Whole Stack', type: 'notebook', path: 'notes/cs336/00-whole-stack.ipynb' },
           { slug: 'cs336/index', title: 'CS336', type: 'markdown', path: 'notes/cs336/index.md' },
+          { slug: 'cs336/00-whole-stack', title: 'Whole Stack', type: 'notebook', path: 'notes/cs336/00-whole-stack.ipynb' },
         ],
       },
     ])
@@ -96,19 +116,14 @@ describe('learning content source', () => {
       () => registry,
     )
 
-    expect(result).toMatchObject({
-      handled: true,
-      status: 200,
-      payload: {
-        data: [
-          {
-            id: 'cs336',
-            label: 'CS336',
-            kind: 'series',
-            count: 2,
-          },
-        ],
-      },
-    })
+    expect(result.handled).toBe(true)
+    if (!result.handled) return
+    expect(result.status).toBe(200)
+    const data = (result.payload as { data: Array<{ id: string; children?: Array<{ id: string }> }> }).data
+    expect(data.map((series) => series.id)).toEqual(['kernels', 'cs336'])
+    expect(data.find((series) => series.id === 'cs336')?.children?.map((child) => child.id)).toEqual([
+      'cs336/index',
+      'cs336/00-whole-stack',
+    ])
   })
 })

@@ -17,6 +17,10 @@ export type LearningContentConfig = {
     enabled: boolean
     preferredUi: 'lab' | 'notebook'
   }
+  order: {
+    series: Record<string, number>
+    notes: Record<string, Record<string, number>>
+  }
 }
 
 export type LearningNoteSummary = {
@@ -44,7 +48,8 @@ export type LearningApiResult =
   | { handled: false }
   | { handled: true; status: number; payload: unknown }
 
-type TomlTable = Record<string, Record<string, string | boolean>>
+type TomlValue = string | boolean | number
+type TomlTable = Record<string, Record<string, TomlValue>>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -58,13 +63,23 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
-function parseTomlScalar(value: string): string | boolean {
+function readNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function parseTomlScalar(value: string): TomlValue {
   const trimmed = value.trim()
   if (trimmed === 'true') return true
   if (trimmed === 'false') return false
+  if (/^-?\d+(?:\.\d+)?$/u.test(trimmed)) return Number(trimmed)
   const quoted = trimmed.match(/^"([\s\S]*)"$/u)
   if (quoted) return quoted[1]?.replace(/\\"/gu, '"') ?? ''
   return trimmed
+}
+
+function parseTomlKey(value: string): string {
+  const quoted = value.trim().match(/^"([\s\S]*)"$/u)
+  return quoted ? quoted[1]?.replace(/\\"/gu, '"') ?? '' : value.trim()
 }
 
 export function parseLearningToml(text: string): TomlTable {
@@ -79,12 +94,32 @@ export function parseLearningToml(text: string): TomlTable {
       tables[current] ??= {}
       continue
     }
-    const assignment = line.match(/^([a-zA-Z0-9_.-]+)\s*=\s*(.+)$/u)
+    const assignment = line.match(/^("[^"]+"|[a-zA-Z0-9_.-]+)\s*=\s*(.+)$/u)
     if (!assignment) continue
     tables[current] ??= {}
-    tables[current][assignment[1] ?? ''] = parseTomlScalar(assignment[2] ?? '')
+    tables[current][parseTomlKey(assignment[1] ?? '')] = parseTomlScalar(assignment[2] ?? '')
   }
   return tables
+}
+
+function readOrderTable(table: Record<string, TomlValue> | undefined): Record<string, number> {
+  const result: Record<string, number> = {}
+  for (const [key, value] of Object.entries(table ?? {})) {
+    const order = readNumber(value)
+    if (order !== null) result[key] = order
+  }
+  return result
+}
+
+function readNoteOrderTables(parsed: TomlTable): Record<string, Record<string, number>> {
+  const result: Record<string, Record<string, number>> = {}
+  for (const [tableName, table] of Object.entries(parsed)) {
+    if (!tableName.startsWith('order.notes.')) continue
+    const seriesId = tableName.slice('order.notes.'.length)
+    if (!seriesId) continue
+    result[seriesId] = readOrderTable(table)
+  }
+  return result
 }
 
 export function loadLearningContentConfig(configPath: string): LearningContentConfig {
@@ -105,6 +140,10 @@ export function loadLearningContentConfig(configPath: string): LearningContentCo
     jupyter: {
       enabled: readBoolean(jupyter.enabled, true),
       preferredUi,
+    },
+    order: {
+      series: readOrderTable(parsed['order.series']),
+      notes: readNoteOrderTables(parsed),
     },
   }
 }
@@ -198,9 +237,9 @@ export function listLearningSeries(config: LearningContentConfig): LearningSerie
   }
 
   return Array.from(bySeries.entries())
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareOrdered(left, right, config.order.series))
     .map(([id, notes]) => {
-      const sortedNotes = [...notes].sort((left, right) => left.slug.localeCompare(right.slug))
+      const sortedNotes = sortSeriesNotes(id, notes, config.order.notes[id] ?? {})
       const index = sortedNotes.find((note) => note.slug === `${id}/index`)
       return {
         id,
@@ -209,6 +248,36 @@ export function listLearningSeries(config: LearningContentConfig): LearningSerie
         notes: sortedNotes,
       }
     })
+}
+
+function compareOrdered(left: string, right: string, order: Record<string, number>): number {
+  const leftOrder = order[left]
+  const rightOrder = order[right]
+  const leftHasOrder = typeof leftOrder === 'number'
+  const rightHasOrder = typeof rightOrder === 'number'
+  if (leftHasOrder && rightHasOrder && leftOrder !== rightOrder) return leftOrder - rightOrder
+  if (leftHasOrder && !rightHasOrder) return -1
+  if (!leftHasOrder && rightHasOrder) return 1
+  return left.localeCompare(right)
+}
+
+function noteOrderKey(seriesId: string, note: LearningNoteSummary): string {
+  const prefix = `${seriesId}/`
+  return note.slug.startsWith(prefix) ? note.slug.slice(prefix.length) : note.slug
+}
+
+function sortSeriesNotes(
+  seriesId: string,
+  notes: LearningNoteSummary[],
+  order: Record<string, number>,
+): LearningNoteSummary[] {
+  return [...notes].sort((left, right) => {
+    const leftKey = noteOrderKey(seriesId, left)
+    const rightKey = noteOrderKey(seriesId, right)
+    const byOrder = compareOrdered(leftKey, rightKey, order)
+    if (byOrder !== 0) return byOrder
+    return left.slug.localeCompare(right.slug)
+  })
 }
 
 function noteFileForSlug(config: LearningContentConfig, slug: string): string {
